@@ -13,6 +13,7 @@ import PrintButton from '../components/PrintButton';
 import { usePrintHeader } from '../context/PrintContext';
 import { CompleteByFactModal } from './Cutting';
 import ProcurementViewModal from '../components/procurement/ProcurementViewModal';
+import ProcurementPlanModal from '../components/procurement/ProcurementPlanModal';
 
 const LETTER_SIZES = ['S', 'M', 'L', 'XL', 'XXL', '3XL', '4XL', '5XL'];
 const NUMERIC_SIZES = ['38', '40', '42', '44', '46', '48', '50', '52', '54', '56'];
@@ -91,6 +92,7 @@ export default function OrderDetails() {
   const [planModelData, setPlanModelData] = useState(null);
   const [planModelLoading, setPlanModelLoading] = useState(false);
   const [showProcurementModal, setShowProcurementModal] = useState(false);
+  const [showProcurementPlanModal, setShowProcurementPlanModal] = useState(false);
   const [procurement, setProcurement] = useState(null);
   const editColorInputRef = useRef(null);
   const editColorDropdownRef = useRef(null);
@@ -830,65 +832,90 @@ export default function OrderDetails() {
         <div className="card-neon rounded-card overflow-hidden mt-4 sm:mt-6 transition-block">
           <div className="p-4 sm:p-6 border-b border-white/25 dark:border-white/25 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-base sm:text-lg font-medium text-[#ECECEC] dark:text-dark-text">Закуп</h2>
-            <button
-              type="button"
-              onClick={() => setShowProcurementModal(true)}
-              className="px-3 py-1.5 rounded-lg bg-accent-1/30 text-[#ECECEC] text-sm"
-            >
-              Открыть закуп
-            </button>
+            <div className="flex flex-wrap gap-2">
+              {canEditCutting && procurement.procurement?.status !== 'received' && (
+                <button
+                  type="button"
+                  onClick={() => setShowProcurementPlanModal(true)}
+                  className="px-3 py-1.5 rounded-lg bg-accent-2/50 text-[#ECECEC] text-sm hover:bg-accent-2/70"
+                >
+                  {procurement.procurement?.id ? 'Редактировать план' : 'План закупа'}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowProcurementModal(true)}
+                className="px-3 py-1.5 rounded-lg bg-accent-1/30 text-[#ECECEC] text-sm"
+              >
+                Открыть закуп
+              </button>
+            </div>
           </div>
-          <div className="p-4 sm:p-6">
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-              <div>
-                <span className="text-[#ECECEC]/70 dark:text-dark-text/70">Статус</span>
-                <div className="font-medium mt-1">
-                  <span
-                    className={`inline-block px-2 py-0.5 rounded text-xs ${
-                      procurement.procurement?.status === 'received'
-                        ? 'bg-green-500/20 text-green-400'
-                        : procurement.procurement?.status === 'sent'
-                          ? 'bg-lime-500/20 text-lime-400'
-                          : 'bg-gray-500/20 text-gray-400'
-                    }`}
-                  >
-                    {procurement.procurement?.status === 'received'
-                      ? 'Закуплено'
-                      : procurement.procurement?.status === 'sent'
-                        ? 'Отправлено'
-                        : '—'}
-                  </span>
-                </div>
-              </div>
-              <div>
-                <span className="text-[#ECECEC]/70 dark:text-dark-text/70">Дедлайн</span>
-                <div className="font-medium text-[#ECECEC] dark:text-dark-text mt-1">
-                  {procurement.procurement?.due_date || '—'}
-                </div>
-              </div>
-              <div>
-                <span className="text-[#ECECEC]/70 dark:text-dark-text/70">Сумма</span>
-                <div className="font-medium text-primary-400 mt-1">
-                  {Number(procurement.procurement?.total_sum || 0).toFixed(2)} ₽
-                </div>
-              </div>
-              <div>
-                <span className="text-[#ECECEC]/70 dark:text-dark-text/70">Обновлено</span>
-                <div className="font-medium text-[#ECECEC] dark:text-dark-text mt-1">
-                  {procurement.procurement?.updated_at
-                    ? procurement.procurement.updated_at.slice(0, 10).split('-').reverse().join('.')
+          <div className="p-4 sm:p-6 space-y-4">
+            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
+              <span className="text-[#ECECEC]/70 dark:text-dark-text/70">Статус</span>
+              <span
+                className={`font-medium px-2 py-0.5 rounded text-xs ${
+                  procurement.procurement?.status === 'received'
+                    ? 'bg-green-500/20 text-green-400'
+                    : procurement.procurement?.status === 'sent'
+                      ? 'bg-lime-500/20 text-lime-400'
+                      : 'bg-gray-500/20 text-gray-400'
+                }`}
+              >
+                {procurement.procurement?.status === 'received'
+                  ? 'Закуплено'
+                  : procurement.procurement?.status === 'sent'
+                    ? 'Отправлено'
                     : '—'}
-                </div>
-              </div>
+              </span>
+              <span className="text-[#ECECEC]/70 dark:text-dark-text/70 ml-2">Дедлайн</span>
+              <span className="font-medium text-[#ECECEC] dark:text-dark-text">{procurement.procurement?.due_date || '—'}</span>
+              <span className="text-[#ECECEC]/70 dark:text-dark-text/70 ml-2">Сумма</span>
+              <span className="font-medium text-primary-400">{Number(procurement.procurement?.total_sum || 0).toFixed(2)} ₽</span>
+              <span className="text-[#ECECEC]/70 dark:text-dark-text/70 ml-2">Обновлено</span>
+              <span className="font-medium text-[#ECECEC] dark:text-dark-text">
+                {procurement.procurement?.updated_at
+                  ? procurement.procurement.updated_at.slice(0, 10).split('-').reverse().join('.')
+                  : '—'}
+              </span>
               {procurement.procurement?.completed_at && (
-                <div className="sm:col-span-2">
-                  <span className="text-[#ECECEC]/70 dark:text-dark-text/70">Выполнено</span>
-                  <div className="font-medium text-green-400 mt-1">
-                    ✅ {new Date(procurement.procurement.completed_at).toLocaleString('ru-RU')}
-                  </div>
-                </div>
+                <>
+                  <span className="text-[#ECECEC]/70 dark:text-dark-text/70 ml-2">Выполнено</span>
+                  <span className="font-medium text-green-400">✅ {new Date(procurement.procurement.completed_at).toLocaleString('ru-RU')}</span>
+                </>
               )}
             </div>
+            {(procurement.items || []).filter((r) => String(r.material_name || '').trim()).length > 0 && (
+              <div className="overflow-x-auto rounded-lg border border-white/20 dark:border-white/20">
+                <table className="w-full min-w-[500px] text-sm">
+                  <thead>
+                    <tr className="bg-accent-3/80 dark:bg-dark-900 border-b border-white/25">
+                      <th className="text-left px-3 py-2 text-[#ECECEC]/90 dark:text-dark-text/90">Материал</th>
+                      <th className="text-left px-3 py-2 text-[#ECECEC]/90 dark:text-dark-text/90">План</th>
+                      <th className="text-left px-3 py-2 text-[#ECECEC]/90 dark:text-dark-text/90">Ед</th>
+                      <th className="text-left px-3 py-2 text-[#ECECEC]/90 dark:text-dark-text/90">Куплено</th>
+                      <th className="text-left px-3 py-2 text-[#ECECEC]/90 dark:text-dark-text/90">Цена</th>
+                      <th className="text-left px-3 py-2 text-[#ECECEC]/90 dark:text-dark-text/90">Сумма</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(procurement.items || [])
+                      .filter((r) => String(r.material_name || '').trim())
+                      .map((row) => (
+                        <tr key={row.id} className="border-b border-white/10">
+                          <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">{row.material_name || '—'}</td>
+                          <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">{row.planned_qty ?? '—'}</td>
+                          <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">{row.unit || 'шт'}</td>
+                          <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">{row.purchased_qty ?? '—'}</td>
+                          <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">{row.purchased_price != null ? Number(row.purchased_price).toFixed(2) : '—'}</td>
+                          <td className="px-3 py-2 font-medium text-[#ECECEC] dark:text-dark-text">{row.purchased_sum != null ? Number(row.purchased_sum).toFixed(2) : '—'}</td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1719,10 +1746,23 @@ export default function OrderDetails() {
         document.body
       )}
 
+      <ProcurementPlanModal
+        open={showProcurementPlanModal}
+        orderId={order?.id}
+        onClose={() => setShowProcurementPlanModal(false)}
+        onSaved={(res) => {
+          if (res) setProcurement(res);
+          setShowProcurementPlanModal(false);
+        }}
+        canEdit={canEditCutting}
+      />
       <ProcurementViewModal
         open={showProcurementModal}
-        orderId={order.id}
-        onClose={() => setShowProcurementModal(false)}
+        orderId={order?.id}
+        onClose={() => {
+          setShowProcurementModal(false);
+          if (order?.id) api.orders.getProcurement(order.id).then(setProcurement).catch(() => {});
+        }}
       />
     </div>
   );

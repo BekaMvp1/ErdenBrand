@@ -89,11 +89,11 @@ export default function OrderDetails() {
   const [viewingPhoto, setViewingPhoto] = useState(null);
   const [cuttingCompleteModalTask, setCuttingCompleteModalTask] = useState(null);
   const [expandedCuttingTaskIds, setExpandedCuttingTaskIds] = useState(() => new Set());
-  const [planModelData, setPlanModelData] = useState(null);
-  const [planModelLoading, setPlanModelLoading] = useState(false);
   const [showProcurementModal, setShowProcurementModal] = useState(false);
   const [showProcurementPlanModal, setShowProcurementPlanModal] = useState(false);
   const [procurement, setProcurement] = useState(null);
+  const [productionStages, setProductionStages] = useState(null);
+  const [stagesLoading, setStagesLoading] = useState(false);
   const editColorInputRef = useRef(null);
   const editColorDropdownRef = useRef(null);
 
@@ -121,48 +121,25 @@ export default function OrderDetails() {
     loadOrder();
   }, [id]);
 
+  const loadProductionStages = () => {
+    if (!order?.id) return;
+    setStagesLoading(true);
+    api.orders
+      .getProductionStages(order.id)
+      .then(setProductionStages)
+      .catch(() => setProductionStages(null))
+      .finally(() => setStagesLoading(false));
+  };
+
   useEffect(() => {
     if (!order?.id) return;
-    api.orders
-      .getProcurement(order.id)
-      .then((res) => setProcurement(res))
-      .catch(() => setProcurement(null));
+    loadProductionStages();
   }, [order?.id]);
 
   useEffect(() => {
-    if (!order?.workshop_id) {
-      setPlanModelData(null);
-      return;
-    }
-    const workshop = order.Workshop;
-    const floorsCount = workshop?.floors_count ?? 0;
-    const needFloor = floorsCount > 1;
-    const floorId = order.building_floor_id ?? order.floor_id;
-    if (needFloor && !floorId) {
-      setPlanModelData(null);
-      return;
-    }
-    const today = new Date();
-    const fromDate = new Date(today);
-    fromDate.setDate(fromDate.getDate() - 14);
-    const from = fromDate.toISOString().slice(0, 10);
-    const toDate = new Date(today);
-    toDate.setDate(toDate.getDate() + 45);
-    const to = toDate.toISOString().slice(0, 10);
-    setPlanModelLoading(true);
-    const params = {
-      workshop_id: order.workshop_id,
-      order_id: order.id,
-      from,
-      to,
-    };
-    if (needFloor) params.floor_id = floorId;
-    api.planning
-      .modelTable(params)
-      .then(setPlanModelData)
-      .catch(() => setPlanModelData(null))
-      .finally(() => setPlanModelLoading(false));
-  }, [order?.id, order?.workshop_id, order?.building_floor_id, order?.floor_id, order?.Workshop?.floors_count]);
+    if (!order?.id) return;
+    api.orders.getProcurement(order.id).then(setProcurement).catch(() => setProcurement(null));
+  }, [order?.id]);
 
   useEffect(() => {
     const onVisibilityChange = () => {
@@ -173,25 +150,6 @@ export default function OrderDetails() {
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => document.removeEventListener('visibilitychange', onVisibilityChange);
   }, [id]);
-
-  const loadPlanModelData = () => {
-    if (!order?.workshop_id) return;
-    const workshop = order.Workshop;
-    const floorsCount = workshop?.floors_count ?? 0;
-    const needFloor = floorsCount > 1;
-    const floorId = order.building_floor_id ?? order.floor_id;
-    if (needFloor && !floorId) return;
-    const today = new Date();
-    const fromDate = new Date(today);
-    fromDate.setDate(fromDate.getDate() - 14);
-    const from = fromDate.toISOString().slice(0, 10);
-    const toDate = new Date(today);
-    toDate.setDate(toDate.getDate() + 45);
-    const to = toDate.toISOString().slice(0, 10);
-    const params = { workshop_id: order.workshop_id, order_id: order.id, from, to };
-    if (needFloor) params.floor_id = floorId;
-    api.planning.modelTable(params).then(setPlanModelData).catch(() => setPlanModelData(null));
-  };
 
   useEffect(() => {
     if (showEditModal) {
@@ -580,12 +538,6 @@ export default function OrderDetails() {
               {deleting ? 'Удаление...' : 'Удалить'}
             </button>
           )}
-          <button
-            onClick={() => navigate(-1)}
-            className="px-4 py-2 rounded-lg bg-accent-1/30 dark:bg-dark-2 text-[#ECECEC] dark:text-dark-text hover:bg-accent-1/40 dark:hover:bg-dark-3"
-          >
-            Назад
-          </button>
         </div>
       </div>
 
@@ -827,19 +779,18 @@ export default function OrderDetails() {
           </div>
         </div>
 
-      {/* Блок закупа */}
-      {procurement && (
-        <div className="card-neon rounded-card overflow-hidden mt-4 sm:mt-6 transition-block">
-          <div className="p-4 sm:p-6 border-b border-white/25 dark:border-white/25 flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-base sm:text-lg font-medium text-[#ECECEC] dark:text-dark-text">Закуп</h2>
+      {/* 1. Закуп */}
+      <div className="card-neon rounded-card overflow-hidden mt-4 sm:mt-6 transition-block">
+        <div className="p-4 sm:p-6 border-b border-white/25 dark:border-white/25 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-base sm:text-lg font-medium text-[#ECECEC] dark:text-dark-text">Закуп</h2>
             <div className="flex flex-wrap gap-2">
-              {canEditCutting && procurement.procurement?.status !== 'received' && (
+              {canEditCutting && procurement?.procurement?.status !== 'received' && (
                 <button
                   type="button"
                   onClick={() => setShowProcurementPlanModal(true)}
                   className="px-3 py-1.5 rounded-lg bg-accent-2/50 text-[#ECECEC] text-sm hover:bg-accent-2/70"
                 >
-                  {procurement.procurement?.id ? 'Редактировать план' : 'План закупа'}
+                  {procurement?.procurement?.id ? 'Редактировать план' : 'План закупа'}
                 </button>
               )}
               <button
@@ -852,41 +803,45 @@ export default function OrderDetails() {
             </div>
           </div>
           <div className="p-4 sm:p-6 space-y-4">
+            {!procurement?.procurement?.id && !procurement?.items?.length ? (
+              <p className="text-[#ECECEC]/70 dark:text-dark-text/70 text-sm">Нет данных</p>
+            ) : (
+            <>
             <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
               <span className="text-[#ECECEC]/70 dark:text-dark-text/70">Статус</span>
               <span
                 className={`font-medium px-2 py-0.5 rounded text-xs ${
-                  procurement.procurement?.status === 'received'
+                  procurement?.procurement?.status === 'received'
                     ? 'bg-green-500/20 text-green-400'
-                    : procurement.procurement?.status === 'sent'
+                    : procurement?.procurement?.status === 'sent'
                       ? 'bg-lime-500/20 text-lime-400'
                       : 'bg-gray-500/20 text-gray-400'
                 }`}
               >
-                {procurement.procurement?.status === 'received'
+                {procurement?.procurement?.status === 'received'
                   ? 'Закуплено'
-                  : procurement.procurement?.status === 'sent'
+                  : procurement?.procurement?.status === 'sent'
                     ? 'Отправлено'
                     : '—'}
               </span>
               <span className="text-[#ECECEC]/70 dark:text-dark-text/70 ml-2">Дедлайн</span>
-              <span className="font-medium text-[#ECECEC] dark:text-dark-text">{procurement.procurement?.due_date || '—'}</span>
+              <span className="font-medium text-[#ECECEC] dark:text-dark-text">{procurement?.procurement?.due_date || '—'}</span>
               <span className="text-[#ECECEC]/70 dark:text-dark-text/70 ml-2">Сумма</span>
-              <span className="font-medium text-primary-400">{Number(procurement.procurement?.total_sum || 0).toFixed(2)} ₽</span>
+              <span className="font-medium text-primary-400">{Number(procurement?.procurement?.total_sum || 0).toFixed(2)} ₽</span>
               <span className="text-[#ECECEC]/70 dark:text-dark-text/70 ml-2">Обновлено</span>
               <span className="font-medium text-[#ECECEC] dark:text-dark-text">
-                {procurement.procurement?.updated_at
+                {procurement?.procurement?.updated_at
                   ? procurement.procurement.updated_at.slice(0, 10).split('-').reverse().join('.')
                   : '—'}
               </span>
-              {procurement.procurement?.completed_at && (
+              {procurement?.procurement?.completed_at && (
                 <>
                   <span className="text-[#ECECEC]/70 dark:text-dark-text/70 ml-2">Выполнено</span>
                   <span className="font-medium text-green-400">✅ {new Date(procurement.procurement.completed_at).toLocaleString('ru-RU')}</span>
                 </>
               )}
             </div>
-            {(procurement.items || []).filter((r) => String(r.material_name || '').trim()).length > 0 && (
+            {(procurement?.items || []).filter((r) => String(r.material_name || '').trim()).length > 0 && (
               <div className="overflow-x-auto rounded-lg border border-white/20 dark:border-white/20">
                 <table className="w-full min-w-[500px] text-sm">
                   <thead>
@@ -916,21 +871,80 @@ export default function OrderDetails() {
                 </table>
               </div>
             )}
+            </>
+            )}
           </div>
         </div>
-      )}
 
-      {/* Блок задач раскроя — до операций заказа */}
-      {cuttingTasks.length > 0 && (
-        <div className="card-neon rounded-card overflow-hidden mt-4 sm:mt-6 transition-block">
+      {/* 2. Планирование */}
+      <div className="card-neon rounded-card overflow-hidden mt-4 sm:mt-6 transition-block">
+        <div className="p-4 sm:p-6 border-b border-white/25 dark:border-white/25 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-base sm:text-lg font-medium text-[#ECECEC] dark:text-dark-text">Планирование</h2>
+          {order?.workshop_id && (
+            <Link
+              to={`/planning?order_id=${order.id}${order.workshop_id ? `&workshop_id=${order.workshop_id}` : ''}`}
+              className="text-sm px-3 py-1.5 rounded-lg bg-primary-600/80 text-white hover:bg-primary-600"
+            >
+              Открыть в Планировании
+            </Link>
+          )}
+        </div>
+        <div className="p-4 sm:p-6">
+          {stagesLoading ? (
+            <p className="text-[#ECECEC]/70 dark:text-dark-text/70 text-sm">Загрузка...</p>
+          ) : !(productionStages?.planning || []).length ? (
+            <p className="text-[#ECECEC]/70 dark:text-dark-text/70 text-sm">Нет данных</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[280px] text-sm">
+                <thead>
+                  <tr className="bg-accent-2/80 dark:bg-dark-800 border-b border-white/25">
+                    <th className="text-left px-4 py-3 font-medium text-[#ECECEC] dark:text-dark-text/90">Дата</th>
+                    <th className="text-right px-4 py-3 font-medium text-[#ECECEC] dark:text-dark-text/90">План</th>
+                    <th className="text-right px-4 py-3 font-medium text-[#ECECEC] dark:text-dark-text/90">Факт</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(productionStages.planning || []).map((row) => (
+                    <tr key={row.date} className="border-b border-white/10 dark:border-white/10">
+                      <td className="px-4 py-2 text-[#ECECEC] dark:text-dark-text">{row.date}</td>
+                      <td className="px-4 py-2 text-right text-[#ECECEC]/90 dark:text-dark-text/80">{row.planned_qty ?? 0}</td>
+                      <td className="px-4 py-2 text-right text-[#ECECEC]/90 dark:text-dark-text/80">{row.actual_qty ?? 0}</td>
+                    </tr>
+                  ))}
+                  <tr className="bg-accent-2/50 dark:bg-dark-800 border-t-2 border-white/25 font-medium">
+                    <td className="px-4 py-3 text-[#ECECEC] dark:text-dark-text">Итого</td>
+                    <td className="px-4 py-3 text-right text-[#ECECEC] dark:text-dark-text">
+                      {(productionStages.planning || []).reduce((s, r) => s + (r.planned_qty ?? 0), 0)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-[#ECECEC] dark:text-dark-text">
+                      {(productionStages.planning || []).reduce((s, r) => s + (r.actual_qty ?? 0), 0)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 3. Раскрой */}
+      <div className="card-neon rounded-card overflow-hidden mt-4 sm:mt-6 transition-block">
           <div className="p-4 sm:p-6 border-b border-white/25 dark:border-white/25">
             <h2 className="text-base sm:text-lg font-medium text-[#ECECEC] dark:text-dark-text">
               Раскрой
             </h2>
-            <p className="text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mt-1">
-              Цех: {[...new Set(cuttingTasks.map((t) => t.cutting_type).filter(Boolean))].join(', ') || '—'}
-            </p>
+            {cuttingTasks.length > 0 && (
+              <p className="text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mt-1">
+                Цех: {[...new Set(cuttingTasks.map((t) => t.cutting_type).filter(Boolean))].join(', ') || '—'}
+              </p>
+            )}
           </div>
+          {cuttingTasks.length === 0 ? (
+            <div className="p-4 sm:p-6">
+              <p className="text-[#ECECEC]/70 dark:text-dark-text/70 text-sm">Нет данных</p>
+            </div>
+          ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px]">
               <thead>
@@ -1103,94 +1117,158 @@ export default function OrderDetails() {
               </tbody>
             </table>
           </div>
+          )}
         </div>
-      )}
 
-      {/* Планированные модели — после Раскрой */}
-      {order?.workshop_id && (
-        <div className="card-neon rounded-card overflow-hidden mt-4 sm:mt-6 transition-block">
-          <div className="p-4 sm:p-6 border-b border-white/25 dark:border-white/25">
-            <h2 className="text-base sm:text-lg font-medium text-[#ECECEC] dark:text-dark-text">
-              {order.Client?.name || '—'} — {displayOrderName}
-              {(order.Workshop?.floors_count ?? 0) > 1 && order.BuildingFloor?.name && (
-                <span className="text-[#ECECEC]/80 dark:text-dark-text/80 font-normal"> • {order.BuildingFloor.name}</span>
-              )}
-            </h2>
-          </div>
-          {planModelLoading ? (
-            <div className="p-8 text-center text-[#ECECEC]/80 dark:text-dark-text/80">Загрузка...</div>
-          ) : !planModelData?.rows?.length ? (
-            <div className="p-6 text-[#ECECEC]/80 dark:text-dark-text/80">
-              {order.Workshop?.floors_count > 1 && !order.building_floor_id
-                ? 'Укажите этаж заказа для просмотра плана'
-                : 'Нет данных за выбранный период'}
-            </div>
-          ) : (() => {
-            const rowsWithData = planModelData.rows.filter(
-              (r) => (r.planned_qty ?? 0) > 0 || (r.actual_qty ?? 0) > 0
-            );
-            if (rowsWithData.length === 0) {
-              return (
-                <div className="p-6 text-[#ECECEC]/80 dark:text-dark-text/80">
-                  Нет данных за выбранный период
-                </div>
-              );
-            }
-            const displayRows = rowsWithData;
-            const plannedSum = displayRows.reduce((s, r) => s + (r.planned_qty ?? 0), 0);
-            const actualSum = displayRows.reduce((s, r) => s + (r.actual_qty ?? 0), 0);
-            return (
-            <>
-              <div className="flex flex-wrap items-center gap-2 mb-4">
-                <Link
-                  to={`/planning?order_id=${order.id}${order.workshop_id ? `&workshop_id=${order.workshop_id}` : ''}`}
-                  className="text-sm px-3 py-1.5 rounded-lg bg-primary-600/80 text-white hover:bg-primary-600"
-                >
-                  Открыть в Планировании
-                </Link>
-                <Link
-                  to={`/sewing${order.id ? `?order_id=${order.id}` : ''}`}
-                  className="text-sm px-3 py-1.5 rounded-lg bg-primary-600/80 text-white hover:bg-primary-600"
-                >
-                  Открыть пошив
-                </Link>
-                <Link
-                  to="/qc"
-                  className="text-sm px-3 py-1.5 rounded-lg bg-primary-600/80 text-white hover:bg-primary-600"
-                >
-                  Открыть ОТК
-                </Link>
-              </div>
+      {/* 4. Пошив */}
+      <div className="card-neon rounded-card overflow-hidden mt-4 sm:mt-6 transition-block">
+        <div className="p-4 sm:p-6 border-b border-white/25 dark:border-white/25 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-base sm:text-lg font-medium text-[#ECECEC] dark:text-dark-text">Пошив</h2>
+          <Link to={`/sewing${order?.id ? `?order_id=${order.id}` : ''}`} className="text-sm px-3 py-1.5 rounded-lg bg-primary-600/80 text-white hover:bg-primary-600">
+            Открыть пошив
+          </Link>
+        </div>
+        <div className="p-4 sm:p-6">
+          {stagesLoading ? (
+            <p className="text-[#ECECEC]/70 dark:text-dark-text/70 text-sm">Загрузка...</p>
+          ) : !(productionStages?.sewing || []).length ? (
+            <p className="text-[#ECECEC]/70 dark:text-dark-text/70 text-sm">Нет данных</p>
+          ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[400px]">
+              <table className="w-full min-w-[400px] text-sm">
                 <thead>
                   <tr className="bg-accent-2/80 dark:bg-dark-800 border-b border-white/25">
-                    <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Дата</th>
-                    <th className="text-right px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">План</th>
-                    <th className="text-right px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Факт</th>
+                    <th className="text-left px-4 py-3 font-medium text-[#ECECEC] dark:text-dark-text/90">Партия</th>
+                    <th className="text-left px-4 py-3 font-medium text-[#ECECEC] dark:text-dark-text/90">Статус</th>
+                    <th className="text-right px-4 py-3 font-medium text-[#ECECEC] dark:text-dark-text/90">Кол-во</th>
+                    <th className="text-left px-4 py-3 font-medium text-[#ECECEC] dark:text-dark-text/90">Период</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {displayRows.map((row) => (
-                    <tr key={row.date} className="border-b border-white/10 dark:border-white/10">
-                      <td className="px-4 py-2 text-[#ECECEC] dark:text-dark-text">{row.date}</td>
-                      <td className="px-4 py-2 text-right text-[#ECECEC]/90 dark:text-dark-text/80">{row.planned_qty}</td>
-                      <td className="px-4 py-2 text-right text-[#ECECEC]/90 dark:text-dark-text/80">{row.actual_qty}</td>
+                  {(productionStages.sewing || []).map((sb) => (
+                    <tr key={sb.id} className="border-b border-white/10 dark:border-white/10">
+                      <td className="px-4 py-2 text-[#ECECEC] dark:text-dark-text font-medium">{sb.batch_code || `#${sb.id}`}</td>
+                      <td className="px-4 py-2 text-[#ECECEC]/90 dark:text-dark-text/80">{sb.status || '—'}</td>
+                      <td className="px-4 py-2 text-right text-[#ECECEC]/90 dark:text-dark-text/80">{sb.qty ?? '—'}</td>
+                      <td className="px-4 py-2 text-[#ECECEC]/90 dark:text-dark-text/80">
+                        {sb.date_from || sb.date_to ? [sb.date_from, sb.date_to].filter(Boolean).join(' — ') : '—'}
+                      </td>
                     </tr>
                   ))}
-                  <tr className="bg-accent-2/50 dark:bg-dark-800 border-t-2 border-white/25 font-bold">
-                    <td className="px-4 py-3 text-[#ECECEC] dark:text-dark-text">Итого</td>
-                    <td className="px-4 py-3 text-right text-[#ECECEC] dark:text-dark-text">{plannedSum}</td>
-                    <td className="px-4 py-3 text-right text-[#ECECEC] dark:text-dark-text">{actualSum}</td>
-                  </tr>
                 </tbody>
               </table>
             </div>
-            </>
-            );
-          })()}
+          )}
         </div>
-      )}
+      </div>
+
+      {/* 5. ОТК */}
+      <div className="card-neon rounded-card overflow-hidden mt-4 sm:mt-6 transition-block">
+        <div className="p-4 sm:p-6 border-b border-white/25 dark:border-white/25 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-base sm:text-lg font-medium text-[#ECECEC] dark:text-dark-text">ОТК</h2>
+          <Link to="/qc" className="text-sm px-3 py-1.5 rounded-lg bg-primary-600/80 text-white hover:bg-primary-600">
+            Открыть ОТК
+          </Link>
+        </div>
+        <div className="p-4 sm:p-6">
+          {stagesLoading ? (
+            <p className="text-[#ECECEC]/70 dark:text-dark-text/70 text-sm">Загрузка...</p>
+          ) : !(productionStages?.qc || []).length ? (
+            <p className="text-[#ECECEC]/70 dark:text-dark-text/70 text-sm">Нет данных</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[280px] text-sm">
+                <thead>
+                  <tr className="bg-accent-2/80 dark:bg-dark-800 border-b border-white/25">
+                    <th className="text-left px-4 py-3 font-medium text-[#ECECEC] dark:text-dark-text/90">Партия</th>
+                    <th className="text-left px-4 py-3 font-medium text-[#ECECEC] dark:text-dark-text/90">Статус</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(productionStages.qc || []).map((qb) => (
+                    <tr key={qb.id} className="border-b border-white/10 dark:border-white/10">
+                      <td className="px-4 py-2 text-[#ECECEC] dark:text-dark-text">#{qb.batch_id ?? qb.id}</td>
+                      <td className="px-4 py-2 text-[#ECECEC]/90 dark:text-dark-text/80">{qb.status || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 6. Склад */}
+      <div className="card-neon rounded-card overflow-hidden mt-4 sm:mt-6 transition-block">
+        <div className="p-4 sm:p-6 border-b border-white/25 dark:border-white/25">
+          <h2 className="text-base sm:text-lg font-medium text-[#ECECEC] dark:text-dark-text">Склад</h2>
+        </div>
+        <div className="p-4 sm:p-6">
+          {stagesLoading ? (
+            <p className="text-[#ECECEC]/70 dark:text-dark-text/70 text-sm">Загрузка...</p>
+          ) : !(productionStages?.warehouse || []).length ? (
+            <p className="text-[#ECECEC]/70 dark:text-dark-text/70 text-sm">Нет данных</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[300px] text-sm">
+                <thead>
+                  <tr className="bg-accent-2/80 dark:bg-dark-800 border-b border-white/25">
+                    <th className="text-left px-4 py-3 font-medium text-[#ECECEC] dark:text-dark-text/90">Партия</th>
+                    <th className="text-left px-4 py-3 font-medium text-[#ECECEC] dark:text-dark-text/90">Размер</th>
+                    <th className="text-right px-4 py-3 font-medium text-[#ECECEC] dark:text-dark-text/90">Кол-во</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(productionStages.warehouse || []).map((row, i) => (
+                    <tr key={row.id ?? i} className="border-b border-white/10 dark:border-white/10">
+                      <td className="px-4 py-2 text-[#ECECEC] dark:text-dark-text">{row.batch_code ?? row.batch ?? '—'}</td>
+                      <td className="px-4 py-2 text-[#ECECEC]/90 dark:text-dark-text/80">{row.size_name ?? row.model_size_id ?? row.size_id ?? '—'}</td>
+                      <td className="px-4 py-2 text-right text-[#ECECEC]/90 dark:text-dark-text/80">{row.qty ?? 0}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 7. Отгрузка */}
+      <div className="card-neon rounded-card overflow-hidden mt-4 sm:mt-6 transition-block">
+        <div className="p-4 sm:p-6 border-b border-white/25 dark:border-white/25">
+          <h2 className="text-base sm:text-lg font-medium text-[#ECECEC] dark:text-dark-text">Отгрузка</h2>
+        </div>
+        <div className="p-4 sm:p-6">
+          {stagesLoading ? (
+            <p className="text-[#ECECEC]/70 dark:text-dark-text/70 text-sm">Загрузка...</p>
+          ) : !(productionStages?.shipping || []).length ? (
+            <p className="text-[#ECECEC]/70 dark:text-dark-text/70 text-sm">Нет данных</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[300px] text-sm">
+                <thead>
+                  <tr className="bg-accent-2/80 dark:bg-dark-800 border-b border-white/25">
+                    <th className="text-left px-4 py-3 font-medium text-[#ECECEC] dark:text-dark-text/90">Партия</th>
+                    <th className="text-left px-4 py-3 font-medium text-[#ECECEC] dark:text-dark-text/90">Дата</th>
+                    <th className="text-right px-4 py-3 font-medium text-[#ECECEC] dark:text-dark-text/90">Кол-во</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(productionStages.shipping || []).map((s) => (
+                    <tr key={s.id} className="border-b border-white/10 dark:border-white/10">
+                      <td className="px-4 py-2 text-[#ECECEC] dark:text-dark-text">{s.batch_code ?? '—'}</td>
+                      <td className="px-4 py-2 text-[#ECECEC]/90 dark:text-dark-text/80">
+                        {s.shipped_at ? new Date(s.shipped_at).toLocaleDateString('ru-RU') : '—'}
+                      </td>
+                      <td className="px-4 py-2 text-right text-[#ECECEC]/90 dark:text-dark-text/80">{s.total_qty ?? 0}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
 
       {showOperationsSection && (
       <div className="card-neon rounded-card overflow-hidden transition-block">
@@ -1761,7 +1839,10 @@ export default function OrderDetails() {
         orderId={order?.id}
         onClose={() => {
           setShowProcurementModal(false);
-          if (order?.id) api.orders.getProcurement(order.id).then(setProcurement).catch(() => {});
+          if (order?.id) {
+            api.orders.getProcurement(order.id).then(setProcurement).catch(() => {});
+            loadProductionStages();
+          }
         }}
       />
     </div>

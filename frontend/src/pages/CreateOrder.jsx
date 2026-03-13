@@ -602,9 +602,6 @@ export default function CreateOrder() {
           <NeonButton type="submit" disabled={loading || !isValid}>
             {loading ? 'Создание...' : 'Создать заказ'}
           </NeonButton>
-          <NeonButton type="button" onClick={() => navigate(-1)} variant="secondary">
-            Отмена
-          </NeonButton>
         </div>
       </form>
     </div>

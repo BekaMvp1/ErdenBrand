@@ -42,7 +42,7 @@ export default function Shipments() {
   const modelName = (row) =>
     row.Order?.model_name || row.Order?.title || `#${row.order_id}`;
   const sizeName = (row) =>
-    row.ModelSize?.Size?.name || `#${row.model_size_id}`;
+    row.size_name ?? row.ModelSize?.Size?.name ?? row.Size?.name ?? (row.model_size_id ? `#${row.model_size_id}` : '—');
   const batchCode = (row) => row.batch_code ?? row.batch ?? '—';
 
   // Группировка остатков по партии (batch_id или batch для легаси)
@@ -69,6 +69,7 @@ export default function Shipments() {
     setFormItems(
       group.rows.map((r) => ({
         id: r.id,
+        warehouse_stock_id: r.id,
         model_size_id: r.model_size_id,
         size_name: sizeName(r),
         available: Number(r.qty) || 0,
@@ -84,11 +85,11 @@ export default function Shipments() {
     setError('');
   };
 
-  const handleChangeBatchItem = (modelSizeId, value) => {
+  const handleChangeBatchItem = (itemId, value) => {
     const num = Math.max(0, parseInt(value, 10) || 0);
     setFormItems((prev) =>
       prev.map((it) => {
-        if (it.model_size_id !== modelSizeId) return it;
+        if (it.id !== itemId) return it;
         return { ...it, qty: Math.min(num, it.available) };
       })
     );
@@ -97,7 +98,9 @@ export default function Shipments() {
   const handleShipBatch = async (e) => {
     e.preventDefault();
     if (!modalBatch?.batch_id) return;
-    const items = formItems.filter((it) => it.qty > 0).map((it) => ({ model_size_id: it.model_size_id, qty: it.qty }));
+    const items = formItems
+      .filter((it) => it.qty > 0)
+      .map((it) => (it.warehouse_stock_id ? { warehouse_stock_id: it.warehouse_stock_id, qty: it.qty } : { model_size_id: it.model_size_id, qty: it.qty }));
     if (items.length === 0) {
       setError('Укажите количество хотя бы по одному размеру');
       return;
@@ -249,7 +252,7 @@ export default function Shipments() {
                       <td className="px-4 py-3 text-neon-text">{batchCodeVal}</td>
                       <td className="px-4 py-3 text-neon-text">
                         {hasItems
-                          ? row.ShipmentItems.map((it) => `${it.ModelSize?.Size?.name ?? it.model_size_id}: ${it.qty}`).join(', ')
+                          ? row.ShipmentItems.map((it) => `${it.ModelSize?.Size?.name ?? it.Size?.name ?? it.model_size_id ?? it.size_id ?? '—'}: ${it.qty}`).join(', ')
                           : `${row.ModelSize?.Size?.name ?? '—'} ${row.qty ?? 0}`}
                       </td>
                       <td className="px-4 py-3 text-right">
@@ -280,7 +283,7 @@ export default function Shipments() {
               <p className="text-sm text-neon-muted mb-4">{modalBatch.modelName}</p>
               <form onSubmit={handleShipBatch} className="space-y-3">
                 {formItems.map((it) => (
-                  <div key={it.model_size_id} className="flex items-center justify-between gap-2">
+                  <div key={it.id} className="flex items-center justify-between gap-2">
                     <span className="text-neon-text">{it.size_name}</span>
                     <span className="text-neon-muted text-sm">доступно: {it.available}</span>
                     <NeonInput
@@ -289,7 +292,7 @@ export default function Shipments() {
                       max={it.available}
                       className="w-24"
                       value={it.qty}
-                      onChange={(e) => handleChangeBatchItem(it.model_size_id, e.target.value)}
+                      onChange={(e) => handleChangeBatchItem(it.id, e.target.value)}
                     />
                   </div>
                 ))}

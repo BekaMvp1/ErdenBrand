@@ -89,6 +89,8 @@ export const api = {
       request(`/api/orders/${id}/photos/${index}`, { method: 'DELETE' }),
     getProcurement: (id) =>
       request(`/api/orders/${id}/procurement`),
+    getProductionStages: (id) =>
+      request(`/api/orders/${id}/production-stages`),
     completeProcurement: (id, items) =>
       request(`/api/orders/${id}/procurement/complete`, { method: 'POST', body: JSON.stringify({ items: items || [] }) }),
     completePlanning: (id) =>
@@ -419,6 +421,11 @@ export const api = {
       request('/api/warehouse-stock/shipments', {
         method: 'POST',
         body: JSON.stringify(data),
+      }),
+    ship: (warehouseStockId, qty) =>
+      request('/api/warehouse-stock/ship', {
+        method: 'POST',
+        body: JSON.stringify({ warehouse_stock_id: warehouseStockId, qty }),
       }),
   },
   // sewing-plans отключён; партии создаются только через Пошив → «Завершить пошив → ОТК»

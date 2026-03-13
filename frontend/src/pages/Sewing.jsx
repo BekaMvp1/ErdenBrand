@@ -67,17 +67,20 @@ export default function Sewing() {
     loadBoard();
   }, [loadBoard]);
 
-  const loadMatrix = useCallback(async (order_id, floor_id) => {
+  const loadMatrix = useCallback(async (order_id, floor_id, options = {}) => {
+    const { preserveInputs = false } = options;
     try {
       const data = await api.sewing.matrix({ order_id, floor_id });
       setMatrixData(data);
-      const init = {};
-      (data.colors || []).forEach((color) => {
-        (data.sizes || []).forEach((size) => {
-          init[`${color}|${size}`] = '';
+      if (!preserveInputs) {
+        const init = {};
+        (data.colors || []).forEach((color) => {
+          (data.sizes || []).forEach((size) => {
+            init[`${color}|${size}`] = '';
+          });
         });
-      });
-      setMatrixInputs(init);
+        setMatrixInputs(init);
+      }
     } catch (err) {
       setMatrixData(null);
       setError(err.message || 'Ошибка загрузки матрицы');
@@ -182,12 +185,11 @@ export default function Sewing() {
           floor_id: selectedItem.floor_id,
           add_qty: simpleInputQty,
         });
-        setFactInput('');
       }
       setSuccessMsg('Сохранено');
       setTimeout(() => setSuccessMsg(''), 2000);
-      loadBoard();
-      loadMatrix(selectedItem.order_id, selectedItem.floor_id);
+      await loadBoard();
+      await loadMatrix(selectedItem.order_id, selectedItem.floor_id, { preserveInputs: true });
     } catch (err) {
       setError(err.message || 'Ошибка сохранения');
     } finally {

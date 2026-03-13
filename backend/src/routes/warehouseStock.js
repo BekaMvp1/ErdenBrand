@@ -501,19 +501,89 @@ router.get('/stock', async (req, res, next) => {
     const list = await db.WarehouseStock.findAll({
       where,
       include: [
-        { model: db.ModelSize, as: 'ModelSize', include: [{ model: db.Size, as: 'Size' }] },
+        { model: db.ModelSize, as: 'ModelSize', required: false, include: [{ model: db.Size, as: 'Size' }] },
+        { model: db.Size, as: 'Size', required: false, attributes: ['id', 'name'] },
         { model: db.Order, as: 'Order', attributes: ['id', 'title', 'model_name'], include: [{ model: db.Client, as: 'Client', attributes: ['name'] }] },
         { model: db.SewingBatch, as: 'SewingBatch', attributes: ['id', 'batch_code'], required: false },
       ],
-      order: [['order_id'], ['batch_id'], ['model_size_id'], ['batch']],
+      order: [['order_id'], ['batch_id'], ['model_size_id'], ['size_id'], ['batch']],
     });
     const out = list.map((row) => {
       const j = row.toJSON();
       j.batch_code = row.SewingBatch?.batch_code ?? row.batch ?? `#${row.batch_id || row.id}`;
+      j.size_name = row.ModelSize?.Size?.name ?? row.Size?.name ?? String(row.size_id ?? row.model_size_id ?? '—');
       return j;
     });
     res.json(out);
   } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/warehouse-stock/ship — отгрузка по warehouse_stock_id.
+ * body: { warehouse_stock_id, qty }
+ * Правило: qty <= warehouse_stock.qty. После отгрузки остаток уменьшается.
+ */
+router.post('/ship', async (req, res, next) => {
+  const t = await db.sequelize.transaction();
+  try {
+    const { warehouse_stock_id, qty } = req.body;
+    if (!warehouse_stock_id) return res.status(400).json({ error: 'Укажите warehouse_stock_id' });
+    const shipQty = Math.max(0, parseInt(qty, 10) || 0);
+    if (shipQty <= 0) return res.status(400).json({ error: 'Количество должно быть больше 0' });
+
+    const stockRow = await db.WarehouseStock.findByPk(warehouse_stock_id, { lock: t.LOCK.UPDATE, transaction: t });
+    if (!stockRow) {
+      await t.rollback();
+      return res.status(404).json({ error: 'Позиция на складе не найдена' });
+    }
+    const currentQty = parseInt(stockRow.qty, 10) || 0;
+    if (shipQty > currentQty) {
+      await t.rollback();
+      return res.status(400).json({
+        error: `Нельзя отгрузить больше, чем на складе. Остаток: ${currentQty}, запрошено: ${shipQty}`,
+        warehouse_qty: currentQty,
+        requested: shipQty,
+      });
+    }
+
+    const newQty = currentQty - shipQty;
+    if (newQty === 0) {
+      await stockRow.destroy({ transaction: t });
+    } else {
+      await stockRow.update({ qty: newQty }, { transaction: t });
+    }
+
+    const shipment = await db.Shipment.create(
+      {
+        batch_id: stockRow.batch_id,
+        order_id: stockRow.order_id,
+        shipped_at: new Date(),
+        status: 'shipped',
+      },
+      { transaction: t }
+    );
+    await db.ShipmentItem.create(
+      {
+        shipment_id: shipment.id,
+        model_size_id: stockRow.model_size_id || null,
+        size_id: stockRow.size_id || null,
+        qty: shipQty,
+      },
+      { transaction: t }
+    );
+
+    await t.commit();
+    const withAssoc = await db.Shipment.findByPk(shipment.id, {
+      include: [
+        { model: db.SewingBatch, as: 'SewingBatch' },
+        { model: db.ShipmentItem, as: 'ShipmentItems' },
+      ],
+    });
+    res.status(201).json(withAssoc);
+  } catch (err) {
+    await t.rollback();
     next(err);
   }
 });
@@ -561,7 +631,14 @@ router.get('/shipments', async (req, res, next) => {
         { model: db.ModelSize, as: 'ModelSize', include: [{ model: db.Size, as: 'Size' }], required: false },
         { model: db.Order, as: 'Order', attributes: ['id', 'title', 'model_name'], include: [{ model: db.Client, as: 'Client', attributes: ['name'] }], required: false },
         { model: db.SewingBatch, as: 'SewingBatch', attributes: ['id', 'batch_code', 'order_id'], required: false },
-        { model: db.ShipmentItem, as: 'ShipmentItems', include: [{ model: db.ModelSize, as: 'ModelSize', include: [{ model: db.Size, as: 'Size' }] }] },
+        {
+          model: db.ShipmentItem,
+          as: 'ShipmentItems',
+          include: [
+            { model: db.ModelSize, as: 'ModelSize', required: false, include: [{ model: db.Size, as: 'Size' }] },
+            { model: db.Size, as: 'Size', required: false, attributes: ['id', 'name'] },
+          ],
+        },
       ],
       order: [['shipped_at', 'DESC']],
     });
@@ -583,7 +660,6 @@ router.post('/shipments', async (req, res, next) => {
     const { batch_id, items, order_id, model_size_id, batch, qty } = req.body;
 
     if (batch_id && Array.isArray(items) && items.length > 0) {
-      // Новая схема: отгрузка по партии и размерам
       const sewingBatch = await db.SewingBatch.findByPk(batch_id, { transaction: t });
       if (!sewingBatch) {
         await t.rollback();
@@ -599,24 +675,38 @@ router.post('/shipments', async (req, res, next) => {
         { transaction: t }
       );
       for (const it of items) {
-        const model_size_id_it = Number(it.model_size_id);
         const shipQty = Math.max(0, parseFloat(it.qty) || 0);
         if (shipQty <= 0) continue;
-        const stockRow = await db.WarehouseStock.findOne({
-          where: { batch_id: Number(batch_id), model_size_id: model_size_id_it },
-          lock: t.LOCK.UPDATE,
-          transaction: t,
-        });
+
+        let stockRow;
+        if (it.warehouse_stock_id) {
+          stockRow = await db.WarehouseStock.findOne({
+            where: { id: Number(it.warehouse_stock_id), batch_id: Number(batch_id) },
+            lock: t.LOCK.UPDATE,
+            transaction: t,
+          });
+        } else {
+          const model_size_id_it = Number(it.model_size_id);
+          if (!model_size_id_it) continue;
+          stockRow = await db.WarehouseStock.findOne({
+            where: { batch_id: Number(batch_id), model_size_id: model_size_id_it },
+            lock: t.LOCK.UPDATE,
+            transaction: t,
+          });
+        }
         if (!stockRow) {
           await t.rollback();
-          return res.status(400).json({ error: `Нет остатка по размеру model_size_id=${model_size_id_it} для партии` });
+          return res.status(400).json({
+            error: it.warehouse_stock_id
+              ? 'Позиция склада не найдена для партии'
+              : `Нет остатка по размеру model_size_id=${it.model_size_id} для партии`,
+          });
         }
         const currentQty = parseFloat(stockRow.qty) || 0;
         if (shipQty > currentQty) {
           await t.rollback();
           return res.status(400).json({
             error: `Нельзя отгрузить больше, чем warehouse_qty. На складе: ${currentQty}, запрошено: ${shipQty}`,
-            model_size_id: model_size_id_it,
             warehouse_qty: currentQty,
             requested: shipQty,
           });
@@ -628,7 +718,12 @@ router.post('/shipments', async (req, res, next) => {
           await stockRow.update({ qty: newQty }, { transaction: t });
         }
         await db.ShipmentItem.create(
-          { shipment_id: shipment.id, model_size_id: model_size_id_it, qty: shipQty },
+          {
+            shipment_id: shipment.id,
+            model_size_id: stockRow.model_size_id || null,
+            size_id: stockRow.size_id || null,
+            qty: shipQty,
+          },
           { transaction: t }
         );
       }

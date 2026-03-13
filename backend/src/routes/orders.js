@@ -1736,6 +1736,136 @@ router.get('/:id', async (req, res, next) => {
 });
 
 /**
+ * GET /api/orders/:id/production-stages
+ * Сводка по всем этапам производства для отображения на странице заказа.
+ */
+router.get('/:id/production-stages', async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.id);
+    if (!orderId) return res.status(400).json({ error: 'Некорректный id заказа' });
+
+    const order = await db.Order.findByPk(orderId);
+    if (!order) return res.status(404).json({ error: 'Заказ не найден' });
+
+    const [procurementReq, planDays, cuttingTasks, sewingBatches, warehouseStock, shipments] = await Promise.all([
+      db.ProcurementRequest.findOne({
+        where: { order_id: orderId },
+        include: [{ model: db.ProcurementItem, as: 'ProcurementItems' }],
+      }),
+      db.ProductionPlanDay.findAll({
+        where: { order_id: orderId },
+        attributes: ['date', 'planned_qty', 'actual_qty'],
+        order: [['date', 'ASC']],
+        raw: true,
+      }),
+      db.CuttingTask.findAll({
+        where: { order_id: orderId },
+        attributes: ['id', 'cutting_type', 'floor', 'status', 'start_date', 'end_date', 'actual_variants'],
+        raw: true,
+      }),
+      db.SewingBatch.findAll({
+        where: { order_id: orderId },
+        include: [{ model: db.QcBatch, as: 'QcBatch', required: false }],
+        order: [['id', 'ASC']],
+      }),
+      db.WarehouseStock.findAll({
+        where: { order_id: orderId },
+        include: [
+          { model: db.SewingBatch, as: 'SewingBatch', attributes: ['id', 'batch_code'] },
+          { model: db.ModelSize, as: 'ModelSize', required: false, include: [{ model: db.Size, as: 'Size' }] },
+          { model: db.Size, as: 'Size', required: false, attributes: ['id', 'name'] },
+        ],
+        raw: false,
+      }),
+      db.Shipment.findAll({
+        where: { order_id: orderId },
+        include: [
+          { model: db.SewingBatch, as: 'SewingBatch', attributes: ['id', 'batch_code'] },
+          { model: db.ShipmentItem, as: 'ShipmentItems' },
+        ],
+        order: [['shipped_at', 'DESC']],
+      }),
+    ]);
+
+    const procurement = procurementReq
+      ? {
+          id: procurementReq.id,
+          updated_at: procurementReq.updated_at,
+          status: procurementReq.status || 'draft',
+          due_date: procurementReq.due_date,
+          total_sum: procurementReq.total_sum,
+          completed_at: procurementReq.completed_at,
+          items: (procurementReq.ProcurementItems || []).map((i) => ({
+            id: i.id,
+            material_name: i.material_name,
+            planned_qty: i.planned_qty,
+            unit: i.unit || 'шт',
+            purchased_qty: i.purchased_qty,
+            purchased_price: i.purchased_price,
+            purchased_sum: i.purchased_sum,
+          })),
+        }
+      : null;
+
+    const planning = (planDays || []).map((r) => ({
+      date: r.date,
+      planned_qty: r.planned_qty ?? 0,
+      actual_qty: r.actual_qty ?? 0,
+    }));
+
+    const qcBatches = (sewingBatches || [])
+      .map((sb) => sb.QcBatch)
+      .filter(Boolean);
+
+    const warehouse = (warehouseStock || []).map((row) => {
+      const j = row.toJSON ? row.toJSON() : row;
+      j.size_name = row.ModelSize?.Size?.name ?? row.Size?.name ?? row.model_size_id ?? row.size_id ?? '—';
+      j.batch_code = row.SewingBatch?.batch_code ?? row.batch ?? `#${row.batch_id || row.id}`;
+      return j;
+    });
+
+    const shipping = (shipments || []).map((s) => ({
+      id: s.id,
+      shipped_at: s.shipped_at,
+      status: s.status,
+      batch_code: s.SewingBatch?.batch_code,
+      total_qty: (s.ShipmentItems || []).reduce((sum, it) => sum + (Number(it.qty) || 0), 0),
+    }));
+
+    res.json({
+      procurement,
+      planning,
+      cutting: (cuttingTasks || []).map((t) => ({
+        id: t.id,
+        cutting_type: t.cutting_type,
+        floor: t.floor,
+        status: t.status,
+        start_date: t.start_date,
+        end_date: t.end_date,
+      })),
+      sewing: (sewingBatches || []).map((sb) => ({
+        id: sb.id,
+        batch_code: sb.batch_code,
+        status: sb.status,
+        qty: sb.qty,
+        date_from: sb.date_from,
+        date_to: sb.date_to,
+        floor_id: sb.floor_id,
+      })),
+      qc: qcBatches.map((qb) => ({
+        id: qb.id,
+        batch_id: qb.batch_id,
+        status: qb.status,
+      })),
+      warehouse,
+      shipping,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * POST /api/orders/:id/photos
  * Добавить фото к заказу (body: { photo: "data:image/...;base64,..." })
  */

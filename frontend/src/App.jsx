@@ -24,7 +24,6 @@ import Cutting from "./pages/Cutting";
 import Warehouse from "./pages/Warehouse";
 import Qc from "./pages/Qc";
 import Shipments from "./pages/Shipments";
-import Reports from "./pages/Reports";
 import References from "./pages/References";
 import Finance2026 from "./pages/Finance2026";
 import Settings from "./pages/Settings";
@@ -71,7 +70,6 @@ export default function App() {
                 <Route path="warehouse" element={<Warehouse />} />
                 <Route path="qc" element={<Qc />} />
                 <Route path="shipments" element={<Shipments />} />
-                <Route path="reports" element={<Reports />} />
                 <Route path="finance" element={<Finance2026 />} />
                 <Route path="references" element={<References />} />
                 <Route path="settings" element={<Settings />} />

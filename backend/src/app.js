@@ -24,8 +24,6 @@ const warehouseStockRoutes = require("./routes/warehouseStock");
 // const sewingPlansRoutes = require("./routes/sewingPlans");
 const planningRoutes = require("./routes/planning");
 const orderOperationsRoutes = require("./routes/orderOperations");
-const reportsRoutes = require("./routes/reports");
-const reportsV2Routes = require("./routes/reportsV2Routes");
 const referencesRoutes = require("./routes/references");
 const clientsRoutes = require("./routes/clients");
 const workshopsRoutes = require("./routes/workshops");
@@ -190,21 +188,6 @@ app.use(
   requireRole("admin", "manager", "technologist", "operator"),
   technologistFloorOnly,
   orderOperationsRoutes,
-);
-app.use(
-  "/api/reports",
-  authenticate,
-  requireRole("admin", "manager", "technologist"),
-  technologistFloorOnly,
-  operatorRestricted,
-  reportsRoutes,
-);
-app.use(
-  "/api/reports/v2",
-  authenticate,
-  requireRole("admin", "manager", "technologist", "operator"),
-  technologistFloorOnly,
-  reportsV2Routes,
 );
 app.use(
   "/api/references",

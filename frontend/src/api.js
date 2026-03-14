@@ -266,36 +266,6 @@ export const api = {
       request('/api/sewing/complete', { method: 'POST', body: JSON.stringify(body) }),
     // ensure-batch удалён: партия создаётся только через complete (Завершить пошив → ОТК)
   },
-  reports: {
-    daily: (date) => request(`/api/reports/daily?date=${date}`),
-    weekly: (from, to) => request(`/api/reports/weekly?from=${from}&to=${to}`),
-    monthly: (month) => request(`/api/reports/monthly?month=${month}`),
-    planFact: (from, to) =>
-      request(`/api/reports/plan-fact?from=${from}&to=${to}`),
-    v2: {
-      kpi: (params) =>
-        request(`/api/reports/v2/kpi?${new URLSearchParams(params)}`),
-      floors: (params) =>
-        request(`/api/reports/v2/floors?${new URLSearchParams(params)}`),
-      technologists: (params) =>
-        request(`/api/reports/v2/technologists?${new URLSearchParams(params)}`),
-      sewers: (params) =>
-        request(`/api/reports/v2/sewers?${new URLSearchParams(params)}`),
-      ordersLate: (params) =>
-        request(`/api/reports/v2/orders-late?${new URLSearchParams(params)}`),
-      planFact: (params) =>
-        request(`/api/reports/v2/plan-fact?${new URLSearchParams(params)}`),
-      exportCsv: async (params) => {
-        const q = new URLSearchParams(params).toString();
-        const token = sessionStorage.getItem('token');
-        const res = await fetch(`${API_URL}/api/reports/v2/export.csv?${q}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-        if (!res.ok) throw new Error(await res.text());
-        return res.blob();
-      },
-    },
-  },
   settings: {
     deleteAllOrders: () =>
       request('/api/settings/delete-all-orders', { method: 'POST' }),

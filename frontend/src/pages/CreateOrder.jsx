@@ -48,9 +48,23 @@ export default function CreateOrder() {
   const [editingRowTotal, setEditingRowTotal] = useState(null);
   const [orderPhotos, setOrderPhotos] = useState([]);
 
-  const loadRefs = useCallback(() => {
-    api.references.clients().then(setClients);
-    api.workshops.list().then(setWorkshops);
+  const loadRefs = useCallback(async () => {
+    const [clientsRes, workshopsRes, floorsRes] = await Promise.all([
+      api.references.clients(),
+      api.workshops.list(),
+      api.references.floors(),
+    ]);
+    setClients(clientsRes || []);
+    const workshops = workshopsRes || [];
+    const floors = floorsRes || [];
+    const byName = new Map();
+    workshops.forEach((w) => byName.set(w.name, { ...w, id: w.id, _source: 'workshop' }));
+    floors.forEach((f) => {
+      if (!byName.has(f.name)) {
+        byName.set(f.name, { id: `floor-${f.id}`, floorId: f.id, name: f.name, _source: 'floor' });
+      }
+    });
+    setWorkshops(Array.from(byName.values()));
   }, []);
 
   useEffect(() => {
@@ -212,7 +226,12 @@ export default function CreateOrder() {
         deadline: form.deadline,
         comment: form.comment || undefined,
         planned_month: form.planned_month,
-        workshop_id: parseInt(form.workshop_id, 10),
+        workshop_id: form.workshop_id.toString().startsWith('floor-')
+          ? null
+          : parseInt(form.workshop_id, 10),
+        floor_id: form.workshop_id.toString().startsWith('floor-')
+          ? parseInt(form.workshop_id.replace('floor-', ''), 10)
+          : undefined,
         sizes: selectedSizes,
         variants,
         photos: orderPhotos,
@@ -226,11 +245,6 @@ export default function CreateOrder() {
   };
 
   const today = new Date().toISOString().slice(0, 10);
-  const currentYear = new Date().getFullYear();
-  const months = Array.from({ length: 12 }, (_, i) => {
-    const m = String(i + 1).padStart(2, '0');
-    return `${currentYear}-${m}`;
-  });
 
   return (
     <div>
@@ -358,13 +372,16 @@ export default function CreateOrder() {
                 required
               >
                 <option value="">Выберите месяц</option>
-                {months.map((m) => (
+                {[
+                  'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+                  'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь',
+                ].map((m, i) => (
                   <option key={m} value={m}>{m}</option>
                 ))}
               </NeonSelect>
             </div>
             <div>
-              <label className="block text-sm text-[#ECECEC] dark:text-dark-text/90 mb-1">Цех</label>
+              <label className="block text-sm text-[#ECECEC] dark:text-dark-text/90 mb-1">Цех пошива</label>
               <NeonSelect
                 value={form.workshop_id}
                 onChange={(e) => setForm({ ...form, workshop_id: e.target.value })}

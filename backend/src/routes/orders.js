@@ -181,8 +181,19 @@ router.post('/', async (req, res, next) => {
     if (!planned_month) {
       return res.status(400).json({ error: 'Укажите planned_month (месяц плана)' });
     }
-    if (!workshop_id) {
-      return res.status(400).json({ error: 'Укажите workshop_id (цех)' });
+    let effectiveWorkshopId = workshop_id ? parseInt(workshop_id, 10) : null;
+    if (!effectiveWorkshopId && floor_id) {
+      const floor = await db.Floor.findByPk(parseInt(floor_id, 10));
+      if (floor) {
+        const [w] = await db.Workshop.findOrCreate({
+          where: { name: floor.name },
+          defaults: { name: floor.name, floors_count: 1, is_active: true },
+        });
+        effectiveWorkshopId = w.id;
+      }
+    }
+    if (!effectiveWorkshopId) {
+      return res.status(400).json({ error: 'Укажите workshop_id или floor_id (цех)' });
     }
 
     const statusAccepted = await db.OrderStatus.findOne({ where: { name: 'Принят' } });
@@ -286,7 +297,7 @@ router.post('/', async (req, res, next) => {
           deadline,
           comment: comment || null,
           planned_month: String(planned_month).trim(),
-          workshop_id: parseInt(workshop_id, 10),
+          workshop_id: effectiveWorkshopId,
           floor_id: floor_id ? parseInt(floor_id, 10) : null,
           color: color ? String(color).trim() : null,
           size_in_numbers: size_in_numbers ? String(size_in_numbers).trim() : null,

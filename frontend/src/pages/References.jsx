@@ -11,18 +11,12 @@ import PrintButton from '../components/PrintButton';
 
 export default function References() {
   const { user } = useAuth();
-  const [tab, setTab] = useState('floors');
+  const [tab, setTab] = useState('workshops');
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
   const [newFloorName, setNewFloorName] = useState('');
   const [addingFloor, setAddingFloor] = useState(false);
-  const [newTechnologist, setNewTechnologist] = useState({ name: '', email: '', password: '', floor_id: '', building_floor_id: '' });
-  const [addingTechnologist, setAddingTechnologist] = useState(false);
-  const [newSewer, setNewSewer] = useState({ name: '', phone: '', technologist_id: '' });
-  const [addingSewer, setAddingSewer] = useState(false);
-  const [floors, setFloors] = useState([]);
   const [buildingFloors, setBuildingFloors] = useState([]);
-  const [technologistsByFloor, setTechnologistsByFloor] = useState([]);
   const [newBuildingFloorName, setNewBuildingFloorName] = useState('');
   const [addingBuildingFloor, setAddingBuildingFloor] = useState(false);
   const [newCuttingTypeName, setNewCuttingTypeName] = useState('');
@@ -32,6 +26,13 @@ export default function References() {
   const [newOperation, setNewOperation] = useState({ name: '', norm_minutes: '', category: 'SEWING', default_floor_id: '', locked_to_floor: false });
   const [addingOperation, setAddingOperation] = useState(false);
   const [deletingOperationId, setDeletingOperationId] = useState(null);
+  const [deletingFloorId, setDeletingFloorId] = useState(null);
+  const [deletingBuildingFloorId, setDeletingBuildingFloorId] = useState(null);
+  const [deletingClientId, setDeletingClientId] = useState(null);
+  const [newWorkshopName, setNewWorkshopName] = useState('');
+  const [newWorkshopFloorsCount, setNewWorkshopFloorsCount] = useState('1');
+  const [addingWorkshop, setAddingWorkshop] = useState(false);
+  const [deletingWorkshopId, setDeletingWorkshopId] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -43,8 +44,7 @@ export default function References() {
       else if (tab === 'clients') res = await api.references.clients();
       else if (tab === 'operations') res = await api.references.operations();
       else if (tab === 'order-status') res = await api.references.orderStatus();
-      else if (tab === 'technologists') res = await api.references.technologists();
-      else if (tab === 'sewers') res = await api.references.sewers();
+      else if (tab === 'workshops') res = await api.workshops.list(!!['admin', 'manager'].includes(user?.role));
       setData(res);
     } catch (err) {
       alert(err.message);
@@ -61,19 +61,8 @@ export default function References() {
   useRefreshOnVisible(load);
 
   useEffect(() => {
-    if (tab === 'technologists' || tab === 'sewers') {
-      api.references.floors().then(setFloors).catch(() => setFloors([]));
-    }
-    if (tab === 'technologists' || tab === 'operations') {
+    if (tab === 'operations') {
       api.references.buildingFloors().then(setBuildingFloors).catch(() => setBuildingFloors([]));
-    }
-  }, [tab]);
-
-  useEffect(() => {
-    if (tab === 'sewers') {
-      api.references.technologists().then((data) => setTechnologistsByFloor(data || [])).catch(() => setTechnologistsByFloor([]));
-    } else {
-      setTechnologistsByFloor([]);
     }
   }, [tab]);
 
@@ -155,6 +144,78 @@ export default function References() {
     }
   };
 
+  const handleDeleteFloor = async (id) => {
+    if (!window.confirm('Удалить цех пошива?')) return;
+    setDeletingFloorId(id);
+    try {
+      await api.references.deleteFloor(id);
+      load();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setDeletingFloorId(null);
+    }
+  };
+
+  const handleDeleteBuildingFloor = async (id) => {
+    if (!window.confirm('Удалить этаж?')) return;
+    setDeletingBuildingFloorId(id);
+    try {
+      await api.references.deleteBuildingFloor(id);
+      load();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setDeletingBuildingFloorId(null);
+    }
+  };
+
+  const handleAddWorkshop = async (e) => {
+    e.preventDefault();
+    const name = newWorkshopName.trim();
+    if (!name) return;
+    setAddingWorkshop(true);
+    try {
+      await api.workshops.add({
+        name,
+        floors_count: parseInt(newWorkshopFloorsCount, 10) || 1,
+      });
+      setNewWorkshopName('');
+      setNewWorkshopFloorsCount('1');
+      load();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setAddingWorkshop(false);
+    }
+  };
+
+  const handleDeleteWorkshop = async (id) => {
+    if (!window.confirm('Удалить (деактивировать) цех?')) return;
+    setDeletingWorkshopId(id);
+    try {
+      await api.workshops.delete(id);
+      load();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setDeletingWorkshopId(null);
+    }
+  };
+
+  const handleDeleteClient = async (id) => {
+    if (!window.confirm('Удалить клиента?')) return;
+    setDeletingClientId(id);
+    try {
+      await api.references.deleteClient(id);
+      load();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setDeletingClientId(null);
+    }
+  };
+
   const handleDeleteOperation = async (id) => {
     if (!window.confirm('Удалить операцию?')) return;
     setDeletingOperationId(id);
@@ -184,63 +245,99 @@ export default function References() {
     }
   };
 
-  const handleAddTechnologist = async (e) => {
-    e.preventDefault();
-    const { name, email, password, floor_id, building_floor_id } = newTechnologist;
-    if (!name?.trim() || !email?.trim() || !password || !floor_id || !building_floor_id) {
-      alert('Заполните все поля: ФИО, email, пароль, цех пошива, этаж');
-      return;
-    }
-    setAddingTechnologist(true);
-    try {
-      await api.references.addTechnologist({ name: name.trim(), email: email.trim(), password, floor_id, building_floor_id });
-      setNewTechnologist({ name: '', email: '', password: '', floor_id: '', building_floor_id: '' });
-      load();
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setAddingTechnologist(false);
-    }
-  };
-
-  const handleAddSewer = async (e) => {
-    e.preventDefault();
-    const { name, phone, technologist_id } = newSewer;
-    if (!name?.trim() || !phone?.trim() || !technologist_id) {
-      alert('Заполните все поля: ФИО, номер телефона, выберите этаж и технолога');
-      return;
-    }
-    setAddingSewer(true);
-    try {
-      await api.references.addSewer({ name: name.trim(), phone: phone.trim(), technologist_id });
-      setNewSewer({ name: '', phone: '', technologist_id: '' });
-      load();
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setAddingSewer(false);
-    }
-  };
-
   const formatRowValue = (k, v, row) => {
     if (v == null) return '—';
     if (typeof v !== 'object') return String(v);
     if (k === 'User' && v?.name) return v.name;
     if (k === 'Floor' && v?.name) return v.name;
     if (k === 'BuildingFloor' && v?.name) return v.name;
-    if (k === 'Technologist') {
-      if (v?.User?.name && v?.Floor?.name) return `${v.User.name} (${v.Floor.name})`;
-      if (v?.User?.name) return v.User.name;
-      if (v?.Floor?.name) return v.Floor.name;
-    }
     return String(v?.name ?? v?.id ?? '—');
   };
 
   const getTableColumns = () => {
+    if (tab === 'workshops' && data.length > 0) {
+      return [
+        { key: 'id', label: 'ID' },
+        { key: 'name', label: 'Название' },
+        { key: 'floors_count', label: 'Этажей' },
+        {
+          key: '_actions',
+          label: '',
+          getValue: (row) =>
+            ['admin', 'manager'].includes(user?.role) ? (
+              <button
+                type="button"
+                onClick={() => handleDeleteWorkshop(row.id)}
+                disabled={deletingWorkshopId === row.id}
+                className="px-2 py-1 text-sm rounded bg-red-600/80 hover:bg-red-600 text-white disabled:opacity-50"
+              >
+                {deletingWorkshopId === row.id ? '...' : 'Удалить'}
+              </button>
+            ) : null,
+        },
+      ];
+    }
+    if (tab === 'floors' && data.length > 0) {
+      return [
+        { key: 'id', label: 'ID' },
+        { key: 'name', label: 'Название' },
+        {
+          key: '_actions',
+          label: '',
+          getValue: (row) =>
+            ['admin', 'manager'].includes(user?.role) ? (
+              <button
+                type="button"
+                onClick={() => handleDeleteFloor(row.id)}
+                disabled={deletingFloorId === row.id}
+                className="px-2 py-1 text-sm rounded bg-red-600/80 hover:bg-red-600 text-white disabled:opacity-50"
+              >
+                {deletingFloorId === row.id ? '...' : 'Удалить'}
+              </button>
+            ) : null,
+        },
+      ];
+    }
+    if (tab === 'building-floors' && data.length > 0) {
+      return [
+        { key: 'id', label: 'ID' },
+        { key: 'name', label: 'Название' },
+        {
+          key: '_actions',
+          label: '',
+          getValue: (row) =>
+            ['admin', 'manager'].includes(user?.role) ? (
+              <button
+                type="button"
+                onClick={() => handleDeleteBuildingFloor(row.id)}
+                disabled={deletingBuildingFloorId === row.id}
+                className="px-2 py-1 text-sm rounded bg-red-600/80 hover:bg-red-600 text-white disabled:opacity-50"
+              >
+                {deletingBuildingFloorId === row.id ? '...' : 'Удалить'}
+              </button>
+            ) : null,
+        },
+      ];
+    }
     if (tab === 'clients' && data.length > 0) {
       return [
         { key: 'id', label: 'ID' },
         { key: 'name', label: 'Название' },
+        {
+          key: '_actions',
+          label: '',
+          getValue: (row) =>
+            ['admin', 'manager'].includes(user?.role) ? (
+              <button
+                type="button"
+                onClick={() => handleDeleteClient(row.id)}
+                disabled={deletingClientId === row.id}
+                className="px-2 py-1 text-sm rounded bg-red-600/80 hover:bg-red-600 text-white disabled:opacity-50"
+              >
+                {deletingClientId === row.id ? '...' : 'Удалить'}
+              </button>
+            ) : null,
+        },
       ];
     }
     if (tab === 'cutting-types' && data.length > 0) {
@@ -275,36 +372,19 @@ export default function References() {
         },
       ];
     }
-    if (tab === 'technologists' && data.length > 0) {
-      return [
-        { key: 'id', label: 'ID' },
-        { key: 'User', label: 'ФИО' },
-        { key: 'email', label: 'Email', getValue: (row) => row.User?.email ?? row.email },
-        { key: 'Floor', label: 'Этаж' },
-      ];
-    }
-    if (tab === 'sewers' && data.length > 0) {
-      return [
-        { key: 'id', label: 'ID' },
-        { key: 'User', label: 'ФИО' },
-        { key: 'phone', label: 'Телефон', getValue: (row) => row.User?.phone ?? row.phone ?? '—' },
-        { key: 'Technologist', label: 'Технолог (Этаж)' },
-      ];
-    }
     return null;
   };
 
   const cols = getTableColumns();
 
   const tabs = [
+    { id: 'workshops', label: 'Цеха' },
     { id: 'floors', label: 'Цехи пошива' },
     { id: 'building-floors', label: 'Этажи' },
     { id: 'cutting-types', label: 'Типы раскроя' },
     { id: 'clients', label: 'Клиенты' },
     { id: 'operations', label: 'Операции' },
     { id: 'order-status', label: 'Статусы заказов' },
-    { id: 'technologists', label: 'Технологи' },
-    { id: 'sewers', label: 'Швеи' },
   ];
 
   return (
@@ -341,6 +421,34 @@ export default function References() {
         ))}
       </div>
 
+      {tab === 'workshops' && ['admin', 'manager'].includes(user?.role) && (
+        <form onSubmit={handleAddWorkshop} className="mb-4 flex gap-2 flex-wrap items-end">
+          <NeonInput
+            type="text"
+            value={newWorkshopName}
+            onChange={(e) => setNewWorkshopName(e.target.value)}
+            placeholder="Название цеха (например: Цех №2)"
+            className="min-w-[200px]"
+          />
+          <NeonSelect
+            value={newWorkshopFloorsCount}
+            onChange={(e) => setNewWorkshopFloorsCount(e.target.value)}
+            className="min-w-[120px]"
+          >
+            <option value="1">1 этаж</option>
+            <option value="2">2 этажа</option>
+            <option value="3">3 этажа</option>
+            <option value="4">4 этажа</option>
+            <option value="5">5 этажей</option>
+          </NeonSelect>
+          <NeonButton
+            type="submit"
+            disabled={addingWorkshop || !newWorkshopName.trim()}
+          >
+            {addingWorkshop ? 'Добавление...' : 'Добавить'}
+          </NeonButton>
+        </form>
+      )}
       {tab === 'floors' && ['admin', 'manager'].includes(user?.role) && (
         <form onSubmit={handleAddFloor} className="mb-4 flex gap-2">
           <NeonInput
@@ -422,95 +530,6 @@ export default function References() {
           </button>
         </form>
       )}
-      {tab === 'technologists' && ['admin', 'manager'].includes(user?.role) && (
-        <form onSubmit={handleAddTechnologist} className="mb-4 flex flex-wrap gap-2 items-end">
-          <input
-            type="text"
-            value={newTechnologist.name}
-            onChange={(e) => setNewTechnologist({ ...newTechnologist, name: e.target.value })}
-            placeholder="ФИО"
-            className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text min-w-[140px]"
-          />
-          <input
-            type="email"
-            value={newTechnologist.email}
-            onChange={(e) => setNewTechnologist({ ...newTechnologist, email: e.target.value })}
-            placeholder="Email"
-            className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text min-w-[160px]"
-          />
-          <input
-            type="password"
-            value={newTechnologist.password}
-            onChange={(e) => setNewTechnologist({ ...newTechnologist, password: e.target.value })}
-            placeholder="Пароль (мин. 6)"
-            className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text min-w-[120px]"
-          />
-          <select
-            value={newTechnologist.floor_id}
-            onChange={(e) => setNewTechnologist({ ...newTechnologist, floor_id: e.target.value })}
-            className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text min-w-[140px]"
-          >
-            <option value="">Цех пошива</option>
-            {floors.map((f) => (
-              <option key={f.id} value={f.id}>{f.name}</option>
-            ))}
-          </select>
-          <select
-            value={newTechnologist.building_floor_id}
-            onChange={(e) => setNewTechnologist({ ...newTechnologist, building_floor_id: e.target.value })}
-            className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text min-w-[140px]"
-          >
-            <option value="">Этаж</option>
-            {buildingFloors.map((f) => (
-              <option key={f.id} value={f.id}>{f.name}</option>
-            ))}
-          </select>
-          <button
-            type="submit"
-            disabled={addingTechnologist || !newTechnologist.name?.trim() || !newTechnologist.email?.trim() || !newTechnologist.password || newTechnologist.password.length < 6 || !newTechnologist.floor_id || !newTechnologist.building_floor_id}
-            className="px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50"
-          >
-            {addingTechnologist ? 'Добавление...' : 'Добавить'}
-          </button>
-        </form>
-      )}
-
-      {tab === 'sewers' && ['admin', 'manager'].includes(user?.role) && (
-        <form onSubmit={handleAddSewer} className="mb-4 flex flex-wrap gap-2 items-end">
-          <input
-            type="text"
-            value={newSewer.name}
-            onChange={(e) => setNewSewer({ ...newSewer, name: e.target.value })}
-            placeholder="ФИО"
-            className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text min-w-[140px]"
-          />
-          <input
-            type="tel"
-            value={newSewer.phone}
-            onChange={(e) => setNewSewer({ ...newSewer, phone: e.target.value })}
-            placeholder="Телефон"
-            className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text min-w-[140px]"
-          />
-          <select
-            value={newSewer.technologist_id}
-            onChange={(e) => setNewSewer({ ...newSewer, technologist_id: e.target.value })}
-            className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text min-w-[160px]"
-          >
-            <option value="">Технолог</option>
-            {technologistsByFloor.map((t) => (
-              <option key={t.id} value={t.id}>{t.User?.name || `ID ${t.id}`} — {t.Floor?.name || ''}</option>
-            ))}
-          </select>
-          <button
-            type="submit"
-            disabled={addingSewer || !newSewer.name?.trim() || !newSewer.phone?.trim() || !newSewer.technologist_id}
-            className="px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50"
-          >
-            {addingSewer ? 'Добавление...' : 'Добавить'}
-          </button>
-        </form>
-      )}
-
       {tab === 'operations' && ['admin', 'manager'].includes(user?.role) && (
         <form onSubmit={handleAddOperation} className="mb-4 flex flex-wrap gap-2 items-end">
           <input

@@ -4,12 +4,13 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api';
 import { useRefreshOnVisible } from '../hooks/useRefreshOnVisible';
 import { NeonButton, NeonCard, NeonInput, NeonSelect } from '../components/ui';
 import PrintButton from '../components/PrintButton';
+import ModelPhoto from '../components/ModelPhoto';
 
 const STATUS_COLORS = {
   Принят: 'bg-gray-500/20 text-gray-900 dark:text-gray-100',
@@ -20,6 +21,7 @@ const STATUS_COLORS = {
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -82,7 +84,8 @@ export default function Dashboard() {
   const handleDelete = async (e, orderId) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!confirm('Удалить заказ #' + orderId + '? Данные будут удалены безвозвратно.')) return;
+    const tz = orders.find((o) => o.id === orderId)?.tz_code || orderId;
+    if (!confirm(`Удалить заказ ТЗ ${tz}? Данные будут удалены безвозвратно.`)) return;
     setDeletingId(orderId);
     try {
       await api.orders.delete(orderId);
@@ -174,7 +177,7 @@ export default function Dashboard() {
           <table className="w-full min-w-[640px]">
             <thead>
               <tr className="border-b border-white/20 dark:border-white/20">
-                <th className="text-left px-4 py-3 text-sm font-medium text-neon-muted">ID</th>
+                <th className="text-left px-4 py-3 text-sm font-medium text-neon-muted">ТЗ</th>
                 <th className="text-left px-4 py-3 text-sm font-medium text-neon-muted">Название</th>
                 <th className="text-left px-4 py-3 text-sm font-medium text-neon-muted">Клиент</th>
                 <th className="text-left px-4 py-3 text-sm font-medium text-neon-muted">Кол-во</th>
@@ -188,17 +191,22 @@ export default function Dashboard() {
               {orders.map((order) => (
                 <tr
                   key={order.id}
-                  className="border-b border-white/10 hover:bg-white/5 transition-colors duration-300 ease-out"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => navigate(`/orders/${order.id}`)}
+                  onKeyDown={(e) => e.key === 'Enter' && navigate(`/orders/${order.id}`)}
+                  className="border-b border-white/10 hover:bg-white/5 transition-colors duration-300 ease-out cursor-pointer"
                 >
-                  <td className="px-4 py-3">
-                    <Link
-                      to={`/orders/${order.id}`}
-                      className="text-primary-400 hover:underline"
-                    >
-                      #{order.id}
-                    </Link>
+                  <td className="px-4 py-3 text-primary-400">
+                    {order.tz_code || order.id || '—'}
                   </td>
-                  <td className="px-4 py-3 text-neon-text">{order.title}</td>
+                  <td className="px-4 py-3 text-neon-text">
+                    <ModelPhoto
+                      photo={order.photos?.[0]}
+                      modelName={order.title}
+                      size={48}
+                    />
+                  </td>
                   <td className="px-4 py-3 text-neon-muted">{order.Client?.name}</td>
                   <td className="px-4 py-3 text-neon-muted">{order.quantity}</td>
                   <td className="px-4 py-3 text-neon-muted whitespace-nowrap">{order.deadline}</td>
@@ -213,7 +221,7 @@ export default function Dashboard() {
                   </td>
                   <td className="px-4 py-3 text-neon-muted">{order.Floor?.name || '—'}</td>
                   {(canEdit || canDelete) && (
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1">
                         {canEdit && (
                           <Link

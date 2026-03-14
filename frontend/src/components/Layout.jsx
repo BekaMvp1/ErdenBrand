@@ -108,6 +108,8 @@ const NAV_ICONS = {
 };
 
 const CUTTING_DEFAULT = ['Аксы', 'Аутсорс', 'Наш цех'];
+const SIDEBAR_LOCK_KEY = 'sidebar_locked';
+const SIDEBAR_LOCK_EXPANDED_KEY = 'sidebar_locked_expanded';
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -118,6 +120,32 @@ export default function Layout() {
   const [cuttingOpen, setCuttingOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [connectionError, setConnectionError] = useState(false);
+  const [sidebarHovered, setSidebarHovered] = useState(false);
+  const [sidebarLocked, setSidebarLocked] = useState(() => {
+    try { return sessionStorage.getItem(SIDEBAR_LOCK_KEY) === '1'; } catch { return false; }
+  });
+  const [lockedExpanded, setLockedExpanded] = useState(() => {
+    try { return sessionStorage.getItem(SIDEBAR_LOCK_EXPANDED_KEY) === '1'; } catch { return false; }
+  });
+
+  // При фиксации: сохраняем текущее состояние (открыт/закрыт). Если открыт — фиксируем открытым.
+  const toggleSidebarLock = () => {
+    setSidebarLocked((prev) => {
+      const next = !prev;
+      if (next) {
+        // Фиксируем: expanded = если сейчас наведён или mobile menu открыт
+        const expanded = sidebarHovered || mobileMenuOpen;
+        setLockedExpanded(expanded);
+        try {
+          sessionStorage.setItem(SIDEBAR_LOCK_KEY, '1');
+          sessionStorage.setItem(SIDEBAR_LOCK_EXPANDED_KEY, expanded ? '1' : '0');
+        } catch (_) {}
+      } else {
+        try { sessionStorage.setItem(SIDEBAR_LOCK_KEY, '0'); } catch (_) {}
+      }
+      return next;
+    });
+  };
 
   const isReferences = location.pathname === '/references';
 
@@ -213,6 +241,8 @@ export default function Layout() {
     { type: 'item', to: '/settings', label: 'Настройки', icon: 'settings' },
   ];
 
+  const sidebarExpanded = sidebarLocked ? lockedExpanded : sidebarHovered;
+
   const navStructure = [
     dashboardItem,
     { type: 'divider' },
@@ -236,18 +266,51 @@ export default function Layout() {
         />
       )}
 
-      {/* Sidebar — на десктопе свёрнут (только иконки), при наведении раскрывается с текстами */}
+      {/* Sidebar — на десктопе свёрнут; при наведении раскрывается; замок фиксирует текущее состояние */}
       <aside
-        className={`fixed md:relative inset-y-0 left-0 z-50 bg-neon-bg2 sidebar-header-border flex flex-col transform transition-all duration-200 ease-out group/sidebar overflow-hidden
-          w-64 md:w-16 md:hover:w-56
+        onMouseEnter={() => setSidebarHovered(true)}
+        onMouseLeave={() => setSidebarHovered(false)}
+        className={`fixed md:relative inset-y-0 left-0 z-50 bg-neon-bg2 sidebar-header-border flex flex-col transform transition-all duration-200 ease-out overflow-hidden
+          w-64
+          ${sidebarExpanded ? 'md:w-56' : 'md:w-16'}
           ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}
       >
-        <div className="header-top flex items-center p-4 md:px-3 md:justify-center md:group-hover/sidebar:justify-start shrink-0">
-          <h1 className="text-lg font-semibold text-neon-text truncate overflow-hidden whitespace-nowrap">
-            <span className="md:hidden">Швейная фабрика</span>
-            <span className="hidden md:inline md:group-hover/sidebar:hidden">ШФ</span>
-            <span className="hidden md:group-hover/sidebar:inline">Швейная фабрика</span>
-          </h1>
+        <div className={`header-top flex items-center gap-2 p-4 md:px-2 md:py-3 shrink-0 border-b border-white/10 ${sidebarExpanded ? 'md:justify-start' : 'md:justify-center'}`}>
+          {/* Свёрнуто: логотип */}
+          <div className={`hidden md:flex items-center justify-center flex-1 min-w-0 ${sidebarExpanded ? 'md:hidden' : ''}`}>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" className="w-9 h-9 flex-shrink-0 rounded-full overflow-hidden" aria-label="ERDEN BRAND">
+              <defs>
+                <clipPath id="sidebar-logo-circle">
+                  <circle cx="512" cy="512" r="512" />
+                </clipPath>
+              </defs>
+              <image width="1024" height="1024" clipPath="url(#sidebar-logo-circle)" href="/erden-logo.png" preserveAspectRatio="xMidYMid slice" />
+            </svg>
+          </div>
+          {/* Развёрнуто: название и замок */}
+          <div className={`flex items-center gap-2 flex-1 min-w-0 ${sidebarExpanded ? '' : 'md:hidden'}`}>
+            <h1 className="text-lg font-semibold text-neon-text truncate overflow-hidden whitespace-nowrap text-center md:text-left flex-1 min-w-0">
+              <span className="md:hidden">ERDEN BRAND</span>
+              <span className="hidden md:inline">ERDEN BRAND</span>
+            </h1>
+            <button
+              type="button"
+              onClick={toggleSidebarLock}
+              title={sidebarLocked ? 'Разблокировать (раскрывать при наведении)' : 'Фиксировать меню в текущем положении'}
+              className="p-1.5 rounded-lg hover:bg-white/10 text-neon-muted hover:text-neon-text transition-colors flex-shrink-0"
+              aria-label={sidebarLocked ? 'Разблокировать меню' : 'Заблокировать меню'}
+            >
+              {sidebarLocked ? (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                </svg>
+              )}
+            </button>
+          </div>
         </div>
         <nav className="flex-1 p-2 space-y-1 overflow-x-hidden">
           {navStructure.map((entry, idx) => {
@@ -269,13 +332,13 @@ export default function Layout() {
                   }`}
                 >
                   <span className="flex-shrink-0">{NAV_ICONS[icon]}</span>
-                  <span className="hidden md:group-hover/sidebar:inline truncate whitespace-nowrap">{label}</span>
-                  <svg className={`w-4 h-4 ml-auto hidden md:group-hover/sidebar:block flex-shrink-0 transition-transform ${cuttingOpen ? 'rotate-180' : ''}`} fill="currentColor" viewBox="0 0 20 20">
+                  <span className={`hidden truncate whitespace-nowrap ${sidebarExpanded ? 'md:inline' : ''}`}>{label}</span>
+                  <svg className={`w-4 h-4 ml-auto hidden flex-shrink-0 transition-transform ${sidebarExpanded ? 'md:block' : ''} ${cuttingOpen ? 'rotate-180' : ''}`} fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
                   </svg>
                 </button>
                 {cuttingOpen && (
-                  <div className="mt-1 ml-4 pl-2 border-l border-white/20 dark:border-white/20 space-y-0.5 block md:hidden md:group-hover/sidebar:block">
+                  <div className={`mt-1 ml-4 pl-2 border-l border-white/20 dark:border-white/20 space-y-0.5 block ${sidebarExpanded ? 'md:block' : 'md:hidden'}`}>
                     {dropdown.map((type) => (
                       <NavLink
                         key={type}
@@ -310,7 +373,7 @@ export default function Layout() {
                 }
               >
                 <span className="flex-shrink-0">{NAV_ICONS[icon]}</span>
-                <span className="hidden md:group-hover/sidebar:inline truncate whitespace-nowrap">{label}</span>
+                <span className={`hidden truncate whitespace-nowrap ${sidebarExpanded ? 'md:inline' : ''}`}>{label}</span>
               </NavLink>
             );
           })}

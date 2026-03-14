@@ -8,9 +8,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
+import ModelPhoto from '../components/ModelPhoto';
 
 const PLANNING_WORKSHOP_KEY = 'planning_workshop_id';
 const PLANNING_FLOOR_KEY = 'planning_floor_id';
+const PLANNING_CELL_EDITS_KEY = 'planning_cell_edits';
 
 const DAY_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 
@@ -90,7 +92,13 @@ export default function Planning() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-  const [cellEdits, setCellEdits] = useState({});
+  const loadCellEdits = () => {
+    try {
+      const s = sessionStorage.getItem(PLANNING_CELL_EDITS_KEY);
+      return s ? JSON.parse(s) : {};
+    } catch { return {}; }
+  };
+  const [cellEdits, setCellEdits] = useState(loadCellEdits);
   const saveTimeoutRef = useRef(null);
 
   const user = JSON.parse(sessionStorage.getItem('user') || '{}');
@@ -206,7 +214,11 @@ export default function Planning() {
 
   const setCellValue = (orderId, date, value) => {
     const num = Math.max(0, parseInt(value, 10) || 0);
-    setCellEdits((prev) => ({ ...prev, [`${orderId}_${date}`]: num }));
+    setCellEdits((prev) => {
+      const next = { ...prev, [`${orderId}_${date}`]: num };
+      try { sessionStorage.setItem(PLANNING_CELL_EDITS_KEY, JSON.stringify(next)); } catch (_) {}
+      return next;
+    });
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(() =>
       saveCell(orderId, date, num), 800
@@ -228,6 +240,7 @@ export default function Planning() {
       setCellEdits((prev) => {
         const next = { ...prev };
         delete next[`${orderId}_${date}`];
+        try { sessionStorage.setItem(PLANNING_CELL_EDITS_KEY, JSON.stringify(next)); } catch (_) {}
         return next;
       });
       loadData();
@@ -483,6 +496,13 @@ export default function Planning() {
                   </tr>
                 </thead>
                 <tbody>
+                  {rows.length === 0 ? (
+                    <tr>
+                      <td colSpan={4 + (dates?.length || 0) + 1} className="px-4 py-8 text-center text-white/60 text-sm">
+                        Нет заказов для выбранного этажа. Назначьте этаж заказам в карточке заказа или выберите другой этаж.
+                      </td>
+                    </tr>
+                  ) : null}
                   {rows.map((row) => {
                     let rowTotal = 0;
                     return (
@@ -491,7 +511,11 @@ export default function Planning() {
                         className="border-b border-white/5 hover:bg-white/5"
                       >
                         <td className="sticky left-0 z-10 bg-[#1a1a1f] px-2 py-1.5 text-white border-r border-white/10 text-xs">
-                          {row.order_title}
+                          <ModelPhoto
+                            photo={row.order_photos?.[0]}
+                            modelName={row.order_title}
+                            size={48}
+                          />
                         </td>
                         <td className="px-2 py-1.5 text-white/90 text-xs">
                           {row.model_name || '—'}

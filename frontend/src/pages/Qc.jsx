@@ -11,10 +11,12 @@ import { Link } from 'react-router-dom';
 import { api } from '../api';
 import PrintButton from '../components/PrintButton';
 import { NeonButton, NeonCard } from '../components/ui';
+import ModelPhoto from '../components/ModelPhoto';
 
-const SEWING_FLOOR_IDS = [2, 3, 4]; // этажи пошива для фильтра
+const SEWING_FLOOR_IDS = [2, 3, 4];
 const QC_FLOOR_KEY = 'qc_floor_id';
 const QC_SEARCH_KEY = 'qc_search';
+const QC_WORKSHOP_KEY = 'qc_workshop_id';
 
 function getQcStored(key, fallback) {
   try {
@@ -45,6 +47,8 @@ export default function Qc() {
     if (floorIdParam != null && SEWING_FLOOR_IDS.includes(Number(floorIdParam))) return String(floorIdParam);
     return getQcStored(QC_FLOOR_KEY, '');
   });
+  const [workshopId, setWorkshopId] = useState(() => getQcStored(QC_WORKSHOP_KEY, ''));
+  const [workshops, setWorkshops] = useState([]);
   const [debouncedQ, setDebouncedQ] = useState(() => getQcStored(QC_SEARCH_KEY, ''));
 
   useEffect(() => {
@@ -53,24 +57,36 @@ export default function Qc() {
   }, [searchQ]);
 
   useEffect(() => {
+    if (!modalBatch) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [modalBatch]);
+
+  useEffect(() => {
     try {
       sessionStorage.setItem(QC_FLOOR_KEY, filterFloorId || '');
       sessionStorage.setItem(QC_SEARCH_KEY, searchQ || '');
+      sessionStorage.setItem(QC_WORKSHOP_KEY, workshopId || '');
     } catch (_) {}
-  }, [filterFloorId, searchQ]);
+  }, [filterFloorId, searchQ, workshopId]);
+
+  useEffect(() => {
+    api.workshops.list().then(setWorkshops).catch(() => setWorkshops([]));
+  }, []);
 
   const loadPending = useCallback((opts = {}) => {
     setLoading(true);
     const params = {};
     if (debouncedQ) params.q = debouncedQ;
-    // При переходе по batch_id не фильтровать по этажу, чтобы новая партия попала в список
     if (filterFloorId && !opts.ignoreFloorFilter) params.floor_id = filterFloorId;
+    if (workshopId) params.workshop_id = workshopId;
     api.warehouseStock
       .batchesPendingQc(params)
       .then(setPending)
       .catch(() => setPending([]))
       .finally(() => setLoading(false));
-  }, [debouncedQ, filterFloorId]);
+  }, [debouncedQ, filterFloorId, workshopId]);
 
   useEffect(() => {
     // При переходе по batch_id сразу грузим список без фильтра по этажу, чтобы новая партия попала в список
@@ -86,27 +102,62 @@ export default function Qc() {
     return pending;
   }, [pending, orderIdParam, floorIdParam]);
 
-  // Заполнить форму из объекта партии (чтобы открыть по batch_id даже если партии ещё нет в списке)
+  // Заполнить форму из объекта партии: цвет×размер как на раскрое/пошиве
   const setModalFromBatch = useCallback((batch) => {
     setError('');
     setModalBatch(batch);
-    setFormItems(
-      (batch.SewingBatchItems || []).map((item, idx) => {
-        const fact = Number(item.fact_qty) || 0;
-        const sizeName = item.ModelSize?.Size?.name || item.ModelSize?.Size?.code
-          || item.Size?.name || item.Size?.code
-          || (item.size_id ? `Размер #${item.size_id}` : 'Общее');
-        return {
-          rowKey: item.model_size_id ?? `size_${item.size_id}` ?? idx,
-          model_size_id: item.model_size_id,
-          size_id: item.size_id,
+    const variants = batch.Order?.OrderVariants || [];
+    const batchItems = batch.SewingBatchItems || [];
+
+    const colorSet = new Set();
+    const sizeMap = {}; // size_name -> { model_size_id, size_id }
+    for (const v of variants) {
+      const color = String(v.color || '').trim() || '—';
+      if (color) colorSet.add(color);
+    }
+    if (colorSet.size === 0) colorSet.add('—');
+    for (const bi of batchItems) {
+      const sizeName = bi.ModelSize?.Size?.name || bi.ModelSize?.Size?.code
+        || bi.Size?.name || bi.Size?.code
+        || (bi.size_id ? `Размер #${bi.size_id}` : 'Общее');
+      if (sizeName && !sizeMap[sizeName]) {
+        sizeMap[sizeName] = { model_size_id: bi.model_size_id, size_id: bi.size_id };
+      }
+    }
+    const colors = [...colorSet].sort();
+    const sizes = Object.keys(sizeMap).sort((a, b) => {
+      const na = parseInt(a, 10);
+      const nb = parseInt(b, 10);
+      if (!isNaN(na) && !isNaN(nb)) return na - nb;
+      return String(a).localeCompare(b);
+    });
+
+    const factBySize = {};
+    for (const bi of batchItems) {
+      const sizeName = bi.ModelSize?.Size?.name || bi.ModelSize?.Size?.code
+        || bi.Size?.name || bi.Size?.code || '';
+      if (sizeName) factBySize[sizeName] = (factBySize[sizeName] || 0) + (Number(bi.fact_qty) || 0);
+    }
+
+    const items = [];
+    for (const color of colors) {
+      for (const sizeName of sizes) {
+        const meta = sizeMap[sizeName];
+        const fact = factBySize[sizeName] || 0;
+        const initChecked = color === colors[0] ? fact : 0;
+        items.push({
+          rowKey: `${color}|${sizeName}`,
+          color,
           size_name: sizeName,
-          checked_qty: fact,
-          passed_qty: fact,
+          model_size_id: meta?.model_size_id,
+          size_id: meta?.size_id,
+          checked_qty: initChecked,
+          passed_qty: initChecked,
           defect_qty: 0,
-        };
-      })
-    );
+        });
+      }
+    }
+    setFormItems(items);
   }, []);
 
   const openModal = useCallback(async (row) => {
@@ -182,15 +233,47 @@ export default function Qc() {
     );
   };
 
+  const formByColorSize = useMemo(() => {
+    const m = {};
+    for (const it of formItems) {
+      if (!m[it.color]) m[it.color] = {};
+      m[it.color][it.size_name] = it;
+    }
+    return m;
+  }, [formItems]);
+
+  const colors = useMemo(() => [...new Set(formItems.map((it) => it.color))].sort(), [formItems]);
+  const sizes = useMemo(() => [...new Set(formItems.map((it) => it.size_name))].sort((a, b) => {
+    const na = parseInt(a, 10);
+    const nb = parseInt(b, 10);
+    if (!isNaN(na) && !isNaN(nb)) return na - nb;
+    return String(a).localeCompare(b);
+  }), [formItems]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!modalBatch) return;
     setSaving(true);
     setError('');
     try {
+      const bySize = {};
+      for (const it of formItems) {
+        const key = it.model_size_id ? `m${it.model_size_id}` : (it.size_id ? `s${it.size_id}` : null);
+        if (!key) continue;
+        if (!bySize[key]) bySize[key] = { model_size_id: it.model_size_id, size_id: it.size_id, checked_qty: 0, passed_qty: 0, defect_qty: 0 };
+        bySize[key].checked_qty += Number(it.checked_qty) || 0;
+        bySize[key].passed_qty += Number(it.passed_qty) || 0;
+        bySize[key].defect_qty += Number(it.defect_qty) || 0;
+      }
+      const items = Object.values(bySize).filter((it) => (it.model_size_id || it.size_id) && (it.checked_qty > 0 || it.defect_qty > 0));
+      if (items.length === 0) {
+        setError('Укажите проверенное количество хотя бы по одному размеру.');
+        setSaving(false);
+        return;
+      }
       await api.warehouseStock.postQcBatch({
         batch_id: modalBatch.id,
-        items: formItems.map((it) => ({
+        items: items.map((it) => ({
           model_size_id: it.model_size_id || null,
           size_id: it.size_id || null,
           checked_qty: it.checked_qty,
@@ -251,6 +334,16 @@ export default function Qc() {
             <option key={fid} value={fid}>{fid} этаж</option>
           ))}
         </select>
+        <select
+          value={workshopId ?? ''}
+          onChange={(e) => setWorkshopId(e.target.value)}
+          className="px-3 py-2 rounded-lg bg-neon-surface border border-neon-border text-neon-text text-sm min-w-[160px]"
+        >
+          <option value="">Все цеха</option>
+          {workshops.map((w) => (
+            <option key={w.id} value={w.id}>{w.name}</option>
+          ))}
+        </select>
       </div>
 
       <NeonCard className="rounded-card overflow-hidden p-0">
@@ -283,7 +376,13 @@ export default function Qc() {
                 {displayList.map((row) => (
                   <tr key={row.id} className="border-b border-white/15">
                     <td className="px-4 py-3 font-medium text-neon-text">{row.batch_code}</td>
-                    <td className="px-4 py-3 text-neon-text">{orderLabel(row)}</td>
+                    <td className="px-4 py-3 text-neon-text">
+                      <ModelPhoto
+                        photo={row.order_photos?.[0]}
+                        modelName={orderLabel(row)}
+                        size={48}
+                      />
+                    </td>
                     <td className="px-4 py-3 text-neon-text">{row.floor_name}</td>
                     <td className="px-4 py-3 text-neon-text">
                       {row.finished_at ? new Date(row.finished_at).toLocaleDateString('ru-RU') : '—'}
@@ -317,76 +416,147 @@ export default function Qc() {
       {modalBatch &&
         createPortal(
           <div
-            className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto"
+            className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-hidden"
             onClick={() => !saving && setModalBatch(null)}
           >
             <div
-              className="bg-neon-bg2 border border-neon-border rounded-card p-6 max-w-2xl w-full shadow-xl my-4"
+              className="bg-neon-bg2 border border-neon-border rounded-card max-w-2xl w-full max-h-[90vh] flex flex-col shadow-xl"
               onClick={(e) => e.stopPropagation()}
             >
-              <h3 className="text-lg font-semibold text-neon-text mb-1">
-                ОТК — партия {modalBatch.batch_code}
-              </h3>
-              <p className="text-sm text-neon-muted mb-4">
-                {modalBatch.Order?.title} {modalBatch.Order?.model_name && ` · ${modalBatch.Order.model_name}`}
-              </p>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm border-collapse">
-                    <thead>
-                      <tr className="border-b border-white/25">
-                        <th className="text-left py-3 px-3 text-neon-muted font-medium">Размер</th>
-                        <th className="text-right py-3 px-3 text-neon-muted font-medium w-28">Проверено</th>
-                        <th className="text-right py-3 px-3 text-neon-muted font-medium w-28">Принято</th>
-                        <th className="text-right py-3 px-3 text-neon-muted font-medium w-28">Брак</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {formItems.map((it) => (
-                        <tr key={it.rowKey} className="border-b border-white/10">
-                          <td className="py-2.5 px-3 text-neon-text font-medium">{it.size_name}</td>
-                          <td className="py-2.5 px-3 text-right">
-                            <input
-                              type="number"
-                              min={0}
-                              value={it.checked_qty ?? ''}
-                              onChange={(e) => handleChange(it.rowKey, 'checked_qty', e.target.value)}
-                              className="w-full max-w-[80px] ml-auto block px-3 py-2 rounded-lg bg-white/10 border border-white/25 text-neon-text text-right focus:border-primary-400 focus:ring-1 focus:ring-primary-400"
-                            />
-                          </td>
-                          <td className="py-2.5 px-3 text-right">
-                            <input
-                              type="number"
-                              min={0}
-                              max={it.checked_qty}
-                              value={it.passed_qty ?? ''}
-                              onChange={(e) => handleChange(it.rowKey, 'passed_qty', e.target.value)}
-                              className="w-full max-w-[80px] ml-auto block px-3 py-2 rounded-lg bg-white/10 border border-white/25 text-neon-text text-right focus:border-primary-400 focus:ring-1 focus:ring-primary-400"
-                            />
-                          </td>
-                          <td className="py-2.5 px-3 text-right">
-                            <input
-                              type="number"
-                              min={0}
-                              max={it.checked_qty}
-                              value={it.defect_qty ?? ''}
-                              onChange={(e) => handleChange(it.rowKey, 'defect_qty', e.target.value)}
-                              className="w-full max-w-[80px] ml-auto block px-3 py-2 rounded-lg bg-white/10 border border-white/25 text-neon-text text-right focus:border-primary-400 focus:ring-1 focus:ring-primary-400"
-                            />
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              <div className="shrink-0 p-6 pb-0">
+                <div className="flex items-center gap-3 mb-4">
+                  <ModelPhoto
+                    photo={modalBatch.Order?.photos?.[0]}
+                    modelName={`ОТК — партия ${modalBatch.batch_code}`}
+                    size={64}
+                  />
+                  <div>
+                    <p className="text-sm text-neon-muted">
+                      {modalBatch.Order?.title} {modalBatch.Order?.model_name && ` · ${modalBatch.Order.model_name}`}
+                    </p>
+                  </div>
                 </div>
-                {error && <p className="text-sm text-red-400">{error}</p>}
-                <div className="flex gap-2">
-                  <NeonButton type="submit" disabled={saving}>
-                    {saving ? 'Сохранение...' : 'Сохранить (принятое поступит на склад)'}
-                  </NeonButton>
-                  <NeonButton type="button" variant="secondary" onClick={() => setModalBatch(null)} disabled={saving}>
-                    Отмена
-                  </NeonButton>
+              </div>
+              <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+                <div className="flex-1 min-h-0 overflow-auto px-6 pr-1 pb-2">
+                <div className="overflow-x-auto">
+                  <p className="text-sm text-neon-muted mb-2">Заполните количество по цветам и размерам (как на раскрое)</p>
+                  {colors.length === 0 ? (
+                    <table className="w-full text-sm border-collapse">
+                      <thead>
+                        <tr className="border-b border-white/25">
+                          <th className="text-left py-3 px-3 text-neon-muted font-medium">Размер</th>
+                          <th className="text-right py-3 px-3 text-neon-muted font-medium w-24">Проверено</th>
+                          <th className="text-right py-3 px-3 text-neon-muted font-medium w-24">Принято</th>
+                          <th className="text-right py-3 px-3 text-neon-muted font-medium w-24">Брак</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {formItems.map((it) => (
+                          <tr key={it.rowKey} className="border-b border-white/10">
+                            <td className="py-2.5 px-3 text-neon-text font-medium">{it.size_name}</td>
+                            <td className="py-2.5 px-3 text-right">
+                              <input
+                                type="number"
+                                min={0}
+                                value={it.checked_qty ?? ''}
+                                onChange={(e) => handleChange(it.rowKey, 'checked_qty', e.target.value)}
+                                className="w-full max-w-[70px] ml-auto block px-2 py-1.5 rounded bg-white/10 border border-white/25 text-neon-text text-right text-sm"
+                              />
+                            </td>
+                            <td className="py-2.5 px-3 text-right">
+                              <input
+                                type="number"
+                                min={0}
+                                max={it.checked_qty}
+                                value={it.passed_qty ?? ''}
+                                onChange={(e) => handleChange(it.rowKey, 'passed_qty', e.target.value)}
+                                className="w-full max-w-[70px] ml-auto block px-2 py-1.5 rounded bg-white/10 border border-white/25 text-neon-text text-right text-sm"
+                              />
+                            </td>
+                            <td className="py-2.5 px-3 text-right">
+                              <input
+                                type="number"
+                                min={0}
+                                max={it.checked_qty}
+                                value={it.defect_qty ?? ''}
+                                onChange={(e) => handleChange(it.rowKey, 'defect_qty', e.target.value)}
+                                className="w-full max-w-[70px] ml-auto block px-2 py-1.5 rounded bg-white/10 border border-white/25 text-neon-text text-right text-sm"
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    colors.map((color) => (
+                      <div key={color} className="mb-4 last:mb-0">
+                        <p className="text-sm font-medium text-neon-text mb-2">Цвет: {color}</p>
+                        <table className="w-full text-sm border-collapse">
+                          <thead>
+                            <tr className="border-b border-white/25">
+                              <th className="text-left py-2 px-3 text-neon-muted font-medium">Размер</th>
+                              <th className="text-right py-2 px-3 text-neon-muted font-medium w-24">Проверено</th>
+                              <th className="text-right py-2 px-3 text-neon-muted font-medium w-24">Принято</th>
+                              <th className="text-right py-2 px-3 text-neon-muted font-medium w-24">Брак</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sizes.map((sizeName) => {
+                              const it = formByColorSize[color]?.[sizeName];
+                              if (!it) return null;
+                              return (
+                                <tr key={it.rowKey} className="border-b border-white/10">
+                                  <td className="py-2 px-3 text-neon-text">{sizeName}</td>
+                                  <td className="py-2 px-3 text-right">
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      value={it.checked_qty ?? ''}
+                                      onChange={(e) => handleChange(it.rowKey, 'checked_qty', e.target.value)}
+                                      className="w-full max-w-[70px] ml-auto block px-2 py-1.5 rounded bg-white/10 border border-white/25 text-neon-text text-right text-sm"
+                                    />
+                                  </td>
+                                  <td className="py-2 px-3 text-right">
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={it.checked_qty}
+                                      value={it.passed_qty ?? ''}
+                                      onChange={(e) => handleChange(it.rowKey, 'passed_qty', e.target.value)}
+                                      className="w-full max-w-[70px] ml-auto block px-2 py-1.5 rounded bg-white/10 border border-white/25 text-neon-text text-right text-sm"
+                                    />
+                                  </td>
+                                  <td className="py-2 px-3 text-right">
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={it.checked_qty}
+                                      value={it.defect_qty ?? ''}
+                                      onChange={(e) => handleChange(it.rowKey, 'defect_qty', e.target.value)}
+                                      className="w-full max-w-[70px] ml-auto block px-2 py-1.5 rounded bg-white/10 border border-white/25 text-neon-text text-right text-sm"
+                                    />
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ))
+                  )}
+                </div>
+                </div>
+                <div className="shrink-0 p-6 pt-4 border-t border-white/10">
+                  {error && <p className="text-sm text-red-400 mb-2">{error}</p>}
+                  <div className="flex gap-2">
+                    <NeonButton type="submit" disabled={saving}>
+                      {saving ? 'Сохранение...' : 'Сохранить (принятое поступит на склад)'}
+                    </NeonButton>
+                    <NeonButton type="button" variant="secondary" onClick={() => setModalBatch(null)} disabled={saving}>
+                      Отмена
+                    </NeonButton>
+                  </div>
                 </div>
               </form>
             </div>

@@ -1,14 +1,14 @@
 /**
  * Страница настроек
- * Выбор шрифта, добавление технологов (admin/manager), удаление всех заказов (admin)
+ * Выбор шрифта, удаление всех заказов (admin)
  */
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '../context/AuthContext';
 import { useFont } from '../context/FontContext';
 import { api } from '../api';
-import { NeonButton, NeonCard, NeonInput, NeonSelect } from '../components/ui';
+import { NeonButton, NeonCard } from '../components/ui';
 import PrintButton from '../components/PrintButton';
 
 export default function Settings() {
@@ -18,17 +18,6 @@ export default function Settings() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
-  const [floors, setFloors] = useState([]);
-  const [buildingFloors, setBuildingFloors] = useState([]);
-  const [technologists, setTechnologists] = useState([]);
-  const [newTechnologist, setNewTechnologist] = useState({ name: '', email: '', password: '', floor_id: '', building_floor_id: '' });
-  const [addingTechnologist, setAddingTechnologist] = useState(false);
-
-  useEffect(() => {
-    api.references.floors().then(setFloors).catch(() => setFloors([]));
-    api.references.buildingFloors().then(setBuildingFloors).catch(() => setBuildingFloors([]));
-    api.references.technologists().then(setTechnologists).catch(() => setTechnologists([]));
-  }, []);
 
   const handleDeleteAll = async () => {
     setShowDeleteConfirm(false);
@@ -46,32 +35,7 @@ export default function Settings() {
     }
   };
 
-  const handleAddTechnologist = async (e) => {
-    e.preventDefault();
-    const { name, email, password, floor_id } = newTechnologist;
-    if (!name?.trim() || !email?.trim() || !password || !floor_id || !building_floor_id) {
-      setErrorMsg('Заполните все поля: ФИО, email, пароль, цех пошива, этаж');
-      return;
-    }
-    setAddingTechnologist(true);
-    setErrorMsg('');
-    setSuccessMsg('');
-    try {
-      await api.references.addTechnologist({ name: name.trim(), email: email.trim(), password, floor_id, building_floor_id });
-      setSuccessMsg('Технолог добавлен');
-      setTimeout(() => setSuccessMsg(''), 3000);
-      setNewTechnologist({ name: '', email: '', password: '', floor_id: '', building_floor_id: '' });
-      const list = await api.references.technologists();
-      setTechnologists(list);
-    } catch (err) {
-      setErrorMsg(err.message || 'Ошибка добавления');
-    } finally {
-      setAddingTechnologist(false);
-    }
-  };
-
   const isAdmin = user?.role === 'admin';
-  const canManageTechnologists = ['admin', 'manager'].includes(user?.role);
 
   return (
     <div>
@@ -119,70 +83,6 @@ export default function Settings() {
             ))}
           </div>
         </NeonCard>
-
-        {/* Добавление технолога (admin/manager) */}
-        {canManageTechnologists && (
-          <NeonCard className="p-6 transition-block">
-            <h2 className="text-lg font-semibold text-[#ECECEC] dark:text-dark-text mb-4">
-              Добавить технолога
-            </h2>
-            <form onSubmit={handleAddTechnologist} className="flex flex-wrap gap-2 items-end mb-4">
-              <NeonInput
-                type="text"
-                value={newTechnologist.name}
-                onChange={(e) => setNewTechnologist({ ...newTechnologist, name: e.target.value })}
-                placeholder="ФИО"
-                className="min-w-[140px]"
-              />
-              <NeonInput
-                type="email"
-                value={newTechnologist.email}
-                onChange={(e) => setNewTechnologist({ ...newTechnologist, email: e.target.value })}
-                placeholder="Email"
-                className="min-w-[160px]"
-              />
-              <NeonInput
-                type="password"
-                value={newTechnologist.password}
-                onChange={(e) => setNewTechnologist({ ...newTechnologist, password: e.target.value })}
-                placeholder="Пароль (мин. 6)"
-                className="min-w-[120px]"
-              />
-              <NeonSelect
-                value={newTechnologist.floor_id}
-                onChange={(e) => setNewTechnologist({ ...newTechnologist, floor_id: e.target.value })}
-                className="min-w-[140px]"
-              >
-                <option value="">Цех пошива</option>
-                {floors.map((f) => (
-                  <option key={f.id} value={f.id}>{f.name}</option>
-                ))}
-              </NeonSelect>
-              <NeonSelect
-                value={newTechnologist.building_floor_id}
-                onChange={(e) => setNewTechnologist({ ...newTechnologist, building_floor_id: e.target.value })}
-                className="min-w-[140px]"
-              >
-                <option value="">Этаж</option>
-                {buildingFloors.map((f) => (
-                  <option key={f.id} value={f.id}>{f.name}</option>
-                ))}
-              </NeonSelect>
-              <NeonButton
-                type="submit"
-                disabled={addingTechnologist || !newTechnologist.name?.trim() || !newTechnologist.email?.trim() || !newTechnologist.password || newTechnologist.password.length < 6 || !newTechnologist.floor_id || !newTechnologist.building_floor_id}
-              >
-                {addingTechnologist ? 'Добавление...' : 'Добавить'}
-              </NeonButton>
-            </form>
-            {technologists.length > 0 && (
-              <div className="text-sm text-[#ECECEC]/80 dark:text-dark-text/80">
-                <span className="font-medium">Технологи:</span>{' '}
-                {technologists.map((t) => t.User?.name || t.name || `ID ${t.id}`).join(', ')}
-              </div>
-            )}
-          </NeonCard>
-        )}
 
         {/* Удаление (только admin) */}
         {isAdmin && (

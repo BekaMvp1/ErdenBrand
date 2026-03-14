@@ -9,7 +9,8 @@ const db = require('../models');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
-const SEWING_FLOOR_IDS = [2, 3, 4];
+// Этажи 1–4: раскрой передаётся в пошив (в т.ч. цех Салиха / 1 этаж)
+const SEWING_FLOOR_IDS = [1, 2, 3, 4];
 
 /**
  * GET /api/cutting/tasks?cutting_type=Аксы|cutting_type=Аутсорс|...
@@ -300,9 +301,7 @@ router.post('/complete', async (req, res, next) => {
       });
     }
     if (planTotal <= 0) planTotal = Number(order.total_quantity ?? order.quantity ?? 0) || 0;
-    if (planTotal > 0 && factTotal < planTotal) {
-      return res.status(400).json({ error: 'Факт меньше плана. Завершение раскроя невозможно.' });
-    }
+    // Факт может отличаться от плана (лекала, ткань, остатки) — система гибкая, без блокировки.
 
     const now = new Date();
     const cutStage = await db.OrderStage.findOne({ where: { order_id: Number(order_id), stage_key: 'cutting' } });
@@ -310,6 +309,16 @@ router.post('/complete', async (req, res, next) => {
     // Цепочка: раскрой DONE → пошив IN_PROGRESS
     const sewingStage = await db.OrderStage.findOne({ where: { order_id: Number(order_id), stage_key: 'sewing' } });
     if (sewingStage) await sewingStage.update({ status: 'IN_PROGRESS', started_at: now });
+
+    // Автоматическая передача в пошив: создаём sewing_order_floors для этажей с раскроем
+    const uniqueFloors = [...new Set(tasks.map((t) => t.floor).filter((f) => f != null && SEWING_FLOOR_IDS.includes(Number(f))))];
+    for (const fid of uniqueFloors) {
+      await db.SewingOrderFloor.upsert(
+        { order_id: Number(order_id), floor_id: Number(fid), status: 'IN_PROGRESS', done_at: null, done_batch_id: null },
+        { conflictFields: ['order_id', 'floor_id'] }
+      );
+    }
+
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -332,23 +341,13 @@ router.post('/send-to-sewing', async (req, res, next) => {
     }
     const fid = Number(floor_id);
     if (!SEWING_FLOOR_IDS.includes(fid)) {
-      return res.status(400).json({ error: 'Этаж пошива должен быть 2, 3 или 4' });
+      return res.status(400).json({ error: 'Этаж пошива должен быть 1, 2, 3 или 4' });
     }
 
     const order = await db.Order.findByPk(Number(order_id), { attributes: ['id'] });
     if (!order) return res.status(404).json({ error: 'Заказ не найден' });
 
-    // План пошива — только из Планирования (production_plan_day). Без плана отправлять нельзя.
-    const planCount = await db.ProductionPlanDay.count({
-      where: { order_id: Number(order_id), floor_id: fid },
-      col: 'id',
-    });
-    if (planCount === 0) {
-      return res.status(400).json({
-        error: 'Нет плана в Планировании. Сначала заполните Планирование по этому заказу и этажу.',
-      });
-    }
-
+    // План пошива опционален — можно отправить в пошив без плана, факт раскроя уже есть.
     await db.SewingOrderFloor.upsert(
       { order_id: Number(order_id), floor_id: fid, status: 'IN_PROGRESS', done_at: null, done_batch_id: null },
       { conflictFields: ['order_id', 'floor_id'] }

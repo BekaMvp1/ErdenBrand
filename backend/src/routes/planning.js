@@ -350,10 +350,21 @@ router.get('/calendar', async (req, res, next) => {
 
     const ordersWhere = { workshop_id: Number(workshop_id) };
     if (effectiveFloorId != null) {
-      ordersWhere[Op.or] = [
-        { building_floor_id: effectiveFloorId },
-        { building_floor_id: null },
-      ];
+      const planForFloor = await db.ProductionPlanDay.findAll({
+        where: {
+          workshop_id: Number(workshop_id),
+          floor_id: effectiveFloorId,
+          date: { [Op.between]: [firstDay, to] },
+        },
+        attributes: ['order_id'],
+        raw: true,
+      });
+      const orderIdsWithPlan = [...new Set(planForFloor.map((r) => r.order_id))];
+      const orConditions = [{ building_floor_id: effectiveFloorId }];
+      if (orderIdsWithPlan.length > 0) {
+        orConditions.push({ id: { [Op.in]: orderIdsWithPlan } });
+      }
+      ordersWhere[Op.or] = orConditions;
     }
     let orders = await db.Order.findAll({
       where: ordersWhere,
@@ -428,6 +439,7 @@ router.get('/calendar', async (req, res, next) => {
         order_title: orderTitle,
         model_name: modelName,
         client_name: clientName,
+        order_photos: o.photos,
         days,
         total,
       });
@@ -894,12 +906,25 @@ router.get('/weekly', async (req, res, next) => {
 
     const weeks = getWeeksOfMonth(y, m);
 
+    const planForFloor = effectiveFloorId != null
+      ? await db.ProductionPlanDay.findAll({
+          where: {
+            workshop_id: Number(workshop_id),
+            floor_id: effectiveFloorId,
+            date: { [Op.between]: [firstDay, lastDate] },
+          },
+          attributes: ['order_id'],
+          raw: true,
+        })
+      : [];
+    const orderIdsWithPlan = [...new Set(planForFloor.map((r) => r.order_id))];
     const ordersWhere = { workshop_id: Number(workshop_id) };
     if (effectiveFloorId != null) {
-      ordersWhere[Op.or] = [
-        { building_floor_id: effectiveFloorId },
-        { building_floor_id: null },
-      ];
+      const orConditions = [{ building_floor_id: effectiveFloorId }];
+      if (orderIdsWithPlan.length > 0) {
+        orConditions.push({ id: { [Op.in]: orderIdsWithPlan } });
+      }
+      ordersWhere[Op.or] = orConditions;
     }
     const orders = await db.Order.findAll({
       where: ordersWhere,

@@ -6,6 +6,8 @@
 const express = require('express');
 const { Op } = require('sequelize');
 const db = require('../models');
+const { getWeekStart } = require('../utils/planningUtils');
+const WORKING_DAYS_PER_WEEK = 6;
 
 const router = express.Router();
 
@@ -27,8 +29,8 @@ function getSunday(dateStr) {
   return d.toISOString().slice(0, 10);
 }
 
-/** Этажи пошива по умолчанию (fallback если в БД нет подходящих) */
-const SEWING_FLOOR_IDS_DEFAULT = [2, 3, 4];
+/** Этажи пошива по умолчанию: 1–4 (в т.ч. цех Салиха / 1 этаж) */
+const SEWING_FLOOR_IDS_DEFAULT = [1, 2, 3, 4];
 
 /**
  * Вычислить фактический раскрой без дублирования.
@@ -58,8 +60,9 @@ async function getSewingFloorIds() {
   if (withProizv.length > 0) {
     return withProizv.map((f) => f.id).sort((a, b) => a - b);
   }
+  // Все этажи 1–4, кроме Склад (включая 1 этаж / Салиха)
   const notFinishNotSklad = (floors || []).filter(
-    (f) => f.id !== 1 && (!f.name || !/склад/i.test(f.name))
+    (f) => f.id >= 1 && f.id <= 4 && (!f.name || !/склад/i.test(f.name))
   );
   if (notFinishNotSklad.length > 0) {
     return notFinishNotSklad.map((f) => f.id).sort((a, b) => a - b);
@@ -104,13 +107,7 @@ router.put('/fact-add', async (req, res, next) => {
     let sewnQty = 0;
     factRows.forEach((r) => { sewnQty += Number(r.fact_qty) || 0; });
     const available = Math.max(0, cutFactQty - sewnQty);
-
-    if (addQty > available) {
-      return res.status(400).json({
-        error: `Количество (${addQty}) превышает доступное (${available})`,
-        available,
-      });
-    }
+    // Система гибкая: допускаем ввод факта больше доступного (реальное производство может отличаться).
 
     const today = new Date().toISOString().slice(0, 10);
     const existing = factRows.find((r) => String(r.date).slice(0, 10) === today);
@@ -255,17 +252,14 @@ router.put('/fact-matrix', async (req, res, next) => {
     });
     const sewn = factRows.reduce((s, r) => s + (Number(r.fact_qty) || 0), 0);
     const available = Math.max(0, cutTotal - sewn);
-    if (totalQty > available) {
-      return res.status(400).json({
-        error: 'Превышено количество раскроя.',
-        available,
-      });
-    }
+    // Система гибкая: факт может отличаться от раскроя — без блокировки
 
     const today = new Date().toISOString().slice(0, 10);
     const existingToday = factRows.find((r) => r.date && String(r.date).slice(0, 10) === today);
-    const newSewn = sewn + totalQty;
-    const newTodayQty = (existingToday ? Number(existingToday.fact_qty) || 0 : 0) + totalQty;
+    const existingTodayQty = existingToday ? Number(existingToday.fact_qty) || 0 : 0;
+    const sewnOtherDays = sewn - existingTodayQty;
+    const newTodayQty = totalQty;
+    const newSewn = sewnOtherDays + newTodayQty;
 
     await db.SewingFact.upsert(
       {
@@ -302,12 +296,7 @@ router.put('/fact-total', async (req, res, next) => {
       raw: true,
     });
     const actualCutQty = getCutQtyDeduplicated(cutTasks);
-    if (actualCutQty >= 0 && total > actualCutQty) {
-      return res.status(400).json({
-        error: `Факт (${total}) не может превышать раскроенное (${actualCutQty})`,
-        actual_cut_qty: actualCutQty,
-      });
-    }
+    // Система гибкая: факт может отличаться от раскроя — без блокировки.
 
     const today = new Date().toISOString().slice(0, 10);
     const t = await db.sequelize.transaction();
@@ -459,13 +448,7 @@ router.post('/fact/bulk', async (req, res, next) => {
         : Math.max(0, parseInt(r.fact_qty, 10) || parseInt(r.fact, 10) || 0);
       totalAfterSave += qty;
     }
-    if (actualCutQty >= 0 && totalAfterSave > actualCutQty) {
-      return res.status(400).json({
-        error: `Факт пошива (${totalAfterSave}) не может превышать раскроенное количество (${actualCutQty})`,
-        actual_cut_qty: actualCutQty,
-        requested_total: totalAfterSave,
-      });
-    }
+    // Система гибкая: факт может отличаться от раскроя — без блокировки.
 
     const t = await db.sequelize.transaction();
     try {
@@ -513,6 +496,7 @@ router.get('/board', async (req, res, next) => {
     if (date_from > date_to) [date_from, date_to] = [date_to, date_from];
     const statusFilter = (req.query.status || 'IN_PROGRESS').toUpperCase();
     const q = (req.query.q || '').trim();
+    const workshopIdFilter = req.query.workshop_id ? Number(req.query.workshop_id) : null;
 
     const keys = new Set();
 
@@ -619,12 +603,25 @@ router.get('/board', async (req, res, next) => {
       if (r.done_batch_id) doneBatchByKey[k] = r.done_batch_id;
     });
 
-    const orderIds = [...new Set([...keys].map((k) => parseInt(k.split('-')[0], 10)))];
+    let orderIds = [...new Set([...keys].map((k) => parseInt(k.split('-')[0], 10)))];
+    const orderWhere = { id: orderIds };
+    if (workshopIdFilter) orderWhere.workshop_id = workshopIdFilter;
     const orders = await db.Order.findAll({
-      where: { id: orderIds },
-      attributes: ['id', 'title', 'tz_code', 'model_name', 'deadline', 'workshop_id'],
+      where: orderWhere,
+      attributes: ['id', 'title', 'tz_code', 'model_name', 'deadline', 'workshop_id', 'photos'],
       include: [{ model: db.Client, as: 'Client', required: false, attributes: ['name'] }],
     });
+    orderIds = orders.map((o) => o.id);
+    if (workshopIdFilter && orderIds.length === 0) {
+      return res.json({ floors: [], period: { date_from, date_to } });
+    }
+    if (workshopIdFilter) {
+      const allowedIds = new Set(orderIds);
+      [...keys].forEach((k) => {
+        const oid = parseInt(k.split('-')[0], 10);
+        if (!allowedIds.has(oid)) keys.delete(k);
+      });
+    }
     const orderMap = {};
     orders.forEach((o) => { orderMap[o.id] = o; });
 
@@ -684,6 +681,7 @@ router.get('/board', async (req, res, next) => {
         order_title,
         model_name: modelName,
         client_name: clientName,
+        order_photos: order.photos,
         status,
         done_batch_id: doneBatchByKey[key] || null,
         plan_rows,
@@ -706,8 +704,32 @@ router.get('/board', async (req, res, next) => {
       }
     });
 
+    const workshopIds = [...new Set(orders.map((o) => o.workshop_id).filter(Boolean))];
+    const weekStarts = [getWeekStart(date_from), getWeekStart(date_to)];
+    const capacityRows = workshopIds.length > 0
+      ? await db.WeeklyCapacity.findAll({
+          where: {
+            workshop_id: { [Op.in]: workshopIds },
+            building_floor_id: { [Op.in]: sewingFloorIds },
+            week_start: { [Op.in]: weekStarts },
+          },
+          attributes: ['building_floor_id', 'capacity_week'],
+          raw: true,
+        })
+      : [];
+    const capacityByFloor = {};
+    capacityRows.forEach((r) => {
+      const fid = r.building_floor_id;
+      const cap = parseFloat(r.capacity_week) || 0;
+      const capDay = Math.round(cap / WORKING_DAYS_PER_WEEK);
+      if (capDay > 0 && (!capacityByFloor[fid] || capDay > capacityByFloor[fid])) {
+        capacityByFloor[fid] = capDay;
+      }
+    });
+
     const floors = sewingFloorIds.map((floor_id) => ({
       floor_id,
+      capacity_per_day: capacityByFloor[floor_id] ?? null,
       items: itemsByFloor[floor_id],
     }));
     res.json({ floors, period: { date_from, date_to } });
@@ -1002,12 +1024,7 @@ router.post('/complete', async (req, res, next) => {
       raw: true,
     });
     const actualCutQty = getCutQtyDeduplicated(cutTasksComplete);
-    if (actualCutQty >= 0 && fact_sum > actualCutQty) {
-      return res.status(400).json({
-        error: `Факт пошива (${fact_sum}) не может превышать раскроенное количество (${actualCutQty})`,
-        actual_cut_qty: actualCutQty,
-      });
-    }
+    // Система гибкая: факт может отличаться от раскроя — без блокировки.
 
     const [planAgg] = await db.sequelize.query(
       `SELECT COALESCE(SUM(planned_qty), 0)::int AS plan_sum

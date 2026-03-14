@@ -79,7 +79,7 @@ router.get('/', async (req, res, next) => {
         {
           model: db.Order,
           as: 'Order',
-          attributes: ['id', 'title', 'tz_code', 'model_name', 'deadline'],
+          attributes: ['id', 'title', 'tz_code', 'model_name', 'deadline', 'photos'],
           where: Object.keys(ordersWhere).length ? ordersWhere : undefined,
           required: !!Object.keys(ordersWhere).length,
           include: [{ model: db.Client, as: 'Client', attributes: ['name'] }],
@@ -105,6 +105,7 @@ router.get('/', async (req, res, next) => {
         model_name: r.Order?.model_name || '',
         title: r.Order?.title || '',
         client_name: r.Order?.Client?.name || '—',
+        order_photos: r.Order?.photos,
         procurement: {
           id: r.id,
           status: r.status || 'draft',

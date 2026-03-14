@@ -1,14 +1,15 @@
 /**
  * Пошив — ERP швейной фабрики.
  * Матрица цвет×размер из раскроя или заказа.
- * available = cut_fact_qty − sewn_qty
- * Валидация: grand_total <= available
+ * Раскроено, Сшито, Доступно (остаток = раскроено − сшито).
+ * Система гибкая: факт может отличаться от плана — без блокировок.
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import PrintButton from '../components/PrintButton';
+import ModelPhoto from '../components/ModelPhoto';
 
 function getWeekStart() {
   const d = new Date();
@@ -17,6 +18,11 @@ function getWeekStart() {
   d.setDate(diff);
   return d.toISOString().slice(0, 10);
 }
+const SEWING_MATRIX_STORAGE_KEY = 'sewing_matrix_inputs';
+const SEWING_FACT_INPUT_STORAGE_KEY = 'sewing_fact_input';
+const SEWING_SEARCH_KEY = 'sewing_search';
+const SEWING_WORKSHOP_KEY = 'sewing_workshop_id';
+
 function getWeekEnd() {
   const d = new Date();
   const day = d.getDay();
@@ -27,8 +33,14 @@ function getWeekEnd() {
 
 export default function Sewing() {
   const navigate = useNavigate();
-  const [q, setQ] = useState('');
+  const [q, setQ] = useState(() => {
+    try { return sessionStorage.getItem(SEWING_SEARCH_KEY) || ''; } catch { return ''; }
+  });
   const [debouncedQ, setDebouncedQ] = useState('');
+  const [workshops, setWorkshops] = useState([]);
+  const [workshopId, setWorkshopId] = useState(() => {
+    try { return sessionStorage.getItem(SEWING_WORKSHOP_KEY) || ''; } catch { return ''; }
+  });
   const [boardData, setBoardData] = useState({ floors: [], period: {} });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -39,12 +51,27 @@ export default function Sewing() {
   const [factInput, setFactInput] = useState('');
   const [saving, setSaving] = useState(false);
   const [completing, setCompleting] = useState(false);
-  const [expandedItemKey, setExpandedItemKey] = useState(null); // "order_id-floor_id" или null
+  const [expandedItemKey, setExpandedItemKey] = useState(null);
+  const [completedBatchId, setCompletedBatchId] = useState(null);
+  const matrixInputsCacheRef = React.useRef({});
+  const factInputCacheRef = React.useRef({});
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(q.trim()), 300);
     return () => clearTimeout(t);
   }, [q]);
+
+  useEffect(() => {
+    try { sessionStorage.setItem(SEWING_SEARCH_KEY, q || ''); } catch (_) {}
+  }, [q]);
+
+  useEffect(() => {
+    api.workshops.list().then(setWorkshops).catch(() => setWorkshops([]));
+  }, []);
+
+  useEffect(() => {
+    try { sessionStorage.setItem(SEWING_WORKSHOP_KEY, workshopId || ''); } catch (_) {}
+  }, [workshopId]);
 
   const loadBoard = useCallback(() => {
     setLoading(true);
@@ -55,13 +82,14 @@ export default function Sewing() {
         date_to: getWeekEnd(),
         status: 'ALL',
         q: debouncedQ || undefined,
+        workshop_id: workshopId || undefined,
       })
       .then((res) =>
         setBoardData({ floors: res.floors || [], period: res.period || {} })
       )
       .catch((err) => setError(err.message || 'Ошибка'))
       .finally(() => setLoading(false));
-  }, [debouncedQ]);
+  }, [debouncedQ, workshopId]);
 
   useEffect(() => {
     loadBoard();
@@ -69,14 +97,26 @@ export default function Sewing() {
 
   const loadMatrix = useCallback(async (order_id, floor_id, options = {}) => {
     const { preserveInputs = false } = options;
+    const cacheKey = `${order_id}-${floor_id}`;
     try {
       const data = await api.sewing.matrix({ order_id, floor_id });
       setMatrixData(data);
       if (!preserveInputs) {
-        const init = {};
+        let init = matrixInputsCacheRef.current[cacheKey];
+        if (!init) {
+          try {
+            const stored = sessionStorage.getItem(SEWING_MATRIX_STORAGE_KEY);
+            if (stored) {
+              const parsed = JSON.parse(stored);
+              init = parsed[cacheKey] || {};
+            }
+          } catch (_) {}
+        }
+        init = init || {};
         (data.colors || []).forEach((color) => {
           (data.sizes || []).forEach((size) => {
-            init[`${color}|${size}`] = '';
+            const k = `${color}|${size}`;
+            if (init[k] === undefined) init[k] = '';
           });
         });
         setMatrixInputs(init);
@@ -100,6 +140,16 @@ export default function Sewing() {
     }
     const key = getItemKey(item);
     if (expandedItemKey === key) {
+      if (selectedItem) {
+        const k = getItemKey(selectedItem);
+        factInputCacheRef.current[k] = factInput;
+        try {
+          const stored = sessionStorage.getItem(SEWING_FACT_INPUT_STORAGE_KEY);
+          const parsed = stored ? JSON.parse(stored) : {};
+          parsed[k] = factInput;
+          sessionStorage.setItem(SEWING_FACT_INPUT_STORAGE_KEY, JSON.stringify(parsed));
+        } catch (_) {}
+      }
       setExpandedItemKey(null);
       setSelectedItem(null);
       setMatrixData(null);
@@ -108,7 +158,14 @@ export default function Sewing() {
       setExpandedItemKey(key);
       setSelectedItem(item);
       setMatrixData(null);
-      setFactInput('');
+      let factVal = factInputCacheRef.current[key];
+      if (factVal === undefined) {
+        try {
+          const stored = sessionStorage.getItem(SEWING_FACT_INPUT_STORAGE_KEY);
+          if (stored) factVal = JSON.parse(stored)[key];
+        } catch (_) {}
+      }
+      setFactInput(factVal ?? '');
       loadMatrix(item.order_id, item.floor_id);
     }
   };
@@ -121,7 +178,22 @@ export default function Sewing() {
 
   const setCellValue = (color, size, value) => {
     const key = `${color}|${size}`;
-    setMatrixInputs((prev) => ({ ...prev, [key]: value === '' ? '' : String(value) }));
+    const val = value === '' ? '' : String(value);
+    setMatrixInputs((prev) => {
+      const next = { ...prev, [key]: val };
+      if (selectedItem) {
+        const cacheKey = `${selectedItem.order_id}-${selectedItem.floor_id}`;
+        if (!matrixInputsCacheRef.current[cacheKey]) matrixInputsCacheRef.current[cacheKey] = {};
+        matrixInputsCacheRef.current[cacheKey] = { ...matrixInputsCacheRef.current[cacheKey], ...next };
+        try {
+          const stored = sessionStorage.getItem(SEWING_MATRIX_STORAGE_KEY);
+          const parsed = stored ? JSON.parse(stored) : {};
+          parsed[cacheKey] = matrixInputsCacheRef.current[cacheKey];
+          sessionStorage.setItem(SEWING_MATRIX_STORAGE_KEY, JSON.stringify(parsed));
+        } catch (_) {}
+      }
+      return next;
+    });
   };
 
   const colors = matrixData?.colors ?? [];
@@ -151,16 +223,10 @@ export default function Sewing() {
     if (!selectedItem) return;
     if (hasMatrix) {
       if (grandTotal <= 0) return;
-      if (grandTotal > available) {
-        setError('Превышено количество раскроя.');
-        return;
-      }
+      // Система гибкая: факт может отличаться от раскроя — без блокировки
     } else {
       if (simpleInputQty <= 0) return;
-      if (simpleInputQty > available) {
-        setError(`Количество (${simpleInputQty}) превышает доступное (${available}).`);
-        return;
-      }
+      // Система гибкая: допускаем ввод, отличающийся от доступного
     }
 
     setSaving(true);
@@ -200,10 +266,7 @@ export default function Sewing() {
   const handleComplete = async () => {
     if (!selectedItem) return;
     const totalNewInput = hasMatrix ? grandTotal : simpleInputQty;
-    if (totalNewInput > available) {
-      setError(hasMatrix ? 'Превышено количество раскроя.' : `Количество (${simpleInputQty}) превышает доступное (${available}).`);
-      return;
-    }
+    // Система гибкая: факт может отличаться от раскроя — без блокировки
     if (sewn <= 0 && totalNewInput <= 0) {
       setError('Нет сшитых единиц для отправки в ОТК.');
       return;
@@ -244,12 +307,30 @@ export default function Sewing() {
         items: hasMatrix && items.length > 0 ? items : undefined,
       });
       setSuccessMsg('Партия отправлена в ОТК');
+      setCompletedBatchId(res?.batch_id || null);
+      const cacheKey = `${selectedItem.order_id}-${selectedItem.floor_id}`;
+      const itemKey = getItemKey(selectedItem);
+      delete matrixInputsCacheRef.current[cacheKey];
+      delete factInputCacheRef.current[itemKey];
+      try {
+        const m = sessionStorage.getItem(SEWING_MATRIX_STORAGE_KEY);
+        if (m) {
+          const p = JSON.parse(m);
+          delete p[cacheKey];
+          sessionStorage.setItem(SEWING_MATRIX_STORAGE_KEY, JSON.stringify(p));
+        }
+        const f = sessionStorage.getItem(SEWING_FACT_INPUT_STORAGE_KEY);
+        if (f) {
+          const pf = JSON.parse(f);
+          delete pf[itemKey];
+          sessionStorage.setItem(SEWING_FACT_INPUT_STORAGE_KEY, JSON.stringify(pf));
+        }
+      } catch (_) {}
       setExpandedItemKey(null);
       setSelectedItem(null);
       setMatrixData(null);
       setFactInput('');
       loadBoard();
-      if (res?.batch_id) navigate(`/qc?batch_id=${res.batch_id}`);
     } catch (err) {
       setError(err.message || err.error || 'Ошибка завершения');
     } finally {
@@ -261,7 +342,17 @@ export default function Sewing() {
     <div className="p-4 max-w-[1200px] mx-auto">
       <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
         <h1 className="text-xl font-semibold text-white">Пошив</h1>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          <select
+            value={workshopId}
+            onChange={(e) => setWorkshopId(e.target.value)}
+            className="px-4 py-2 rounded-lg bg-black/30 border border-white/20 text-white min-w-[160px]"
+          >
+            <option value="">Все цеха</option>
+            {workshops.map((w) => (
+              <option key={w.id} value={w.id}>{w.name}</option>
+            ))}
+          </select>
           <PrintButton />
           <Link
           to="/qc"
@@ -286,13 +377,35 @@ export default function Sewing() {
         <div className="mb-3 text-sm text-red-400">{error}</div>
       )}
       {successMsg && (
-        <div className="mb-3 text-sm text-green-400">{successMsg}</div>
+        <div className="mb-3 text-sm text-green-400">
+          {successMsg}
+          {completedBatchId && (
+            <Link
+              to={`/qc?batch_id=${completedBatchId}`}
+              className="ml-2 text-primary-400 hover:underline"
+            >
+              Перейти в ОТК →
+            </Link>
+          )}
+        </div>
       )}
 
       {loading ? (
         <div className="p-8 text-center text-white/60">Загрузка...</div>
       ) : (
         <div className="print-area overflow-x-auto rounded-xl border border-white/25 bg-[#1a1a1f]">
+          {boardData.floors?.some((f) => f.capacity_per_day) && (
+            <div className="flex flex-wrap gap-4 px-4 py-2 text-sm text-white/70 border-b border-white/10">
+              Мощность этажей:
+              {(boardData.floors || []).map((f) =>
+                f.capacity_per_day ? (
+                  <span key={f.floor_id}>
+                    {f.floor_id} этаж — {f.capacity_per_day} шт/день
+                  </span>
+                ) : null
+              )}
+            </div>
+          )}
           {allItems.length === 0 ? (
             <div className="p-8 text-center text-white/50">Нет партий для пошива</div>
           ) : (
@@ -343,8 +456,15 @@ export default function Sewing() {
                           )}
                         </td>
                         <td className="px-4 py-3 font-medium text-white">
-                          {item.order_title}
-                          {isDone && <span className="ml-1 text-green-400">✓</span>}
+                          <div className="flex items-center gap-2">
+                            <ModelPhoto
+                              photo={item.order_photos?.[0]}
+                              inline
+                              size={48}
+                            />
+                            <span>{item.order_title}</span>
+                            {isDone && <span className="ml-1 text-green-400">✓</span>}
+                          </div>
                         </td>
                         <td className="px-4 py-3 text-white/90">
                           {item.model_name || item.order_title || '—'}
@@ -363,10 +483,10 @@ export default function Sewing() {
                               style={{ gridTemplateRows: '1fr' }}
                             >
                               <div className="min-w-0">
-                                <div className="space-y-2 text-sm mb-3">
-                                  <p><span className="text-white/60">Раскроено:</span> {cutTotal}</p>
-                                  <p><span className="text-white/60">Сшито:</span> {sewn}</p>
-                                  <p><span className="text-white/60">Доступно:</span> {available}</p>
+                                <div className="flex flex-wrap gap-4 p-3 rounded-lg bg-white/5 text-sm mb-3">
+                                  <span><strong>Раскрой:</strong> {cutTotal}</span>
+                                  <span><strong>Пошив:</strong> {sewn}</span>
+                                  <span><strong>Остаток:</strong> {available}</span>
                                 </div>
                                 {matrixData && hasMatrix ? (
                                   <div className="overflow-x-auto mb-3">
@@ -422,7 +542,20 @@ export default function Sewing() {
                                       max={available}
                                       placeholder="0"
                                       value={factInput}
-                                      onChange={(e) => setFactInput(e.target.value)}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        setFactInput(v);
+                                        if (selectedItem) {
+                                          const k = getItemKey(selectedItem);
+                                          factInputCacheRef.current[k] = v;
+                                          try {
+                                            const stored = sessionStorage.getItem(SEWING_FACT_INPUT_STORAGE_KEY);
+                                            const parsed = stored ? JSON.parse(stored) : {};
+                                            parsed[k] = v;
+                                            sessionStorage.setItem(SEWING_FACT_INPUT_STORAGE_KEY, JSON.stringify(parsed));
+                                          } catch (_) {}
+                                        }
+                                      }}
                                       onClick={(e) => e.stopPropagation()}
                                       className="w-full px-3 py-2.5 rounded-lg bg-white/10 border border-white/30 text-white text-base placeholder-white/40 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                                     />

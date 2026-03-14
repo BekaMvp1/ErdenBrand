@@ -8,6 +8,7 @@ import { createPortal } from 'react-dom';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api';
 import PrintButton from '../components/PrintButton';
+import ModelPhoto from '../components/ModelPhoto';
 
 const DEFAULT_TYPES = ['Аксы', 'Аутсорс', 'Наш цех'];
 
@@ -138,7 +139,7 @@ export function CompleteByFactModal({ task, onClose, onSave, isEditMode }) {
         </h3>
         <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
           <div className="flex-1 min-h-0 overflow-auto p-4 sm:p-6 pt-4">
-            <p className="text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-2">Раскрой по цветам</p>
+            <p className="text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-2">Заполните количество по факту (цвет × размер)</p>
             <div className="overflow-x-auto -mx-1 mb-4">
               <table className="w-full text-sm table-fixed min-w-[280px]">
                 <thead>
@@ -166,35 +167,6 @@ export function CompleteByFactModal({ task, onClose, onSave, isEditMode }) {
                       ))}
                     </tr>
                   ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-2">Итог по цветам</p>
-            <div className="overflow-x-auto -mx-1 mb-4">
-              <table className="w-full text-sm table-fixed min-w-[280px]">
-                <thead>
-                  <tr className="bg-accent-2/50 dark:bg-dark-800">
-                    <th className="text-left px-4 py-2.5 font-medium w-[120px]">Цвет</th>
-                    {sizes.map((s) => (
-                      <th key={s} className="text-center px-2 py-2.5 font-medium">{s}</th>
-                    ))}
-                    <th className="text-right px-4 py-2.5 font-medium">Итого</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {colors.map((color) => {
-                    const row = sizes.map((s) => parseInt(pivotState[color]?.[s], 10) || 0);
-                    const total = row.reduce((a, b) => a + b, 0);
-                    return (
-                      <tr key={color} className="border-t border-white/10">
-                        <td className="px-4 py-2.5">{color}</td>
-                        {sizes.map((size) => (
-                          <td key={size} className="px-2 py-2.5 text-center">{pivotState[color]?.[size] ?? 0}</td>
-                        ))}
-                        <td className="px-4 py-2.5 text-right font-medium">{total}</td>
-                      </tr>
-                    );
-                  })}
                 </tbody>
               </table>
             </div>
@@ -235,7 +207,16 @@ export default function Cutting() {
   const [activeType, setActiveType] = useState(type || 'Аксы');
   const [showAddForm, setShowAddForm] = useState(false);
   const [completeModalTask, setCompleteModalTask] = useState(null);
-  const [expandedTaskIds, setExpandedTaskIds] = useState(new Set());
+  const CUTTING_EXPANDED_KEY = 'cutting_expanded';
+  const loadExpandedFor = (t) => {
+    try {
+      const s = sessionStorage.getItem(`${CUTTING_EXPANDED_KEY}_${t}`);
+      if (!s) return new Set();
+      const arr = JSON.parse(s);
+      return new Set(Array.isArray(arr) ? arr : []);
+    } catch { return new Set(); }
+  };
+  const [expandedTaskIds, setExpandedTaskIds] = useState(() => loadExpandedFor(type || 'Аксы'));
   const [newTask, setNewTask] = useState({
     order_id: '',
     floor: '',
@@ -292,6 +273,16 @@ export default function Cutting() {
       navigate(`/cutting/${encodeURIComponent(allTypes[0])}`, { replace: true });
     }
   }, [type, allTypes, navigate]);
+
+  useEffect(() => {
+    setExpandedTaskIds(loadExpandedFor(activeType));
+  }, [activeType]);
+
+  const saveExpanded = (ids) => {
+    try {
+      sessionStorage.setItem(`${CUTTING_EXPANDED_KEY}_${activeType}`, JSON.stringify([...ids]));
+    } catch (_) {}
+  };
 
   const handleAddTask = async (e) => {
     e.preventDefault();
@@ -360,6 +351,7 @@ export default function Cutting() {
         actual_variants: actualVariants,
         end_date: endDate || undefined,
       });
+      await api.cutting.complete({ order_id: task.order_id });
       const updated = await api.cutting.tasks(activeType);
       setTasks(updated);
       setCompleteModalTask(null);
@@ -387,6 +379,7 @@ export default function Cutting() {
       const next = new Set(prev);
       if (next.has(taskId)) next.delete(taskId);
       else next.add(taskId);
+      saveExpanded(next);
       return next;
     });
   };
@@ -559,6 +552,12 @@ export default function Cutting() {
                   <tr className="border-b border-white/10 dark:border-white/10">
                     <td className="px-4 py-3 align-top">
                       <div className="flex items-center gap-2">
+                        <ModelPhoto
+                          photo={task.Order?.photos?.[0]}
+                          inline
+                          size={48}
+                          className="shrink-0"
+                        />
                         <button
                           type="button"
                           onClick={() => toggleTaskExpand(task.id)}
@@ -658,50 +657,111 @@ export default function Cutting() {
                         style={{ gridTemplateRows: isExpanded ? '1fr' : '0fr' }}
                       >
                         <div className="min-h-0 overflow-hidden">
-                            <div className="px-4 py-2">
-                                <table className="w-full text-sm border border-white/15 dark:border-white/15 rounded overflow-hidden max-w-[480px]">
-                                  <thead>
-                                    <tr className="bg-accent-2/50 dark:bg-dark-800">
-                                      <th className="text-left px-4 py-2 font-medium">Цвет</th>
-                                      <th className="text-left px-4 py-2 font-medium">Размер</th>
-                                      <th className="text-center px-4 py-2 font-medium">Кол-во план</th>
-                                      <th className="text-center px-4 py-2 font-medium">Кол-во факт</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {(() => {
-                                      const planVariants = task.Order?.OrderVariants || [];
-                                      const factMap = {};
-                                      (actualVariants || []).forEach((v) => {
-                                        const k = `${String(v.color || '').trim()}|${String(v.size || '').trim()}`;
-                                        factMap[k] = parseInt(v.quantity_actual, 10) || 0;
-                                      });
-                                      const rows = planVariants.map((v) => {
-                                        const color = String(v.color || '').trim() || '—';
-                                        const size = (v.Size?.name || v.Size?.code || '').toString().trim() || '—';
-                                        const plan = parseInt(v.quantity, 10) || 0;
-                                        const fact = factMap[`${color}|${size}`] ?? plan;
-                                        return { color, size, plan, fact };
-                                      });
-                                      if (rows.length === 0) {
-                                        return (
-                                          <tr>
-                                            <td colSpan={4} className="px-4 py-2 text-[#ECECEC]/60">Нет данных</td>
+                            <div className="px-4 py-2 flex flex-wrap gap-6">
+                              {(() => {
+                                const pivot = buildBatchPivot(actualVariants);
+                                const hasTotals = pivot.sizes?.length && pivot.rows?.length;
+                                let totalsByColor = {};
+                                let totalsBySize = {};
+                                let grandTotal = 0;
+                                if (hasTotals) {
+                                  pivot.rows.forEach(({ color, bySize }) => {
+                                    let t = 0;
+                                    Object.values(bySize || {}).forEach((q) => { t += q; });
+                                    totalsByColor[color] = { bySize: bySize || {}, total: t };
+                                  });
+                                  pivot.sizes.forEach((s) => {
+                                    let t = 0;
+                                    pivot.rows.forEach(({ bySize }) => { t += (bySize && bySize[s]) || 0; });
+                                    totalsBySize[s] = t;
+                                    grandTotal += t;
+                                  });
+                                }
+                                return (
+                                  <>
+                                    <div className="min-w-0">
+                                      <table className="text-sm border border-white/15 dark:border-white/15 rounded overflow-hidden max-w-[480px]">
+                                        <thead>
+                                          <tr className="bg-accent-2/50 dark:bg-dark-800">
+                                            <th className="text-left px-4 py-2 font-medium">Цвет</th>
+                                            <th className="text-left px-4 py-2 font-medium">Размер</th>
+                                            <th className="text-center px-4 py-2 font-medium">Кол-во план</th>
+                                            <th className="text-center px-4 py-2 font-medium">Кол-во факт</th>
                                           </tr>
-                                        );
-                                      }
-                                      return rows.map((r, i) => (
-                                        <tr key={`${r.color}-${r.size}-${i}`} className="border-t border-white/10">
-                                          <td className="px-4 py-2">{r.color}</td>
-                                          <td className="px-4 py-2">{r.size}</td>
-                                          <td className="px-4 py-2 text-center">{r.plan}</td>
-                                          <td className="px-4 py-2 text-center">{r.fact}</td>
-                                        </tr>
-                                      ));
-                                    })()}
-                                  </tbody>
-                                </table>
-                              </div>
+                                        </thead>
+                                        <tbody>
+                                          {(() => {
+                                            const planVariants = task.Order?.OrderVariants || [];
+                                            const factMap = {};
+                                            (actualVariants || []).forEach((v) => {
+                                              const k = `${String(v.color || '').trim()}|${String(v.size || '').trim()}`;
+                                              factMap[k] = parseInt(v.quantity_actual, 10) || 0;
+                                            });
+                                            const rows = planVariants.map((v) => {
+                                              const color = String(v.color || '').trim() || '—';
+                                              const size = (v.Size?.name || v.Size?.code || '').toString().trim() || '—';
+                                              const plan = parseInt(v.quantity, 10) || 0;
+                                              const factKey = `${color}|${size}`;
+                                              const fact = factMap[factKey] !== undefined ? factMap[factKey] : null;
+                                              return { color, size, plan, fact };
+                                            });
+                                            if (rows.length === 0) {
+                                              return (
+                                                <tr>
+                                                  <td colSpan={4} className="px-4 py-2 text-[#ECECEC]/60">Нет данных</td>
+                                                </tr>
+                                              );
+                                            }
+                                            return rows.map((r, i) => (
+                                              <tr key={`${r.color}-${r.size}-${i}`} className="border-t border-white/10">
+                                                <td className="px-4 py-2">{r.color}</td>
+                                                <td className="px-4 py-2">{r.size}</td>
+                                                <td className="px-4 py-2 text-center">{r.plan}</td>
+                                                <td className="px-4 py-2 text-center">{r.fact !== null ? r.fact : '—'}</td>
+                                              </tr>
+                                            ));
+                                          })()}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                    {hasTotals && (
+                                      <div className="shrink-0">
+                                        <p className="text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-2">Итог по цветам</p>
+                                        <table className="text-sm border border-white/15 dark:border-white/15 rounded overflow-hidden min-w-[200px]">
+                                          <thead>
+                                            <tr className="bg-accent-2/50 dark:bg-dark-800">
+                                              <th className="text-left px-4 py-2 font-medium">Цвет</th>
+                                              {pivot.sizes.map((s) => (
+                                                <th key={s} className="text-center px-2 py-2 font-medium">{s}</th>
+                                              ))}
+                                              <th className="text-right px-4 py-2 font-medium">Итого</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {Object.entries(totalsByColor).map(([color, { bySize, total }]) => (
+                                              <tr key={color} className="border-t border-white/10">
+                                                <td className="px-4 py-2">{color}</td>
+                                                {pivot.sizes.map((s) => (
+                                                  <td key={s} className="px-2 py-2 text-center">{bySize[s] ?? 0}</td>
+                                                ))}
+                                                <td className="px-4 py-2 text-right font-medium">{total}</td>
+                                              </tr>
+                                            ))}
+                                            <tr className="border-t-2 border-white/20 bg-accent-2/30 dark:bg-dark-800 font-semibold">
+                                              <td className="px-4 py-2">Итого по размерам</td>
+                                              {pivot.sizes.map((s) => (
+                                                <td key={s} className="px-2 py-2 text-center">{totalsBySize[s] ?? 0}</td>
+                                              ))}
+                                              <td className="px-4 py-2 text-right">{grandTotal}</td>
+                                            </tr>
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    )}
+                                  </>
+                                );
+                              })()}
+                            </div>
                         </div>
                       </div>
                     </td>

@@ -146,11 +146,11 @@ router.post('/sewing', async (req, res, next) => {
 /**
  * GET /api/warehouse-stock/batches/pending-qc — партии пошива, готовые к ОТК.
  * Партии со статусом READY_FOR_QC (создаются при «Завершить пошив → ОТК»).
- * Фильтры: q, floor_id.
+ * Фильтры: q, floor_id, workshop_id.
  */
 router.get('/batches/pending-qc', async (req, res, next) => {
   try {
-    const { q, floor_id } = req.query;
+    const { q, floor_id, workshop_id } = req.query;
     const [rows] = await db.sequelize.query(`
       SELECT sb.id, sb.order_id, sb.model_id, sb.floor_id, sb.batch_code, sb.finished_at,
              COALESCE(SUM(sbi.fact_qty), 0)::numeric AS total_fact
@@ -172,7 +172,7 @@ router.get('/batches/pending-qc', async (req, res, next) => {
       const orders = await db.Order.findAll({
         where: { id: [...orderIds] },
         include: [{ model: db.Client, as: 'Client' }],
-        attributes: ['id', 'title', 'model_name', 'tz_code'],
+        attributes: ['id', 'title', 'model_name', 'tz_code', 'photos'],
       });
       const orderMap = {};
       orders.forEach((o) => { orderMap[o.id] = o; });
@@ -193,6 +193,7 @@ router.get('/batches/pending-qc', async (req, res, next) => {
           tz_code: order?.tz_code || '',
           model_name: order?.model_name || '',
           client_name: order?.Client?.name || '—',
+          order_photos: order?.photos,
           floor_id: r.floor_id,
           floor_name: floor?.name || '—',
           finished_at: r.finished_at,
@@ -202,6 +203,14 @@ router.get('/batches/pending-qc', async (req, res, next) => {
       });
     }
 
+    if (workshop_id) {
+      const orderIds = await db.Order.findAll({
+        where: { workshop_id: Number(workshop_id) },
+        attributes: ['id'],
+        raw: true,
+      }).then((rows) => rows.map((r) => r.id));
+      if (orderIds.length) list = list.filter((i) => orderIds.includes(i.order_id));
+    }
     if (floor_id) {
       const fids = String(floor_id).split(',').map((id) => parseInt(id, 10)).filter((id) => !Number.isNaN(id));
       if (fids.length) list = list.filter((i) => i.floor_id != null && fids.includes(i.floor_id));
@@ -235,7 +244,15 @@ router.get('/batches/:id', async (req, res, next) => {
   try {
     const batch = await db.SewingBatch.findByPk(req.params.id, {
       include: [
-        { model: db.Order, as: 'Order', attributes: ['id', 'title', 'model_name', 'tz_code'], include: [{ model: db.Client, as: 'Client', attributes: ['name'] }] },
+        {
+          model: db.Order,
+          as: 'Order',
+          attributes: ['id', 'title', 'model_name', 'tz_code', 'photos'],
+          include: [
+            { model: db.Client, as: 'Client', attributes: ['name'] },
+            { model: db.OrderVariant, as: 'OrderVariants', attributes: ['color', 'size_id'], include: [{ model: db.Size, as: 'Size', attributes: ['id', 'name', 'code'] }], required: false },
+          ],
+        },
         { model: db.BuildingFloor, as: 'BuildingFloor', attributes: ['id', 'name'] },
         {
           model: db.SewingBatchItem,
@@ -492,18 +509,27 @@ router.post('/qc', async (req, res, next) => {
 
 // ————— Склад (остатки по размерам и партиям) —————
 
-/** GET /api/warehouse-stock/stock?order_id= — остатки на складе. По партиям: batch_code, модель, размер, остаток. */
+/** GET /api/warehouse-stock/stock?order_id=&workshop_id= — остатки на складе. По партиям: batch_code, модель, размер, остаток. */
 router.get('/stock', async (req, res, next) => {
   try {
-    const { order_id } = req.query;
+    const { order_id, workshop_id } = req.query;
     const where = {};
     if (order_id) where.order_id = Number(order_id);
+    if (workshop_id) {
+      const orderIds = await db.Order.findAll({
+        where: { workshop_id: Number(workshop_id) },
+        attributes: ['id'],
+        raw: true,
+      }).then((rows) => rows.map((r) => r.id));
+      if (orderIds.length === 0) return res.json([]);
+      where.order_id = { [Op.in]: orderIds };
+    }
     const list = await db.WarehouseStock.findAll({
       where,
       include: [
         { model: db.ModelSize, as: 'ModelSize', required: false, include: [{ model: db.Size, as: 'Size' }] },
         { model: db.Size, as: 'Size', required: false, attributes: ['id', 'name'] },
-        { model: db.Order, as: 'Order', attributes: ['id', 'title', 'model_name'], include: [{ model: db.Client, as: 'Client', attributes: ['name'] }] },
+        { model: db.Order, as: 'Order', attributes: ['id', 'title', 'model_name', 'tz_code', 'total_quantity', 'quantity', 'photos'], include: [{ model: db.Client, as: 'Client', attributes: ['name'] }] },
         { model: db.SewingBatch, as: 'SewingBatch', attributes: ['id', 'batch_code'], required: false },
       ],
       order: [['order_id'], ['batch_id'], ['model_size_id'], ['size_id'], ['batch']],
@@ -619,17 +645,26 @@ router.get('/stock/summary', async (req, res, next) => {
 
 // ————— Отгрузка —————
 
-/** GET /api/warehouse-stock/shipments?order_id= — отгрузки. Новая схема: по batch_id с shipment_items. */
+/** GET /api/warehouse-stock/shipments?order_id=&workshop_id= — отгрузки. Новая схема: по batch_id с shipment_items. */
 router.get('/shipments', async (req, res, next) => {
   try {
-    const { order_id } = req.query;
+    const { order_id, workshop_id } = req.query;
     const where = {};
     if (order_id) where.order_id = Number(order_id);
+    if (workshop_id) {
+      const orderIds = await db.Order.findAll({
+        where: { workshop_id: Number(workshop_id) },
+        attributes: ['id'],
+        raw: true,
+      }).then((rows) => rows.map((r) => r.id));
+      if (orderIds.length === 0) return res.json([]);
+      where.order_id = { [Op.in]: orderIds };
+    }
     const list = await db.Shipment.findAll({
       where,
       include: [
         { model: db.ModelSize, as: 'ModelSize', include: [{ model: db.Size, as: 'Size' }], required: false },
-        { model: db.Order, as: 'Order', attributes: ['id', 'title', 'model_name'], include: [{ model: db.Client, as: 'Client', attributes: ['name'] }], required: false },
+        { model: db.Order, as: 'Order', attributes: ['id', 'title', 'model_name', 'tz_code', 'total_quantity', 'quantity', 'photos'], include: [{ model: db.Client, as: 'Client', attributes: ['name'] }], required: false },
         { model: db.SewingBatch, as: 'SewingBatch', attributes: ['id', 'batch_code', 'order_id'], required: false },
         {
           model: db.ShipmentItem,

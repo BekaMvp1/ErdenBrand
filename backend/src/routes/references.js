@@ -48,6 +48,30 @@ router.post('/building-floors', async (req, res, next) => {
   }
 });
 
+/** DELETE /api/references/building-floors/:id */
+router.delete('/building-floors/:id', async (req, res, next) => {
+  try {
+    if (!['admin', 'manager'].includes(req.user?.role)) {
+      return res.status(403).json({ error: 'Недостаточно прав' });
+    }
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Неверный ID' });
+    const bf = await db.BuildingFloor.findByPk(id);
+    if (!bf) return res.status(404).json({ error: 'Этаж не найден' });
+    const usedOrders = await db.Order.count({ where: { building_floor_id: id } });
+    const usedOps = await db.Operation.count({ where: { default_floor_id: id } });
+    if (usedOrders > 0 || usedOps > 0) {
+      return res.status(400).json({
+        error: `Этаж используется${usedOrders ? ` в ${usedOrders} заказах` : ''}${usedOps ? ` и в ${usedOps} операциях` : ''}. Удаление невозможно.`,
+      });
+    }
+    await bf.destroy();
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
 /**
  * GET /api/references/floors
  * Возвращает цехи пошива (для создания заказа).
@@ -68,19 +92,46 @@ router.get('/floors', async (req, res, next) => {
 
 /**
  * POST /api/references/floors
- * Добавление цеха пошива вручную (admin/manager)
+ * Добавление цеха пошива (admin/manager).
+ * Создаёт запись в floors И в workshops — чтобы цех сразу появлялся в CreateOrder и фильтрах.
  */
 router.post('/floors', async (req, res, next) => {
   try {
     if (!['admin', 'manager'].includes(req.user?.role)) {
       return res.status(403).json({ error: 'Недостаточно прав' });
     }
-    const { name } = req.body;
-    if (!name || !String(name).trim()) {
+    const nameStr = (req.body.name != null ? String(req.body.name) : '').trim();
+    if (!nameStr) {
       return res.status(400).json({ error: 'Укажите название цеха пошива' });
     }
-    const floor = await db.Floor.create({ name: String(name).trim() });
+    const floor = await db.Floor.create({ name: nameStr });
+    // Создаём цех в workshops — иначе не появится в CreateOrder, фильтрах Склад/Пошив/ОТК
+    await db.Workshop.findOrCreate({
+      where: { name: nameStr },
+      defaults: { name: nameStr, floors_count: 1, is_active: true },
+    });
     res.status(201).json(floor);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** DELETE /api/references/floors/:id */
+router.delete('/floors/:id', async (req, res, next) => {
+  try {
+    if (!['admin', 'manager'].includes(req.user?.role)) {
+      return res.status(403).json({ error: 'Недостаточно прав' });
+    }
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Неверный ID' });
+    const floor = await db.Floor.findByPk(id);
+    if (!floor) return res.status(404).json({ error: 'Цех не найден' });
+    const used = await db.Order.count({ where: { floor_id: id } });
+    if (used > 0) {
+      return res.status(400).json({ error: `Цех используется в ${used} заказах. Удаление невозможно.` });
+    }
+    await floor.destroy();
+    res.status(204).send();
   } catch (err) {
     next(err);
   }
@@ -115,13 +166,34 @@ router.post('/clients', async (req, res, next) => {
     const client = await db.Client.create({ name: nameStr });
     res.status(201).json(client);
   } catch (err) {
+    if (err.name === 'SequelizeUniqueConstraintError') {
+      return res.status(400).json({ error: 'Клиент с таким названием уже существует' });
+    }
     if (err.name === 'SequelizeValidationError' && err.errors?.length) {
       const msg = err.errors.map((e) => e.message || e.path).join('; ');
       return res.status(400).json({ error: msg || 'Ошибка валидации' });
     }
-    if (err.name === 'SequelizeUniqueConstraintError') {
-      return res.status(400).json({ error: 'Клиент с таким названием уже существует' });
+    next(err);
+  }
+});
+
+/** DELETE /api/references/clients/:id */
+router.delete('/clients/:id', async (req, res, next) => {
+  try {
+    if (!['admin', 'manager'].includes(req.user?.role)) {
+      return res.status(403).json({ error: 'Недостаточно прав' });
     }
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Неверный ID' });
+    const client = await db.Client.findByPk(id);
+    if (!client) return res.status(404).json({ error: 'Клиент не найден' });
+    const used = await db.Order.count({ where: { client_id: id } });
+    if (used > 0) {
+      return res.status(400).json({ error: `Клиент используется в ${used} заказах. Удаление невозможно.` });
+    }
+    await client.destroy();
+    res.status(204).send();
+  } catch (err) {
     next(err);
   }
 });
@@ -255,7 +327,7 @@ router.post('/colors', async (req, res, next) => {
 });
 
 /**
- * GET /api/references/technologists
+ * GET /api/references/technologists — удалено (технологи и швеи не используются)
  * floor_id — цех пошива (справочники). building_floor_id — этаж (распределение).
  */
 router.get('/technologists', async (req, res, next) => {

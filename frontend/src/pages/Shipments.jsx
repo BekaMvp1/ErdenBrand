@@ -4,16 +4,24 @@
  * Нельзя отгрузить больше, чем есть на складе по партии и размеру.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+
+const SHIPMENTS_MODAL_KEY = 'shipments_modal_batch';
+const SHIPMENTS_WORKSHOP_KEY = 'shipments_workshop_id';
 import { createPortal } from 'react-dom';
 import { api } from '../api';
 import PrintButton from '../components/PrintButton';
 import { NeonButton, NeonCard, NeonInput } from '../components/ui';
+import ModelPhoto from '../components/ModelPhoto';
 
 export default function Shipments() {
   const [stock, setStock] = useState([]);
   const [shipments, setShipments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [workshops, setWorkshops] = useState([]);
+  const [workshopId, setWorkshopId] = useState(() => {
+    try { return sessionStorage.getItem(SHIPMENTS_WORKSHOP_KEY) || ''; } catch { return ''; }
+  });
   const [modalBatch, setModalBatch] = useState(null);
   const [modalLegacy, setModalLegacy] = useState(null);
   const [shipQty, setShipQty] = useState('');
@@ -21,9 +29,10 @@ export default function Shipments() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const load = () => {
+  const load = useCallback(() => {
     setLoading(true);
-    Promise.all([api.warehouseStock.stock(), api.warehouseStock.shipments()])
+    const params = workshopId ? { workshop_id: workshopId } : {};
+    Promise.all([api.warehouseStock.stock(params), api.warehouseStock.shipments(params)])
       .then(([s, sh]) => {
         setStock(s);
         setShipments(sh);
@@ -33,11 +42,19 @@ export default function Shipments() {
         setShipments([]);
       })
       .finally(() => setLoading(false));
-  };
+  }, [workshopId]);
+
+  useEffect(() => {
+    api.workshops.list().then(setWorkshops).catch(() => setWorkshops([]));
+  }, []);
+
+  useEffect(() => {
+    try { sessionStorage.setItem(SHIPMENTS_WORKSHOP_KEY, workshopId || ''); } catch (_) {}
+  }, [workshopId]);
 
   useEffect(() => {
     load();
-  }, []);
+  }, [load]);
 
   const modelName = (row) =>
     row.Order?.model_name || row.Order?.title || `#${row.order_id}`;
@@ -64,20 +81,59 @@ export default function Shipments() {
     return Array.from(byBatch.values());
   };
 
-  const openModalBatch = (group) => {
+  const orderLabel = (row) => modelName(row) || `#${row.order_id}`;
+  const tzCode = (row) => row.Order?.tz_code || '';
+  const plannedQty = (row) => row.Order?.total_quantity ?? row.Order?.quantity ?? 0;
+
+  const stockByOrder = useMemo(() => {
+    const byOrder = new Map();
+    stock.forEach((row) => {
+      const key = row.order_id;
+      const label = orderLabel(row);
+      const tz = tzCode(row);
+      const plan = plannedQty(row);
+      const photo = row.Order?.photos?.[0];
+      if (!byOrder.has(key)) byOrder.set(key, { order_id: key, label, tz, plan, photo, rows: [] });
+      byOrder.get(key).rows.push(row);
+    });
+    return Array.from(byOrder.values());
+  }, [stock]);
+
+  const shipmentsByOrder = useMemo(() => {
+    const byOrder = new Map();
+    shipments.forEach((row) => {
+      const oid = row.order_id ?? row.SewingBatch?.order_id ?? row.id;
+      const label = row.Order?.model_name || row.Order?.title || `#${oid}`;
+      const tz = row.Order?.tz_code || '';
+      const plan = row.Order?.total_quantity ?? row.Order?.quantity ?? 0;
+      const photo = row.Order?.photos?.[0];
+      if (!byOrder.has(oid)) byOrder.set(oid, { order_id: oid, label, tz, plan, photo, rows: [] });
+      byOrder.get(oid).rows.push(row);
+    });
+    return Array.from(byOrder.values());
+  }, [shipments]);
+
+  const openModalBatch = useCallback((group) => {
     setModalBatch(group);
-    setFormItems(
-      group.rows.map((r) => ({
-        id: r.id,
-        warehouse_stock_id: r.id,
-        model_size_id: r.model_size_id,
-        size_name: sizeName(r),
-        available: Number(r.qty) || 0,
-        qty: 0,
-      }))
-    );
+    let byId = {};
+    try {
+      const stored = sessionStorage.getItem(`${SHIPMENTS_MODAL_KEY}_${group.batch_id}`);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        for (const it of parsed) byId[it.id] = it.qty;
+      }
+    } catch (_) {}
+    const initial = group.rows.map((r) => ({
+      id: r.id,
+      warehouse_stock_id: r.id,
+      model_size_id: r.model_size_id,
+      size_name: sizeName(r),
+      available: Number(r.qty) || 0,
+      qty: byId[r.id] ?? 0,
+    }));
+    setFormItems(initial);
     setError('');
-  };
+  }, []);
 
   const openModalLegacy = (row) => {
     setModalLegacy(row);
@@ -87,12 +143,18 @@ export default function Shipments() {
 
   const handleChangeBatchItem = (itemId, value) => {
     const num = Math.max(0, parseInt(value, 10) || 0);
-    setFormItems((prev) =>
-      prev.map((it) => {
+    setFormItems((prev) => {
+      const next = prev.map((it) => {
         if (it.id !== itemId) return it;
         return { ...it, qty: Math.min(num, it.available) };
-      })
-    );
+      });
+      if (modalBatch?.batch_id) {
+        try {
+          sessionStorage.setItem(`${SHIPMENTS_MODAL_KEY}_${modalBatch.batch_id}`, JSON.stringify(next.map((it) => ({ id: it.id, qty: it.qty }))));
+        } catch (_) {}
+      }
+      return next;
+    });
   };
 
   const handleShipBatch = async (e) => {
@@ -112,6 +174,9 @@ export default function Shipments() {
         batch_id: modalBatch.batch_id,
         items,
       });
+      try {
+        sessionStorage.removeItem(`${SHIPMENTS_MODAL_KEY}_${modalBatch.batch_id}`);
+      } catch (_) {}
       setModalBatch(null);
       load();
     } catch (err) {
@@ -157,7 +222,19 @@ export default function Shipments() {
     <div>
       <div className="no-print flex flex-wrap items-center justify-between gap-4 mb-6">
         <h1 className="text-2xl font-bold text-neon-text">Отгрузка</h1>
-        <PrintButton />
+        <div className="flex items-center gap-3">
+          <select
+            value={workshopId}
+            onChange={(e) => setWorkshopId(e.target.value)}
+            className="px-4 py-2 rounded-lg bg-accent-2/80 border border-white/25 text-neon-text min-w-[160px]"
+          >
+            <option value="">Все цеха</option>
+            {workshops.map((w) => (
+              <option key={w.id} value={w.id}>{w.name}</option>
+            ))}
+          </select>
+          <PrintButton />
+        </div>
       </div>
       <p className="text-sm text-neon-muted mb-4">
         Отгрузка по партиям и размерам. Выберите партию и укажите количество по каждому размеру. Нельзя отгрузить больше остатка по партии.
@@ -187,40 +264,48 @@ export default function Shipments() {
         ) : stock.length === 0 ? (
           <div className="p-8 text-neon-muted">Нет остатков</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="bg-accent-3/80 border-b border-white/25">
-                  <th className="text-left px-4 py-3 text-sm font-medium text-neon-text">Партия</th>
-                  <th className="text-left px-4 py-3 text-sm font-medium text-neon-text">Модель</th>
-                  <th className="text-left px-4 py-3 text-sm font-medium text-neon-text">Размер</th>
-                  <th className="text-right px-4 py-3 text-sm font-medium text-neon-text">Остаток</th>
-                  <th className="text-left px-4 py-3 text-sm font-medium text-neon-text">Действие</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stock.map((row) => (
-                  <tr key={row.id} className="border-b border-white/15">
-                    <td className="px-4 py-3 text-neon-text">{batchCode(row)}</td>
-                    <td className="px-4 py-3 text-neon-text">{modelName(row)}</td>
-                    <td className="px-4 py-3 text-neon-text">{sizeName(row)}</td>
-                    <td className="px-4 py-3 text-right font-medium">{row.qty ?? 0}</td>
-                    <td className="px-4 py-3 text-neon-muted text-sm">
-                      {row.batch_id != null ? '—' : (
-                        <button
-                          type="button"
-                          onClick={() => openModalLegacy(row)}
-                          disabled={!(row.qty > 0)}
-                          className="text-primary-400 hover:underline disabled:opacity-50"
-                        >
-                          Отгрузить
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="divide-y divide-white/10">
+            {stockByOrder.map(({ order_id, label, tz, plan, photo, rows }) => (
+              <div key={order_id} className="p-4 first:pt-4">
+                <div className="flex items-center gap-3 mb-3 pb-2 border-b border-white/20">
+                  <ModelPhoto photo={photo} modelName={tz ? `${tz} — ${label}` : label} size={64} />
+                  {plan > 0 && <span className="text-neon-muted font-normal">План: {plan}</span>}
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[480px]">
+                    <thead>
+                      <tr className="bg-accent-3/80 border-b border-white/25">
+                        <th className="text-left px-4 py-2 text-sm font-medium text-neon-text">Партия</th>
+                        <th className="text-left px-4 py-2 text-sm font-medium text-neon-text">Размер</th>
+                        <th className="text-right px-4 py-2 text-sm font-medium text-neon-text">Остаток</th>
+                        <th className="text-left px-4 py-2 text-sm font-medium text-neon-text">Действие</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((row) => (
+                        <tr key={row.id} className="border-b border-white/15">
+                          <td className="px-4 py-2 text-neon-text">{batchCode(row)}</td>
+                          <td className="px-4 py-2 text-neon-text">{sizeName(row)}</td>
+                          <td className="px-4 py-2 text-right font-medium">{row.qty ?? 0}</td>
+                          <td className="px-4 py-2 text-neon-muted text-sm">
+                            {row.batch_id != null ? '—' : (
+                              <button
+                                type="button"
+                                onClick={() => openModalLegacy(row)}
+                                disabled={!(row.qty > 0)}
+                                className="text-primary-400 hover:underline disabled:opacity-50"
+                              >
+                                Отгрузить
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </NeonCard>
@@ -230,41 +315,51 @@ export default function Shipments() {
         {shipments.length === 0 ? (
           <div className="p-8 text-neon-muted">Нет отгрузок</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="bg-accent-3/80 border-b border-white/25">
-                  <th className="text-left px-4 py-3 text-sm font-medium text-neon-text">Дата</th>
-                  <th className="text-left px-4 py-3 text-sm font-medium text-neon-text">Партия</th>
-                  <th className="text-left px-4 py-3 text-sm font-medium text-neon-text">Модель / Размер</th>
-                  <th className="text-right px-4 py-3 text-sm font-medium text-neon-text">Кол-во</th>
-                </tr>
-              </thead>
-              <tbody>
-                {shipments.map((row) => {
-                  const batchCodeVal = row.SewingBatch?.batch_code ?? row.batch ?? '—';
-                  const hasItems = row.ShipmentItems?.length > 0;
-                  return (
-                    <tr key={row.id} className="border-b border-white/15">
-                      <td className="px-4 py-3 text-neon-text">
-                        {row.shipped_at ? new Date(row.shipped_at).toLocaleDateString('ru-RU') : '—'}
-                      </td>
-                      <td className="px-4 py-3 text-neon-text">{batchCodeVal}</td>
-                      <td className="px-4 py-3 text-neon-text">
-                        {hasItems
-                          ? row.ShipmentItems.map((it) => `${it.ModelSize?.Size?.name ?? it.Size?.name ?? it.model_size_id ?? it.size_id ?? '—'}: ${it.qty}`).join(', ')
-                          : `${row.ModelSize?.Size?.name ?? '—'} ${row.qty ?? 0}`}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        {hasItems
-                          ? row.ShipmentItems.reduce((s, it) => s + (Number(it.qty) || 0), 0)
-                          : row.qty ?? 0}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="divide-y divide-white/10">
+            {shipmentsByOrder.map(({ order_id, label, tz, plan, photo, rows }) => (
+              <div key={order_id} className="p-4 first:pt-4">
+                <div className="flex items-center gap-3 mb-3 pb-2 border-b border-white/20">
+                  <ModelPhoto photo={photo} modelName={tz ? `${tz} — ${label}` : label} size={64} />
+                  {plan > 0 && <span className="text-neon-muted font-normal">План: {plan}</span>}
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[480px]">
+                    <thead>
+                      <tr className="bg-accent-3/80 border-b border-white/25">
+                        <th className="text-left px-4 py-2 text-sm font-medium text-neon-text">Дата</th>
+                        <th className="text-left px-4 py-2 text-sm font-medium text-neon-text">Партия</th>
+                        <th className="text-left px-4 py-2 text-sm font-medium text-neon-text">Размеры / Кол-во</th>
+                        <th className="text-right px-4 py-2 text-sm font-medium text-neon-text">Итого</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((row) => {
+                        const batchCodeVal = row.SewingBatch?.batch_code ?? row.batch ?? '—';
+                        const hasItems = row.ShipmentItems?.length > 0;
+                        return (
+                          <tr key={row.id} className="border-b border-white/15">
+                            <td className="px-4 py-2 text-neon-text">
+                              {row.shipped_at ? new Date(row.shipped_at).toLocaleDateString('ru-RU') : '—'}
+                            </td>
+                            <td className="px-4 py-2 text-neon-text">{batchCodeVal}</td>
+                            <td className="px-4 py-2 text-neon-text">
+                              {hasItems
+                                ? row.ShipmentItems.map((it) => `${it.ModelSize?.Size?.name ?? it.Size?.name ?? it.model_size_id ?? it.size_id ?? '—'}: ${it.qty}`).join(', ')
+                                : `${row.ModelSize?.Size?.name ?? '—'} ${row.qty ?? 0}`}
+                            </td>
+                            <td className="px-4 py-2 text-right">
+                              {hasItems
+                                ? row.ShipmentItems.reduce((s, it) => s + (Number(it.qty) || 0), 0)
+                                : row.qty ?? 0}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </NeonCard>

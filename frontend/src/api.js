@@ -391,7 +391,6 @@ export const api = {
   },
   // Склад по размерам/партиям (ОТК → склад → отгрузка), без ручного ввода
   warehouseStock: {
-    // ОТК по партиям
     batchesPendingQc: (params = {}) => {
       const qs = new URLSearchParams(params).toString();
       return request(`/api/warehouse-stock/batches/pending-qc${qs ? `?${qs}` : ''}`);
@@ -441,7 +440,13 @@ export const api = {
       }),
   },
   workshops: {
-    list: () => request('/api/workshops'),
+    list: (all) => request(`/api/workshops${all ? '?all=1' : ''}`),
+    add: (data) =>
+      request('/api/workshops', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    delete: (id) => request(`/api/workshops/${id}`, { method: 'DELETE' }),
   },
   references: {
     floors: (limit) =>
@@ -453,11 +458,15 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ name }),
       }),
+    deleteBuildingFloor: (id) =>
+      request(`/api/references/building-floors/${id}`, { method: 'DELETE' }),
     addFloor: (name) =>
       request('/api/references/floors', {
         method: 'POST',
         body: JSON.stringify({ name }),
       }),
+    deleteFloor: (id) =>
+      request(`/api/references/floors/${id}`, { method: 'DELETE' }),
     colors: (search) =>
       request(`/api/references/colors${search ? `?search=${encodeURIComponent(search)}` : ''}`),
     addColor: (name) =>
@@ -471,6 +480,8 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ name }),
       }),
+    deleteClient: (id) =>
+      request(`/api/references/clients/${id}`, { method: 'DELETE' }),
     operations: () => request('/api/references/operations'),
     addOperation: (data) =>
       request('/api/references/operations', {
@@ -480,24 +491,6 @@ export const api = {
     deleteOperation: (id) =>
       request(`/api/references/operations/${id}`, { method: 'DELETE' }),
     orderStatus: () => request('/api/references/order-status'),
-    technologists: (floorId, all, buildingFloorId) =>
-      request(
-        `/api/references/technologists${buildingFloorId ? `?building_floor_id=${buildingFloorId}${all ? '&all=1' : ''}` : floorId ? `?floor_id=${floorId}${all ? '&all=1' : ''}` : ''}`
-      ),
-    addTechnologist: (data) =>
-      request('/api/references/technologists', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      }),
-    sewers: (technologistId) =>
-      request(
-        `/api/references/sewers${technologistId ? `?technologist_id=${technologistId}` : ''}`
-      ),
-    addSewer: (data) =>
-      request('/api/references/sewers', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      }),
     cuttingTypes: (all) =>
       request(`/api/references/cutting-types${all ? '?all=1' : ''}`),
     addCuttingType: (name) =>

@@ -9,6 +9,7 @@ import { useAuth } from '../context/AuthContext';
 import { api } from '../api';
 import { NeonCard, NeonInput, NeonSelect } from '../components/ui';
 import ProcurementCompleteModal from '../components/procurement/ProcurementCompleteModal';
+import ModelPhoto from '../components/ModelPhoto';
 import PrintButton from '../components/PrintButton';
 
 const STATUS_OPTIONS = [
@@ -18,6 +19,17 @@ const STATUS_OPTIONS = [
 ];
 
 const STATUS_LABELS = { sent: 'Отправлено', received: 'Закуплено' };
+
+const PROCUREMENT_FILTERS_KEY = 'procurement_filters';
+
+function loadProcurementFilters() {
+  try {
+    const s = sessionStorage.getItem(PROCUREMENT_FILTERS_KEY);
+    return s ? { ...JSON.parse(s) } : { q: '', status: '', date_from: '', date_to: '' };
+  } catch {
+    return { q: '', status: '', date_from: '', date_to: '' };
+  }
+}
 
 function formatDate(iso) {
   if (!iso) return '—';
@@ -30,7 +42,7 @@ export default function Procurement() {
   const canEditProcurement = ['admin', 'manager', 'technologist'].includes(user?.role);
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState({ q: '', status: '', date_from: '', date_to: '' });
+  const [filters, setFilters] = useState(loadProcurementFilters);
   const [selectedProcurementId, setSelectedProcurementId] = useState(null);
 
   const loadData = (nextFilters = filters) => {
@@ -46,6 +58,12 @@ export default function Procurement() {
     loadData(filters);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(PROCUREMENT_FILTERS_KEY, JSON.stringify(filters));
+    } catch (_) {}
+  }, [filters]);
 
   const rows = useMemo(() => list || [], [list]);
   const getOrderName = (row) => {
@@ -143,8 +161,12 @@ export default function Procurement() {
                   className="border-b border-white/15 hover:bg-accent-2/30 dark:hover:bg-dark-800 cursor-pointer transition-colors"
                 >
                   <td className="px-4 py-3">
-                    <div className="font-medium text-primary-400">{getOrderName(pr)}</div>
-                    <div className="text-xs text-[#ECECEC]/60">#{pr.order_id}</div>
+                    <ModelPhoto
+                      photo={pr.order_photos?.[0]}
+                      modelName={getOrderName(pr)}
+                      size={48}
+                    />
+                    <div className="text-xs text-[#ECECEC]/60 mt-0.5">#{pr.order_id}</div>
                   </td>
                   <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80">{pr.client_name || '—'}</td>
                   <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80">

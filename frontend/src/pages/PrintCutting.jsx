@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../api';
 import PrintLayout from '../components/PrintLayout';
+import { buildBatchPivot } from './Cutting';
 
 function formatDate(iso) {
   if (!iso) return '—';
@@ -59,8 +60,8 @@ export default function PrintCutting() {
     ? `${order.tz_code} — ${order.model_name}`
     : order.title || '—';
   const variants = data.actual_variants || [];
-  const totalPlan = variants.reduce((s, v) => s + (Number(v.quantity_planned) || 0), 0);
-  const totalActual = variants.reduce((s, v) => s + (Number(v.quantity_actual) || 0), 0);
+  const pivot = buildBatchPivot(variants);
+  const totalActual = pivot.rows.reduce((s, r) => s + Object.values(r.bySize).reduce((a, b) => a + b, 0), 0);
   const floorLabel = FLOOR_LABELS[data.floor] || `${data.floor} этаж`;
 
   return (
@@ -108,26 +109,30 @@ export default function PrintCutting() {
         <thead>
           <tr>
             <th className="border border-black px-3 py-2 text-left">Цвет</th>
-            <th className="border border-black px-3 py-2 text-left">Размер</th>
-            <th className="border border-black px-3 py-2 text-right">План</th>
-            <th className="border border-black px-3 py-2 text-right">Факт</th>
+            {pivot.sizes.map((s) => (
+              <th key={s} className="border border-black px-3 py-2 text-center">{s}</th>
+            ))}
+            <th className="border border-black px-3 py-2 text-right">Итого</th>
           </tr>
         </thead>
         <tbody>
-          {variants.map((v, i) => (
-            <tr key={i}>
-              <td className="border border-black px-3 py-2">{v.color || '—'}</td>
-              <td className="border border-black px-3 py-2">{v.size || '—'}</td>
-              <td className="border border-black px-3 py-2 text-right">{v.quantity_planned ?? '—'}</td>
-              <td className="border border-black px-3 py-2 text-right">{v.quantity_actual ?? '—'}</td>
-            </tr>
-          ))}
+          {pivot.rows.map((r) => {
+            const total = Object.values(r.bySize).reduce((a, b) => a + b, 0);
+            return (
+              <tr key={r.color}>
+                <td className="border border-black px-3 py-2">{r.color}</td>
+                {pivot.sizes.map((size) => (
+                  <td key={size} className="border border-black px-3 py-2 text-center">{r.bySize[size] ?? 0}</td>
+                ))}
+                <td className="border border-black px-3 py-2 text-right font-medium">{total}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
 
-      <div className="mt-4 flex justify-between font-semibold">
-        <span>Итого план: {totalPlan}</span>
-        <span>Итого факт: {totalActual}</span>
+      <div className="mt-4 font-semibold">
+        <span>Итого: {totalActual}</span>
       </div>
 
       <div className="mt-12 grid grid-cols-3 gap-8 text-sm">

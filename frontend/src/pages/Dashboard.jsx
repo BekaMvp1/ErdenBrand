@@ -22,6 +22,7 @@ export default function Dashboard() {
   const { user } = useAuth();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [deletingId, setDeletingId] = useState(null);
   const [statusFilter, setStatusFilter] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -31,20 +32,24 @@ export default function Dashboard() {
   const loadStatuses = useCallback(async () => {
     try {
       const data = await api.references.orderStatus();
-      setStatuses(data);
+      setStatuses(Array.isArray(data) ? data : []);
     } catch {}
   }, []);
 
   const loadOrders = useCallback(async () => {
     setLoading(true);
+    setError('');
     try {
       const params = {};
       if (statusFilter) params.status_id = statusFilter;
       if (searchTerm) params.search = searchTerm;
       const data = await api.orders.list(params);
-      setOrders(data);
+      const list = Array.isArray(data) ? data : (data?.rows ?? data?.data ?? data?.orders ?? []);
+      setOrders(list);
     } catch (err) {
       console.error(err);
+      setError(err?.message || 'Ошибка загрузки заказов');
+      setOrders([]);
     } finally {
       setLoading(false);
     }
@@ -148,11 +153,22 @@ export default function Dashboard() {
         )}
       </div>
 
+      {error && (
+        <div className="mb-4 p-4 rounded-lg bg-red-500/20 text-red-400 border border-red-500/30 flex items-center justify-between gap-3">
+          <span>{error}</span>
+          <NeonButton type="button" onClick={() => loadOrders()} variant="secondary" className="shrink-0">
+            Повторить
+          </NeonButton>
+        </div>
+      )}
+
       <NeonCard className="overflow-hidden p-0">
         {loading ? (
           <div className="p-6 md:p-8 text-center text-neon-muted">Загрузка...</div>
         ) : orders.length === 0 ? (
-          <div className="p-6 md:p-8 text-center text-neon-muted">Нет заказов</div>
+          <div className="p-6 md:p-8 text-center text-neon-muted">
+            {error ? 'Не удалось загрузить заказы' : 'Нет заказов'}
+          </div>
         ) : (
           <div className="overflow-x-auto">
           <table className="w-full min-w-[640px]">

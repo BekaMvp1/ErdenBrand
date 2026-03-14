@@ -11,7 +11,7 @@ import { useAuth } from '../context/AuthContext';
 import { api } from '../api';
 import PrintButton from '../components/PrintButton';
 import { usePrintHeader } from '../context/PrintContext';
-import { CompleteByFactModal } from './Cutting';
+import { CompleteByFactModal, buildBatchPivot, buildTotalsPivot } from './Cutting';
 import ProcurementViewModal from '../components/procurement/ProcurementViewModal';
 import ProcurementPlanModal from '../components/procurement/ProcurementPlanModal';
 
@@ -964,29 +964,13 @@ export default function OrderDetails() {
               </thead>
               <tbody>
                 {cuttingTasks.map((task) => {
-                  const variants = order.OrderVariants || [];
-                  const actualMap = (task.actual_variants || []).reduce(
-                    (acc, v) => { acc[`${v.color}|${v.size}`] = v.quantity_actual; return acc; },
-                    {}
-                  );
-                  const seen = {};
-                  const rows = [];
-                  for (const v of variants) {
-                    const key = `${v.color}|${v.Size?.name || ''}`;
-                    if (seen[key]) {
-                      seen[key].quantity_planned += v.quantity || 0;
-                    } else {
-                      const row = {
-                        color: v.color,
-                        size: v.Size?.name || '',
-                        quantity_planned: v.quantity || 0,
-                        // По факту — только после «Завершить по факту», иначе 0
-                        quantity_actual: task.status === 'Готово' ? (actualMap[key] ?? 0) : 0,
-                      };
-                      seen[key] = row;
-                      rows.push(row);
-                    }
-                  }
+                  const actualVariants = task.status === 'Готово' ? (task.actual_variants || []) : [];
+                  const batchPivot = buildBatchPivot(actualVariants);
+                  const totalQty = batchPivot.rows.reduce((s, r) => {
+                    s += Object.values(r.bySize).reduce((a, b) => a + b, 0);
+                    return s;
+                  }, 0);
+                  const planTotal = (order.OrderVariants || []).reduce((s, v) => s + (v.quantity || 0), 0);
                   const isExpanded = expandedCuttingTaskIds.has(task.id);
                   return (
                     <React.Fragment key={task.id}>
@@ -1034,7 +1018,7 @@ export default function OrderDetails() {
                         </td>
                         <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80 align-top">{task.responsible || '—'}</td>
                         <td className="px-4 py-3 align-top">
-                          {rows.length > 0 && (
+                          {(batchPivot.rows.length > 0 || planTotal > 0) && (
                             isExpanded && canEditCutting ? (
                               <button
                                 onClick={() => setCuttingCompleteModalTask(task)}
@@ -1044,11 +1028,11 @@ export default function OrderDetails() {
                               </button>
                             ) : !isExpanded ? (
                               <div className="text-sm text-[#ECECEC]/90 dark:text-dark-text/90">
-                                <span>План: {rows.reduce((s, r) => s + (r.quantity_planned || 0), 0)}</span>
+                                <span>План: {planTotal}</span>
                                 {task.status === 'Готово' && (
                                   <>
                                     <span className="mx-2">|</span>
-                                    <span>Факт: {rows.reduce((s, r) => s + (r.quantity_actual || 0), 0)}</span>
+                                    <span>Факт: {totalQty}</span>
                                   </>
                                 )}
                               </div>
@@ -1075,34 +1059,59 @@ export default function OrderDetails() {
                             style={{ gridTemplateRows: isExpanded ? '1fr' : '0fr' }}
                           >
                             <div className="min-h-0 overflow-hidden">
-                              <div className="px-4 py-2">
-                                <div className="w-full max-w-[560px]">
-                                  <table className="w-full text-sm border border-white/15 dark:border-white/15 rounded overflow-hidden table-fixed">
-                                    <colgroup>
-                                      <col className="w-[28%]" />
-                                      <col className="w-[18%]" />
-                                      <col className="w-[27%]" />
-                                      <col className="w-[27%]" />
-                                    </colgroup>
+                              <div className="px-4 py-2 space-y-4">
+                                <div>
+                                  <p className="text-xs text-[#ECECEC]/60 dark:text-dark-text/60 mb-1">Раскрой по партиям</p>
+                                  <table className="w-full text-sm border border-white/15 dark:border-white/15 rounded overflow-hidden max-w-[560px]">
                                     <thead>
                                       <tr className="bg-accent-2/50 dark:bg-dark-800">
                                         <th className="text-left px-4 py-1.5 font-medium">Цвет</th>
-                                        <th className="text-left px-4 py-1.5 font-medium">Размер</th>
-                                        <th className="text-left px-4 py-1.5 font-medium">Кол-во план</th>
-                                        <th className="text-left px-4 py-1.5 font-medium">Кол-во факт</th>
+                                        {batchPivot.sizes.map((s) => (
+                                          <th key={s} className="text-center px-2 py-1.5 font-medium">{s}</th>
+                                        ))}
                                       </tr>
                                     </thead>
                                     <tbody>
-                                      {rows.length === 0 ? (
-                                        <tr><td colSpan={4} className="px-4 py-1.5 text-[#ECECEC]/60">Нет данных</td></tr>
-                                      ) : rows.map((r, i) => (
-                                        <tr key={i} className="border-t border-white/10">
+                                      {batchPivot.rows.length === 0 ? (
+                                        <tr><td colSpan={batchPivot.sizes.length + 1} className="px-4 py-1.5 text-[#ECECEC]/60">Нет данных</td></tr>
+                                      ) : batchPivot.rows.map((r) => (
+                                        <tr key={r.color} className="border-t border-white/10">
                                           <td className="px-4 py-1">{r.color}</td>
-                                          <td className="px-4 py-1">{r.size}</td>
-                                          <td className="px-4 py-1">{r.quantity_planned}</td>
-                                          <td className="px-4 py-1">{task.status === 'Готово' ? r.quantity_actual : '—'}</td>
+                                          {batchPivot.sizes.map((size) => (
+                                            <td key={size} className="px-2 py-1 text-center">{r.bySize[size] ?? '—'}</td>
+                                          ))}
                                         </tr>
                                       ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-[#ECECEC]/60 dark:text-dark-text/60 mb-1">Итог по цветам</p>
+                                  <table className="w-full text-sm border border-white/15 dark:border-white/15 rounded overflow-hidden max-w-[560px]">
+                                    <thead>
+                                      <tr className="bg-accent-2/50 dark:bg-dark-800">
+                                        <th className="text-left px-4 py-1.5 font-medium">Цвет</th>
+                                        {batchPivot.sizes.map((s) => (
+                                          <th key={s} className="text-center px-2 py-1.5 font-medium">{s}</th>
+                                        ))}
+                                        <th className="text-right px-4 py-1.5 font-medium">Итого</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {batchPivot.rows.length === 0 ? (
+                                        <tr><td colSpan={batchPivot.sizes.length + 2} className="px-4 py-1.5 text-[#ECECEC]/60">Нет данных</td></tr>
+                                      ) : batchPivot.rows.map((r) => {
+                                        const total = Object.values(r.bySize).reduce((a, b) => a + b, 0);
+                                        return (
+                                          <tr key={r.color} className="border-t border-white/10">
+                                            <td className="px-4 py-1">{r.color}</td>
+                                            {batchPivot.sizes.map((size) => (
+                                              <td key={size} className="px-2 py-1 text-center">{r.bySize[size] ?? 0}</td>
+                                            ))}
+                                            <td className="px-4 py-1 text-right font-medium">{total}</td>
+                                          </tr>
+                                        );
+                                      })}
                                     </tbody>
                                   </table>
                                 </div>

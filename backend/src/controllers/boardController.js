@@ -264,15 +264,31 @@ async function getBoardOrders(req, res, next) {
       whRows.forEach((r) => { warehouseByOrder[r.order_id] = true; });
 
       // Факт по этапам (для отображения fact/plan когда этап завершён)
+      // Раскрой: без дублирования по (color, size) — берём max при повторах
       if (orderIds.length > 0) {
-        const cuttingRows = await db.sequelize.query(
-          `SELECT ct.order_id, COALESCE(SUM((SELECT COALESCE(SUM(COALESCE((v->>'quantity_actual')::int, 0)), 0)
-            FROM jsonb_array_elements(COALESCE(ct.actual_variants,'[]'::jsonb)) v)), 0)::int AS total
-           FROM cutting_tasks ct WHERE ct.order_id IN (:orderIds) AND ct.status = 'Готово'
-           GROUP BY ct.order_id`,
-          { replacements: { orderIds }, type: db.sequelize.QueryTypes.SELECT }
-        );
-        (cuttingRows || []).forEach((r) => { cuttingActualByOrder[r.order_id] = Number(r.total) || 0; });
+        const cuttingTasksForActual = await db.CuttingTask.findAll({
+          where: { order_id: orderIds, status: 'Готово' },
+          attributes: ['order_id', 'actual_variants'],
+          raw: true,
+        });
+        const tasksByOrder = {};
+        cuttingTasksForActual.forEach((t) => {
+          if (!tasksByOrder[t.order_id]) tasksByOrder[t.order_id] = [];
+          tasksByOrder[t.order_id].push(t);
+        });
+        for (const oid of orderIds) {
+          const byColorSize = {};
+          (tasksByOrder[oid] || []).forEach((t) => {
+            (t.actual_variants || []).forEach((v) => {
+              const color = String(v.color || '').trim() || '—';
+              const size = String(v.size || '').trim() || '—';
+              const key = `${color}|${size}`;
+              const qty = parseInt(v.quantity_actual, 10) || 0;
+              byColorSize[key] = Math.max(byColorSize[key] || 0, qty);
+            });
+          });
+          cuttingActualByOrder[oid] = Object.values(byColorSize).reduce((s, q) => s + q, 0);
+        }
 
         const sewingRows = await db.sequelize.query(
           `SELECT order_id, COALESCE(SUM(fact_qty), 0)::int AS total FROM sewing_fact WHERE order_id IN (:orderIds) GROUP BY order_id`,

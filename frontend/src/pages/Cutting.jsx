@@ -25,6 +25,55 @@ const formatFloor = (floor) => {
   return opt ? opt.label : `${floor} этаж`;
 };
 
+/** Pivot actual_variants to { sizes, rows: [{ color, bySize }] } — Table 1: раскрой по партиям (export for OrderDetails) */
+export function buildBatchPivot(actualVariants) {
+  const variants = actualVariants || [];
+  const sizeSet = new Set();
+  const byColor = {};
+  for (const v of variants) {
+    const size = String(v.size || '').trim() || '—';
+    const color = String(v.color || '').trim() || '—';
+    sizeSet.add(size);
+    if (!byColor[color]) byColor[color] = {};
+    byColor[color][size] = (byColor[color][size] || 0) + (parseInt(v.quantity_actual, 10) || 0);
+  }
+  const sizes = [...sizeSet].sort((a, b) => {
+    const na = parseInt(a, 10);
+    const nb = parseInt(b, 10);
+    if (!isNaN(na) && !isNaN(nb)) return na - nb;
+    return String(a).localeCompare(b);
+  });
+  const rows = Object.entries(byColor).map(([color, bySize]) => ({ color, bySize }));
+  return { sizes, rows };
+}
+
+/** Aggregate batches into totals by color — Table 2: итог по цветам (export for OrderDetails) */
+export function buildTotalsPivot(batchesData) {
+  const allSizes = new Set();
+  const totalsByColor = {};
+  for (const { sizes, rows } of batchesData) {
+    sizes.forEach((s) => allSizes.add(s));
+    for (const { color, bySize } of rows) {
+      if (!totalsByColor[color]) totalsByColor[color] = {};
+      for (const [size, qty] of Object.entries(bySize)) {
+        totalsByColor[color][size] = (totalsByColor[color][size] || 0) + qty;
+      }
+    }
+  }
+  const sizes = [...allSizes].sort((a, b) => {
+    const na = parseInt(a, 10);
+    const nb = parseInt(b, 10);
+    if (!isNaN(na) && !isNaN(nb)) return na - nb;
+    return String(a).localeCompare(b);
+  });
+  const rows = Object.entries(totalsByColor).map(([color, bySize]) => {
+    let total = 0;
+    for (const q of Object.values(bySize)) total += q;
+    return { color, bySize, total };
+  });
+  return { sizes, rows };
+}
+
 export function CompleteByFactModal({ task, onClose, onSave, isEditMode }) {
   const today = new Date().toISOString().slice(0, 10);
   const variants = task.Order?.OrderVariants || [];
@@ -32,44 +81,50 @@ export function CompleteByFactModal({ task, onClose, onSave, isEditMode }) {
     (acc, v) => { acc[`${v.color}|${v.size}`] = v.quantity_actual; return acc; },
     {}
   );
-  const seen = {};
-  const initialRows = [];
+  const colorSet = new Set();
+  const sizeSet = new Set();
+  const pivot = {};
   for (const v of variants) {
-    const key = `${v.color}|${v.Size?.name || ''}`;
-    if (seen[key]) {
-      seen[key].quantity_planned += v.quantity || 0;
-    } else {
-      const row = {
-        color: v.color,
-        size: v.Size?.name || '',
-        quantity_planned: v.quantity || 0,
-        quantity_actual: actualMap[key] ?? v.quantity ?? 0,
-      };
-      seen[key] = row;
-      initialRows.push(row);
+    const color = String(v.color || '').trim() || '—';
+    const size = (v.Size?.name || v.Size?.code || '').toString().trim() || '—';
+    if (color && size) {
+      colorSet.add(color);
+      sizeSet.add(size);
+      const key = `${color}|${size}`;
+      if (!pivot[color]) pivot[color] = {};
+      pivot[color][size] = actualMap[key] ?? v.quantity ?? 0;
     }
   }
-  const [rows, setRows] = useState(initialRows);
+  const colors = [...colorSet].sort();
+  const sizes = [...sizeSet].sort((a, b) => {
+    const na = parseInt(a, 10);
+    const nb = parseInt(b, 10);
+    if (!isNaN(na) && !isNaN(nb)) return na - nb;
+    return String(a).localeCompare(b);
+  });
+  const [pivotState, setPivotState] = useState(() => JSON.parse(JSON.stringify(pivot)));
   const [endDate, setEndDate] = useState(task.end_date || today);
 
-  const handleChange = (index, value) => {
-    const n = parseInt(value, 10);
-    setRows((r) =>
-      r.map((row, i) => (i === index ? { ...row, quantity_actual: isNaN(n) ? 0 : n } : row))
-    );
+  const handleChange = (color, size, value) => {
+    const n = Math.max(0, parseInt(value, 10) || 0);
+    setPivotState((prev) => ({
+      ...prev,
+      [color]: { ...(prev[color] || {}), [size]: n },
+    }));
   };
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    onSave(
-      rows.map((r) => ({
-        color: r.color,
-        size: r.size,
-        quantity_planned: r.quantity_planned,
-        quantity_actual: r.quantity_actual,
-      })),
-      endDate
-    );
+    const actualVariants = [];
+    for (const color of colors) {
+      for (const size of sizes) {
+        const q = pivotState[color]?.[size] || 0;
+        if (q > 0) {
+          actualVariants.push({ color, size, quantity_planned: 0, quantity_actual: q });
+        }
+      }
+    }
+    onSave(actualVariants, endDate);
   };
 
   const modalContent = (
@@ -83,39 +138,63 @@ export function CompleteByFactModal({ task, onClose, onSave, isEditMode }) {
         </h3>
         <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
           <div className="flex-1 min-h-0 overflow-auto p-4 sm:p-6 pt-4">
+            <p className="text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-2">Раскрой по цветам</p>
             <div className="overflow-x-auto -mx-1 mb-4">
               <table className="w-full text-sm table-fixed min-w-[280px]">
-                <colgroup>
-                  <col className="w-[25%]" />
-                  <col className="w-[20%]" />
-                  <col className="w-[25%]" />
-                  <col className="w-[30%]" />
-                </colgroup>
                 <thead>
                   <tr className="bg-accent-2/50 dark:bg-dark-800">
-                    <th className="text-left px-4 py-2.5 font-medium">Цвет</th>
-                    <th className="text-left px-4 py-2.5 font-medium">Размер</th>
-                    <th className="text-left px-4 py-2.5 font-medium">Кол-во план</th>
-                    <th className="text-left px-4 py-2.5 font-medium">Кол-во факт</th>
+                    <th className="text-left px-4 py-2.5 font-medium w-[120px]">Цвет</th>
+                    {sizes.map((s) => (
+                      <th key={s} className="text-center px-2 py-2.5 font-medium">{s}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r, i) => (
-                    <tr key={i} className="border-t border-white/10">
-                      <td className="px-4 py-2.5">{r.color}</td>
-                      <td className="px-4 py-2.5">{r.size}</td>
-                      <td className="px-4 py-2.5">{r.quantity_planned}</td>
-                      <td className="px-4 py-2.5">
-                        <input
-                          type="number"
-                          min="0"
-                          value={r.quantity_actual}
-                          onChange={(e) => handleChange(i, e.target.value)}
-                          className="w-full min-w-[4rem] px-3 py-1.5 rounded bg-accent-2/80 dark:bg-dark-800 border border-white/25 text-[#ECECEC] dark:text-dark-text"
-                        />
-                      </td>
+                  {colors.map((color) => (
+                    <tr key={color} className="border-t border-white/10">
+                      <td className="px-4 py-2.5">{color}</td>
+                      {sizes.map((size) => (
+                        <td key={size} className="px-2 py-2.5">
+                          <input
+                            type="number"
+                            min="0"
+                            value={pivotState[color]?.[size] ?? ''}
+                            onChange={(e) => handleChange(color, size, e.target.value)}
+                            className="w-full min-w-[3rem] px-2 py-1.5 rounded bg-accent-2/80 dark:bg-dark-800 border border-white/25 text-[#ECECEC] dark:text-dark-text text-center"
+                          />
+                        </td>
+                      ))}
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-2">Итог по цветам</p>
+            <div className="overflow-x-auto -mx-1 mb-4">
+              <table className="w-full text-sm table-fixed min-w-[280px]">
+                <thead>
+                  <tr className="bg-accent-2/50 dark:bg-dark-800">
+                    <th className="text-left px-4 py-2.5 font-medium w-[120px]">Цвет</th>
+                    {sizes.map((s) => (
+                      <th key={s} className="text-center px-2 py-2.5 font-medium">{s}</th>
+                    ))}
+                    <th className="text-right px-4 py-2.5 font-medium">Итого</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {colors.map((color) => {
+                    const row = sizes.map((s) => parseInt(pivotState[color]?.[s], 10) || 0);
+                    const total = row.reduce((a, b) => a + b, 0);
+                    return (
+                      <tr key={color} className="border-t border-white/10">
+                        <td className="px-4 py-2.5">{color}</td>
+                        {sizes.map((size) => (
+                          <td key={size} className="px-2 py-2.5 text-center">{pivotState[color]?.[size] ?? 0}</td>
+                        ))}
+                        <td className="px-4 py-2.5 text-right font-medium">{total}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -467,29 +546,13 @@ export default function Cutting() {
             </thead>
             <tbody>
               {tasks.map((task) => {
-                const variants = task.Order?.OrderVariants || [];
-                const actualMap = (task.actual_variants || []).reduce(
-                  (acc, v) => { acc[`${v.color}|${v.size}`] = v.quantity_actual; return acc; },
-                  {}
-                );
-                const seen = {};
-                const rows = [];
-                for (const v of variants) {
-                  const key = `${v.color}|${v.Size?.name || ''}`;
-                  if (seen[key]) {
-                    seen[key].quantity_planned += v.quantity || 0;
-                  } else {
-                    const row = {
-                      color: v.color,
-                      size: v.Size?.name || '',
-                      quantity_planned: v.quantity || 0,
-                      // По факту — только после «Завершить по факту», иначе 0
-                      quantity_actual: task.status === 'Готово' ? (actualMap[key] ?? 0) : 0,
-                    };
-                    seen[key] = row;
-                    rows.push(row);
-                  }
-                }
+                const actualVariants = task.status === 'Готово' ? (task.actual_variants || []) : [];
+                const batchPivot = buildBatchPivot(actualVariants);
+                const totalQty = batchPivot.rows.reduce((s, r) => {
+                  s += Object.values(r.bySize).reduce((a, b) => a + b, 0);
+                  return s;
+                }, 0);
+                const planTotal = (task.Order?.OrderVariants || []).reduce((s, v) => s + (v.quantity || 0), 0);
                 const isExpanded = expandedTaskIds.has(task.id);
                 return (
                   <React.Fragment key={task.id}>
@@ -550,7 +613,7 @@ export default function Cutting() {
                     </td>
                     <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80 align-top">{task.responsible || '—'}</td>
                     <td className="px-4 py-3 align-top">
-                      {rows.length > 0 && (
+                      {batchPivot.rows.length > 0 || planTotal > 0 ? (
                         isExpanded ? (
                           <button
                             onClick={() => setCompleteModalTask(task)}
@@ -560,16 +623,16 @@ export default function Cutting() {
                           </button>
                         ) : (
                           <div className="text-sm text-[#ECECEC]/90 dark:text-dark-text/90">
-                            <span>План: {rows.reduce((s, r) => s + (r.quantity_planned || 0), 0)}</span>
+                            <span>План: {planTotal}</span>
                             {task.status === 'Готово' && (
                               <>
                                 <span className="mx-2">|</span>
-                                <span>Факт: {rows.reduce((s, r) => s + (r.quantity_actual || 0), 0)}</span>
+                                <span>Факт: {totalQty}</span>
                               </>
                             )}
                           </div>
                         )
-                      )}
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 align-top">
                       <button
@@ -595,38 +658,50 @@ export default function Cutting() {
                         style={{ gridTemplateRows: isExpanded ? '1fr' : '0fr' }}
                       >
                         <div className="min-h-0 overflow-hidden">
-                          <div className="px-4 py-2">
-                            <div className="w-full max-w-[560px]">
-                              <table className="w-full text-sm border border-white/15 dark:border-white/15 rounded overflow-hidden table-fixed">
-                                <colgroup>
-                                  <col className="w-[28%]" />
-                                  <col className="w-[18%]" />
-                                  <col className="w-[27%]" />
-                                  <col className="w-[27%]" />
-                                </colgroup>
-                                <thead>
-                                  <tr className="bg-accent-2/50 dark:bg-dark-800">
-                                    <th className="text-left px-4 py-1.5 font-medium">Цвет</th>
-                                    <th className="text-left px-4 py-1.5 font-medium">Размер</th>
-                                    <th className="text-left px-4 py-1.5 font-medium">Кол-во план</th>
-                                    <th className="text-left px-4 py-1.5 font-medium">Кол-во факт</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {rows.length === 0 ? (
-                                    <tr><td colSpan={4} className="px-4 py-1.5 text-[#ECECEC]/60">Нет данных</td></tr>
-                                  ) : rows.map((r, i) => (
-                                    <tr key={i} className="border-t border-white/10">
-                                      <td className="px-4 py-1">{r.color}</td>
-                                      <td className="px-4 py-1">{r.size}</td>
-                                      <td className="px-4 py-1">{r.quantity_planned}</td>
-                                      <td className="px-4 py-1">{task.status === 'Готово' ? r.quantity_actual : '—'}</td>
+                            <div className="px-4 py-2">
+                                <table className="w-full text-sm border border-white/15 dark:border-white/15 rounded overflow-hidden max-w-[480px]">
+                                  <thead>
+                                    <tr className="bg-accent-2/50 dark:bg-dark-800">
+                                      <th className="text-left px-4 py-2 font-medium">Цвет</th>
+                                      <th className="text-left px-4 py-2 font-medium">Размер</th>
+                                      <th className="text-center px-4 py-2 font-medium">Кол-во план</th>
+                                      <th className="text-center px-4 py-2 font-medium">Кол-во факт</th>
                                     </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
+                                  </thead>
+                                  <tbody>
+                                    {(() => {
+                                      const planVariants = task.Order?.OrderVariants || [];
+                                      const factMap = {};
+                                      (actualVariants || []).forEach((v) => {
+                                        const k = `${String(v.color || '').trim()}|${String(v.size || '').trim()}`;
+                                        factMap[k] = parseInt(v.quantity_actual, 10) || 0;
+                                      });
+                                      const rows = planVariants.map((v) => {
+                                        const color = String(v.color || '').trim() || '—';
+                                        const size = (v.Size?.name || v.Size?.code || '').toString().trim() || '—';
+                                        const plan = parseInt(v.quantity, 10) || 0;
+                                        const fact = factMap[`${color}|${size}`] ?? plan;
+                                        return { color, size, plan, fact };
+                                      });
+                                      if (rows.length === 0) {
+                                        return (
+                                          <tr>
+                                            <td colSpan={4} className="px-4 py-2 text-[#ECECEC]/60">Нет данных</td>
+                                          </tr>
+                                        );
+                                      }
+                                      return rows.map((r, i) => (
+                                        <tr key={`${r.color}-${r.size}-${i}`} className="border-t border-white/10">
+                                          <td className="px-4 py-2">{r.color}</td>
+                                          <td className="px-4 py-2">{r.size}</td>
+                                          <td className="px-4 py-2 text-center">{r.plan}</td>
+                                          <td className="px-4 py-2 text-center">{r.fact}</td>
+                                        </tr>
+                                      ));
+                                    })()}
+                                  </tbody>
+                                </table>
+                              </div>
                         </div>
                       </div>
                     </td>

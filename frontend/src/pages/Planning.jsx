@@ -1,8 +1,8 @@
 /**
- * Планирование — производственный календарь по дням.
- * ERP швейной фабрики: план по дням, мощность, inline editing.
+ * Планирование — производственный календарь по неделям.
+ * ERP швейной фабрики: план по дням недели, мощность, inline editing.
  * Таблица: Заказ | Модель | Клиент | Пн | Вт | Ср | Чт | Пт | Сб | Итого
- * Summary: МОЩНОСТЬ, ЗАГРУЗКА, СВОБОДНО (красный при перегрузке).
+ * Summary: МОЩНОСТЬ, ЗАГРУЗКА, СВОБОДНО.
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
@@ -11,6 +11,67 @@ import { api } from '../api';
 
 const PLANNING_WORKSHOP_KEY = 'planning_workshop_id';
 const PLANNING_FLOOR_KEY = 'planning_floor_id';
+
+const DAY_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+
+/** Понедельник недели для даты (ISO, Пн = 1) */
+function getMonday(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00');
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Даты недели (Пн–Сб, 6 рабочих дней) */
+function getWeekDates(weekStart) {
+  const dates = [];
+  const d = new Date(weekStart + 'T12:00:00');
+  for (let i = 0; i < 6; i++) {
+    dates.push(d.toISOString().slice(0, 10));
+    d.setDate(d.getDate() + 1);
+  }
+  return dates;
+}
+
+/** Список недель месяца: [{ weekNum, label, dateFrom, dateTo }] */
+function getWeeksInMonth(monthKey) {
+  const [y, m] = monthKey.split('-').map(Number);
+  const first = `${y}-${String(m).padStart(2, '0')}-01`;
+  const lastDay = new Date(y, m, 0).getDate();
+  const last = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
+  const weeks = [];
+  let mon = getMonday(first);
+  let weekNum = 1;
+  while (mon <= last) {
+    const sun = new Date(mon + 'T12:00:00');
+    sun.setDate(sun.getDate() + 6);
+    const dateTo = sun.toISOString().slice(0, 10);
+    const dates = getWeekDates(mon);
+    const inMonth = dates.some((d) => d >= first && d <= last);
+    if (inMonth) {
+      weeks.push({
+        weekNum,
+        label: `${weekNum} неделя`,
+        dateFrom: mon,
+        dateTo,
+      });
+      weekNum++;
+    }
+    mon = new Date(mon + 'T12:00:00');
+    mon.setDate(mon.getDate() + 7);
+    mon = mon.toISOString().slice(0, 10);
+  }
+  return weeks;
+}
+
+/** Предыдущий/следующий месяц YYYY-MM */
+function addMonths(monthKey, delta) {
+  const [y, m] = monthKey.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
 
 export default function Planning() {
   const [workshops, setWorkshops] = useState([]);
@@ -22,6 +83,7 @@ export default function Planning() {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   });
+  const [weekNum, setWeekNum] = useState(1);
   const [searchQ, setSearchQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
   const [data, setData] = useState(null);
@@ -34,10 +96,19 @@ export default function Planning() {
   const user = JSON.parse(sessionStorage.getItem('user') || '{}');
   const canEdit = ['admin', 'manager', 'technologist'].includes(user?.role);
 
+  const weeks = getWeeksInMonth(monthKey);
+  const selectedWeek = weeks.find((w) => w.weekNum === weekNum) || weeks[0];
+
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(searchQ.trim()), 300);
     return () => clearTimeout(t);
   }, [searchQ]);
+
+  useEffect(() => {
+    if (weeks.length > 0 && !weeks.some((w) => w.weekNum === weekNum)) {
+      setWeekNum(weeks[0].weekNum);
+    }
+  }, [monthKey, weeks, weekNum]);
 
   useEffect(() => {
     api.workshops.list().then(setWorkshops).catch(() => setWorkshops([]));
@@ -91,14 +162,23 @@ export default function Planning() {
   const canLoad =
     workshopId &&
     monthKey &&
+    selectedWeek &&
     (selectedWorkshop?.floors_count === 1 ||
       (selectedWorkshop?.floors_count === 4 && floorId));
 
+  const dateFrom = selectedWeek?.dateFrom;
+  const dateTo = selectedWeek?.dateTo;
+
   const loadData = useCallback(() => {
-    if (!canLoad) return;
+    if (!canLoad || !dateFrom || !dateTo) return;
     setLoading(true);
     setErrorMsg('');
-    const params = { month: monthKey, workshop_id: workshopId };
+    const params = {
+      month: monthKey,
+      workshop_id: workshopId,
+      date_from: dateFrom,
+      date_to: dateTo,
+    };
     if (selectedWorkshop?.floors_count === 4 && floorId)
       params.floor_id = floorId;
     if (debouncedQ) params.q = debouncedQ;
@@ -110,7 +190,7 @@ export default function Planning() {
         setErrorMsg(err.message || 'Ошибка загрузки');
       })
       .finally(() => setLoading(false));
-  }, [canLoad, monthKey, workshopId, floorId, selectedWorkshop?.floors_count, debouncedQ]);
+  }, [canLoad, monthKey, workshopId, floorId, selectedWorkshop?.floors_count, debouncedQ, dateFrom, dateTo]);
 
   useEffect(() => {
     loadData();
@@ -165,6 +245,30 @@ export default function Planning() {
     saveCell(orderId, date, val);
   };
 
+  const goPrevWeek = () => {
+    const idx = weeks.findIndex((w) => w.weekNum === weekNum);
+    if (idx > 0) {
+      setWeekNum(weeks[idx - 1].weekNum);
+    } else {
+      const prevMonth = addMonths(monthKey, -1);
+      setMonthKey(prevMonth);
+      const prevWeeks = getWeeksInMonth(prevMonth);
+      setWeekNum(prevWeeks[prevWeeks.length - 1]?.weekNum ?? 1);
+    }
+  };
+
+  const goNextWeek = () => {
+    const idx = weeks.findIndex((w) => w.weekNum === weekNum);
+    if (idx >= 0 && idx < weeks.length - 1) {
+      setWeekNum(weeks[idx + 1].weekNum);
+    } else {
+      const nextMonth = addMonths(monthKey, 1);
+      setMonthKey(nextMonth);
+      const nextWeeks = getWeeksInMonth(nextMonth);
+      setWeekNum(nextWeeks[0]?.weekNum ?? 1);
+    }
+  };
+
   const handleSaveAll = async () => {
     const keys = Object.keys(cellEdits);
     if (keys.length === 0) return;
@@ -203,7 +307,7 @@ export default function Planning() {
     : '';
 
   const selectClass = (disabled) =>
-    `px-3 py-2 rounded-lg border text-sm ${
+    `px-2 py-1.5 rounded border text-sm ${
       disabled
         ? 'bg-white/5 border-white/20 cursor-not-allowed text-white/50'
         : 'bg-white/10 border-white/25 text-white hover:border-white/40'
@@ -211,46 +315,13 @@ export default function Planning() {
 
   return (
     <div className="min-h-screen p-4">
-      {/* Верхняя панель */}
-      <div className="no-print flex flex-wrap items-center justify-between gap-4 mb-4">
-        <h1 className="text-xl font-semibold text-white">
-          Планирование
-        </h1>
-        <div className="flex items-center gap-2">
-          {canEdit && Object.keys(cellEdits).length > 0 && (
-            <button
-              type="button"
-              onClick={handleSaveAll}
-              disabled={saving}
-              className="px-4 py-2 rounded-lg bg-green-600 text-white text-sm hover:bg-green-700 disabled:opacity-50"
-            >
-              {saving ? '...' : 'Сохранить'}
-            </button>
-          )}
-          <Link
-            to={`/print/planning/${monthKey}${workshopId ? `?workshop_id=${workshopId}` : ''}${floorId ? `&floor_id=${floorId}` : ''}`}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-accent-1/40 text-white hover:bg-accent-1/50 font-medium text-sm"
-          >
-            <svg
-              className="w-5 h-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2h-2m-4-1v8m0 0l-4-4m4 4l4-4"
-              />
-            </svg>
-            Печать
-          </Link>
-        </div>
-      </div>
+      {/* Заголовок */}
+      <h1 className="text-lg font-semibold text-white mb-3">
+        Планирование
+      </h1>
 
-      {/* Фильтры */}
-      <div className="no-print flex flex-wrap items-center gap-4 mb-4">
+      {/* Фильтры: Месяц | Неделя | Цех | Этаж | Поиск */}
+      <div className="no-print flex flex-wrap items-end gap-3 mb-3">
         <div>
           <label className="block text-xs text-white/60 mb-0.5">Месяц</label>
           <input
@@ -259,6 +330,20 @@ export default function Planning() {
             onChange={(e) => setMonthKey(e.target.value)}
             className={selectClass(false)}
           />
+        </div>
+        <div>
+          <label className="block text-xs text-white/60 mb-0.5">Неделя</label>
+          <select
+            value={weekNum}
+            onChange={(e) => setWeekNum(Number(e.target.value))}
+            className={selectClass(false)}
+          >
+            {weeks.map((w) => (
+              <option key={w.weekNum} value={w.weekNum}>
+                {w.label}
+              </option>
+            ))}
+          </select>
         </div>
         <div>
           <label className="block text-xs text-white/60 mb-0.5">Цех</label>
@@ -277,9 +362,7 @@ export default function Planning() {
         </div>
         {selectedWorkshop?.floors_count === 4 && (
           <div>
-            <label className="block text-xs text-white/60 mb-0.5">
-              Этаж
-            </label>
+            <label className="block text-xs text-white/60 mb-0.5">Этаж</label>
             <select
               value={floorId}
               onChange={(e) => setFloorId(e.target.value)}
@@ -295,69 +378,106 @@ export default function Planning() {
           </div>
         )}
         <div>
-          <label className="block text-xs text-white/60 mb-0.5">
-            Поиск
-          </label>
+          <label className="block text-xs text-white/60 mb-0.5">Поиск</label>
           <input
             type="text"
             placeholder="клиент / модель"
             value={searchQ}
             onChange={(e) => setSearchQ(e.target.value)}
-            className="px-3 py-2 rounded-lg border border-white/25 bg-white/10 text-white placeholder-white/40 text-sm min-w-[180px]"
+            className="px-2 py-1.5 rounded border border-white/25 bg-white/10 text-white placeholder-white/40 text-sm min-w-[140px]"
           />
         </div>
       </div>
 
+      {/* Кнопки: Предыдущая | Следующая | Сохранить | Печать */}
+      <div className="no-print flex flex-wrap items-center gap-2 mb-3">
+        <button
+          type="button"
+          onClick={goPrevWeek}
+          disabled={!canLoad}
+          className="px-3 py-1.5 rounded border border-white/25 bg-white/10 text-white text-sm hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1"
+        >
+          <span>←</span> Предыдущая неделя
+        </button>
+        <button
+          type="button"
+          onClick={goNextWeek}
+          disabled={!canLoad}
+          className="px-3 py-1.5 rounded border border-white/25 bg-white/10 text-white text-sm hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1"
+        >
+          Следующая неделя <span>→</span>
+        </button>
+        {canEdit && (
+          <button
+            type="button"
+            onClick={handleSaveAll}
+            disabled={saving || Object.keys(cellEdits).length === 0}
+            className="px-3 py-1.5 rounded bg-green-600 text-white text-sm hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {saving ? 'Сохранение...' : 'Сохранить'}
+          </button>
+        )}
+        <Link
+          to={`/print/planning/${monthKey}${workshopId ? `?workshop_id=${workshopId}` : ''}${floorId ? `&floor_id=${floorId}` : ''}`}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent-1/40 text-white hover:bg-accent-1/50 font-medium text-sm"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2h-2m-4-1v8m0 0l-4-4m4 4l4-4" />
+          </svg>
+          Печать
+        </Link>
+      </div>
+
       {errorMsg && (
-        <div className="no-print mb-3 px-4 py-2 rounded-lg bg-red-500/20 text-red-400 text-sm">
+        <div className="no-print mb-2 px-3 py-1.5 rounded bg-red-500/20 text-red-400 text-sm">
           {errorMsg}
         </div>
       )}
 
       {!workshopId && (
-        <div className="p-12 text-center text-white/60 rounded-xl border border-white/10">
+        <div className="p-8 text-center text-white/60 rounded-lg border border-white/10 text-sm">
           Выберите цех
         </div>
       )}
 
       {workshopId && !canLoad && selectedWorkshop?.floors_count === 4 && (
-        <div className="p-12 text-center text-white/60 rounded-xl border border-white/10">
+        <div className="p-8 text-center text-white/60 rounded-lg border border-white/10 text-sm">
           Выберите этаж
         </div>
       )}
 
       {canLoad && (
-        <div className="rounded-xl border border-white/25 overflow-hidden bg-[#1a1a1f]">
+        <div className="rounded-lg border border-white/25 overflow-hidden bg-[#1a1a1f]">
           {loading ? (
-            <div className="p-12 text-center text-white/60">Загрузка...</div>
+            <div className="p-8 text-center text-white/60 text-sm">Загрузка...</div>
           ) : !data ? (
-            <div className="p-12 text-center text-white/60">Нет данных</div>
+            <div className="p-8 text-center text-white/60 text-sm">Нет данных</div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm border-collapse min-w-[700px]">
+              <table className="w-full text-sm border-collapse min-w-[600px]">
                 <thead>
                   <tr className="border-b border-white/20 bg-white/5">
-                    <th className="sticky left-0 z-20 bg-[#1a1a1f] px-3 py-2.5 text-left font-medium text-white/80 whitespace-nowrap border-r border-white/10 min-w-[120px]">
+                    <th className="sticky left-0 z-20 bg-[#1a1a1f] px-2 py-1.5 text-left font-medium text-white/80 whitespace-nowrap border-r border-white/10 min-w-[100px]">
                       Заказ
                     </th>
-                    <th className="px-3 py-2.5 text-left font-medium text-white/80 min-w-[120px]">
+                    <th className="px-2 py-1.5 text-left font-medium text-white/80 min-w-[100px]">
                       Модель
                     </th>
-                    <th className="px-3 py-2.5 text-left font-medium text-white/80 min-w-[100px]">
+                    <th className="px-2 py-1.5 text-left font-medium text-white/80 min-w-[80px]">
                       Клиент
                     </th>
-                    {dates.map((d) => (
+                    {dates.map((d, i) => (
                       <th
                         key={d.date}
-                        className="px-2 py-2.5 text-center font-medium text-white/80 border-l border-white/10 min-w-[56px]"
+                        className="px-1 py-1.5 text-center font-medium text-white/80 border-l border-white/10 min-w-[44px]"
                       >
-                        <span className="block text-xs text-white/60">
-                          {d.label}
+                        <span className="block text-[10px] text-white/60">
+                          {DAY_LABELS[i] ?? d.label}
                         </span>
                         <span>{d.dayNum}</span>
                       </th>
                     ))}
-                    <th className="px-3 py-2.5 text-right font-medium text-white/80 border-l-2 border-white/20 min-w-[64px]">
+                    <th className="px-2 py-1.5 text-right font-medium text-white/80 border-l-2 border-white/20 min-w-[52px]">
                       Итого
                     </th>
                   </tr>
@@ -370,13 +490,13 @@ export default function Planning() {
                         key={row.order_id}
                         className="border-b border-white/5 hover:bg-white/5"
                       >
-                        <td className="sticky left-0 z-10 bg-[#1a1a1f] px-3 py-2 text-white border-r border-white/10">
+                        <td className="sticky left-0 z-10 bg-[#1a1a1f] px-2 py-1.5 text-white border-r border-white/10 text-xs">
                           {row.order_title}
                         </td>
-                        <td className="px-3 py-2 text-white/90">
+                        <td className="px-2 py-1.5 text-white/90 text-xs">
                           {row.model_name || '—'}
                         </td>
-                        <td className="px-3 py-2 text-white/90">
+                        <td className="px-2 py-1.5 text-white/90 text-xs">
                           {row.client_name}
                         </td>
                         {dates.map((d) => {
@@ -385,104 +505,93 @@ export default function Planning() {
                           return (
                             <td
                               key={d.date}
-                              className="px-1 py-0.5 border-l border-white/10 align-middle"
+                              className="px-0.5 py-0.5 border-l border-white/10 align-middle"
                             >
-                              {canEdit &&
-                              data?.period?.status !== 'CLOSED' ? (
+                              {canEdit && data?.period?.status !== 'CLOSED' ? (
                                 <input
                                   type="number"
                                   min="0"
-                                  className="w-full min-w-[48px] px-1 py-1.5 text-center rounded bg-white/10 border border-white/20 text-white text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                  className="w-full min-w-[36px] px-1 py-1 text-center rounded bg-white/10 border border-white/20 text-white text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                                   value={val}
                                   onChange={(e) =>
-                                    setCellValue(
-                                      row.order_id,
-                                      d.date,
-                                      e.target.value
-                                    )
+                                    setCellValue(row.order_id, d.date, e.target.value)
                                   }
-                                  onBlur={() =>
-                                    handleBlur(row.order_id, d.date)
-                                  }
+                                  onBlur={() => handleBlur(row.order_id, d.date)}
                                 />
                               ) : (
-                                <span className="block py-1.5 text-center">
+                                <span className="block py-1 text-center text-xs">
                                   {val || '—'}
                                 </span>
                               )}
                             </td>
                           );
                         })}
-                        <td className="px-3 py-2 text-right font-semibold border-l-2 border-white/20 bg-white/5">
+                        <td className="px-2 py-1.5 text-right font-semibold border-l-2 border-white/20 bg-white/5 text-xs">
                           {rowTotal}
                         </td>
                       </tr>
                     );
                   })}
                   {/* МОЩНОСТЬ / ЗАГРУЗКА / СВОБОДНО */}
-                  <tr className="border-t-2 border-white/20 bg-white/10 font-semibold">
-                    <td
-                      colSpan={3}
-                      className="sticky left-0 z-10 bg-[#252530] px-3 py-2 text-white border-r border-white/10"
-                    >
+                  <tr className="border-t-2 border-white/20 bg-white/10 font-semibold text-xs">
+                    <td colSpan={3} className="sticky left-0 z-10 bg-[#252530] px-2 py-1.5 text-white border-r border-white/10">
                       МОЩНОСТЬ
                     </td>
                     {dates.map((d) => (
-                      <td
-                        key={`cap_${d.date}`}
-                        className="px-2 py-2 text-center border-l border-white/10"
-                      >
+                      <td key={`cap_${d.date}`} className="px-1 py-1.5 text-center border-l border-white/10">
                         {summary.capacity[d.date] ?? '—'}
                       </td>
                     ))}
-                    <td className="px-3 py-2 border-l-2 border-white/20">—</td>
+                    <td className="px-2 py-1.5 border-l-2 border-white/20">—</td>
                   </tr>
-                  <tr className="bg-white/5 font-semibold">
-                    <td
-                      colSpan={3}
-                      className="sticky left-0 z-10 bg-[#252530] px-3 py-2 text-white border-r border-white/10"
-                    >
+                  <tr className="bg-white/5 font-semibold text-xs">
+                    <td colSpan={3} className="sticky left-0 z-10 bg-[#252530] px-2 py-1.5 text-white border-r border-white/10">
                       ЗАГРУЗКА
                     </td>
-                    {dates.map((d) => (
-                      <td
-                        key={`load_${d.date}`}
-                        className="px-2 py-2 text-center border-l border-white/10"
-                      >
-                        {summary.load[d.date] ?? 0}
-                      </td>
-                    ))}
-                    <td className="px-3 py-2 border-l-2 border-white/20">
-                      {Object.values(summary.load || {}).reduce(
-                        (a, b) => a + (b || 0),
-                        0
-                      )}
+                    {dates.map((d) => {
+                      const load = summary.load[d.date] ?? 0;
+                      const cap = summary.capacity[d.date];
+                      const isOverload = cap != null && load > cap;
+                      const isUnderload = cap != null && load < cap;
+                      const loadClass = isOverload ? 'bg-red-500/30 text-red-300' : isUnderload ? 'bg-green-500/20 text-green-300' : '';
+                      return (
+                        <td
+                          key={`load_${d.date}`}
+                          className={`px-1 py-1.5 text-center border-l border-white/10 ${loadClass}`}
+                        >
+                          {load}
+                        </td>
+                      );
+                    })}
+                    <td className="px-2 py-1.5 border-l-2 border-white/20">
+                      {Object.values(summary.load || {}).reduce((a, b) => a + (b || 0), 0)}
                     </td>
                   </tr>
-                  <tr className="bg-white/5 font-semibold">
-                    <td
-                      colSpan={3}
-                      className="sticky left-0 z-10 bg-[#252530] px-3 py-2 text-white border-r border-white/10"
-                    >
+                  <tr className="bg-white/5 font-semibold text-xs">
+                    <td colSpan={3} className="sticky left-0 z-10 bg-[#252530] px-2 py-1.5 text-white border-r border-white/10">
                       СВОБОДНО
                     </td>
                     {dates.map((d) => {
                       const free = summary.free[d.date];
+                      const cap = summary.capacity[d.date];
                       const isOverload = free != null && free < 0;
+                      const hasCapacity = cap != null;
+                      const isFree = hasCapacity && free != null && free > 0;
+                      const cellClass = isOverload
+                        ? 'bg-red-500/30 text-red-300'
+                        : isFree
+                          ? 'bg-green-500/20 text-green-300'
+                          : '';
                       return (
                         <td
                           key={`free_${d.date}`}
-                          className={`px-2 py-2 text-center border-l border-white/10 ${
-                            isOverload
-                              ? 'bg-red-500/30 text-red-300'
-                              : ''
-                          }`}
+                          className={`px-1 py-1.5 text-center border-l border-white/10 ${cellClass}`}
                         >
                           {free != null ? free : '—'}
                         </td>
                       );
                     })}
-                    <td className="px-3 py-2 border-l-2 border-white/20">—</td>
+                    <td className="px-2 py-1.5 border-l-2 border-white/20">—</td>
                   </tr>
                 </tbody>
               </table>

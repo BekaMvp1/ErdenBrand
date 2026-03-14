@@ -305,20 +305,28 @@ router.get('/table', async (req, res, next) => {
 
 /**
  * GET /api/planning/calendar?month=YYYY-MM&workshop_id=&floor_id=&q=
- * Производственный календарь месяца: дни в колонках, inline editing, мощность по дням.
+ * Опционально date_from=YYYY-MM-DD&date_to=YYYY-MM-DD — диапазон (неделя).
+ * Производственный календарь: дни в колонках, inline editing, мощность по дням.
  */
 router.get('/calendar', async (req, res, next) => {
   try {
-    const { month, workshop_id, floor_id, q } = req.query;
+    const { month, workshop_id, floor_id, q, date_from, date_to } = req.query;
     if (!workshop_id) return res.status(400).json({ error: 'Укажите workshop_id' });
     if (!month) return res.status(400).json({ error: 'Укажите month (YYYY-MM)' });
 
     const [y, m] = month.split('-').map(Number);
     if (!y || !m || m < 1 || m > 12) return res.status(400).json({ error: 'Некорректный месяц' });
 
-    const firstDay = `${y}-${String(m).padStart(2, '0')}-01`;
-    const lastDate = new Date(y, m, 0);
-    const to = `${y}-${String(m).padStart(2, '0')}-${String(lastDate.getDate()).padStart(2, '0')}`;
+    let firstDay, to;
+    if (date_from && date_to) {
+      firstDay = String(date_from).slice(0, 10);
+      to = String(date_to).slice(0, 10);
+      if (firstDay > to) return res.status(400).json({ error: 'date_from не должен быть больше date_to' });
+    } else {
+      firstDay = `${y}-${String(m).padStart(2, '0')}-01`;
+      const lastDate = new Date(y, m, 0);
+      to = `${y}-${String(m).padStart(2, '0')}-${String(lastDate.getDate()).padStart(2, '0')}`;
+    }
 
     const workshop = await db.Workshop.findByPk(workshop_id);
     if (!workshop) return res.status(404).json({ error: 'Цех не найден' });

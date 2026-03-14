@@ -31,6 +31,25 @@ function getSunday(dateStr) {
 const SEWING_FLOOR_IDS_DEFAULT = [2, 3, 4];
 
 /**
+ * Вычислить фактический раскрой без дублирования.
+ * cut_qty = SUM(quantity_actual) по уникальным (color, size) — берём max при повторах,
+ * чтобы избежать дублирования при нескольких CuttingTask или повторных записях в actual_variants.
+ */
+function getCutQtyDeduplicated(cutTasks) {
+  const byColorSize = {};
+  for (const t of cutTasks || []) {
+    for (const v of t.actual_variants || []) {
+      const color = String(v.color || '').trim() || '—';
+      const size = String(v.size || '').trim() || '—';
+      const key = `${color}|${size}`;
+      const qty = parseInt(v.quantity_actual, 10) || 0;
+      byColorSize[key] = Math.max(byColorSize[key] || 0, qty);
+    }
+  }
+  return Object.values(byColorSize).reduce((s, q) => s + q, 0);
+}
+
+/**
  * Получить id этажей пошива из building_floors: «Производство» или все кроме Финиш/ОТК и Склад.
  */
 async function getSewingFloorIds() {
@@ -75,12 +94,7 @@ router.put('/fact-add', async (req, res, next) => {
       attributes: ['actual_variants'],
       raw: true,
     });
-    let cutFactQty = 0;
-    for (const t of cutTasks) {
-      for (const v of t.actual_variants || []) {
-        cutFactQty += parseInt(v.quantity_actual, 10) || 0;
-      }
-    }
+    const cutFactQty = getCutQtyDeduplicated(cutTasks);
 
     const factRows = await db.SewingFact.findAll({
       where: { order_id: Number(order_id), floor_id: effectiveFloorId },
@@ -156,7 +170,7 @@ router.get('/matrix', async (req, res, next) => {
         if (!colors.includes(color)) colors.push(color);
         if (!sizes.includes(size)) sizes.push(size);
         const key = `${color}|${size}`;
-        cutByColorSize[key] = (cutByColorSize[key] || 0) + qty;
+        cutByColorSize[key] = Math.max(cutByColorSize[key] || 0, qty);
       }
     }
 
@@ -233,12 +247,7 @@ router.put('/fact-matrix', async (req, res, next) => {
       attributes: ['actual_variants'],
       raw: true,
     });
-    let cutTotal = 0;
-    cutTasks.forEach((t) => {
-      (t.actual_variants || []).forEach((v) => {
-        cutTotal += parseInt(v.quantity_actual, 10) || 0;
-      });
-    });
+    const cutTotal = getCutQtyDeduplicated(cutTasks);
     const factRows = await db.SewingFact.findAll({
       where: { order_id: Number(order_id), floor_id: effectiveFloorId },
       attributes: ['date', 'fact_qty'],
@@ -292,12 +301,7 @@ router.put('/fact-total', async (req, res, next) => {
       attributes: ['actual_variants'],
       raw: true,
     });
-    let actualCutQty = 0;
-    for (const t of cutTasks) {
-      for (const v of t.actual_variants || []) {
-        actualCutQty += parseInt(v.quantity_actual, 10) || 0;
-      }
-    }
+    const actualCutQty = getCutQtyDeduplicated(cutTasks);
     if (actualCutQty >= 0 && total > actualCutQty) {
       return res.status(400).json({
         error: `Факт (${total}) не может превышать раскроенное (${actualCutQty})`,
@@ -434,12 +438,7 @@ router.post('/fact/bulk', async (req, res, next) => {
       attributes: ['actual_variants'],
       raw: true,
     });
-    let actualCutQty = 0;
-    for (const t of cutTasks) {
-      for (const v of t.actual_variants || []) {
-        actualCutQty += parseInt(v.quantity_actual, 10) || 0;
-      }
-    }
+    const actualCutQty = getCutQtyDeduplicated(cutTasks);
     const existingFacts = await db.SewingFact.findAll({
       where: { order_id: effectiveOrderId, floor_id: effectiveFloorId },
       attributes: ['date', 'fact_qty'],
@@ -570,21 +569,22 @@ router.get('/board', async (req, res, next) => {
       factByKey[k].push({ date: r.date, fact_qty: Number(r.fact_qty) || 0 });
     });
 
-    // actual_cut_qty по (order_id, floor): сумма actual_variants из CuttingTask, статус Готово
+    // actual_cut_qty по (order_id, floor): сумма actual_variants без дублирования (unique color|size)
     const cutTasks = await db.CuttingTask.findAll({
       where: { status: 'Готово', floor: { [Op.in]: sewingFloorIds } },
       attributes: ['order_id', 'floor', 'actual_variants'],
       raw: true,
     });
     const actualCutByKey = {};
+    const tasksByKey = {};
     cutTasks.forEach((t) => {
       const k = `${t.order_id}-${t.floor}`;
-      let sum = 0;
-      for (const v of t.actual_variants || []) {
-        sum += parseInt(v.quantity_actual, 10) || 0;
-      }
-      actualCutByKey[k] = (actualCutByKey[k] || 0) + sum;
+      if (!tasksByKey[k]) tasksByKey[k] = [];
+      tasksByKey[k].push(t);
     });
+    for (const k of Object.keys(tasksByKey)) {
+      actualCutByKey[k] = getCutQtyDeduplicated(tasksByKey[k]);
+    }
 
     // already_in_sewing = сумма sewing_fact по всему периоду для (order_id, floor)
     const factTotalByKey = {};
@@ -1001,12 +1001,7 @@ router.post('/complete', async (req, res, next) => {
       attributes: ['actual_variants'],
       raw: true,
     });
-    let actualCutQty = 0;
-    for (const t of cutTasksComplete) {
-      for (const v of t.actual_variants || []) {
-        actualCutQty += parseInt(v.quantity_actual, 10) || 0;
-      }
-    }
+    const actualCutQty = getCutQtyDeduplicated(cutTasksComplete);
     if (actualCutQty >= 0 && fact_sum > actualCutQty) {
       return res.status(400).json({
         error: `Факт пошива (${fact_sum}) не может превышать раскроенное количество (${actualCutQty})`,
@@ -1103,12 +1098,19 @@ router.post('/complete', async (req, res, next) => {
           attributes: ['actual_variants'],
           raw: true,
         });
+        const byColorSize = {};
         for (const ct of cutTasksForSizes) {
           for (const v of ct.actual_variants || []) {
-            const sk = String(v.size || '').trim() || '—';
+            const color = String(v.color || '').trim() || '—';
+            const size = String(v.size || '').trim() || '—';
+            const key = `${color}|${size}`;
             const q = Math.max(0, parseInt(v.quantity_actual, 10) || 0);
-            if (q > 0) cutBySize[sk] = (cutBySize[sk] || 0) + q;
+            if (q > 0) byColorSize[key] = Math.max(byColorSize[key] || 0, q);
           }
+        }
+        for (const [key, q] of Object.entries(byColorSize)) {
+          const size = key.split('|').pop() || '—';
+          cutBySize[size] = (cutBySize[size] || 0) + q;
         }
         let totalCut = 0;
         for (const q of Object.values(cutBySize)) totalCut += q;

@@ -265,9 +265,10 @@ router.get('/production', async (req, res, next) => {
     });
 
     const orderIds = orders.map((o) => o.id);
+    const orderIdsForQuery = orderIds.length > 0 ? orderIds : [0];
     const cutByOrder = {};
     const cutTasks = await db.CuttingTask.findAll({
-      where: { order_id: orderIds, status: 'Готово' },
+      where: { order_id: orderIdsForQuery, status: 'Готово' },
       attributes: ['order_id', 'actual_variants'],
       raw: true,
     });
@@ -282,7 +283,7 @@ router.get('/production', async (req, res, next) => {
     const [sewByOrderRows] = await db.sequelize.query(`
       SELECT order_id, COALESCE(SUM(fact_qty), 0)::int AS total
       FROM sewing_fact WHERE order_id IN (:orderIds) GROUP BY order_id
-    `, { replacements: { orderIds } });
+    `, { replacements: { orderIds: orderIdsForQuery } });
     const sewByOrder = {};
     (sewByOrderRows || []).forEach((r) => { sewByOrder[r.order_id] = r.total; });
 
@@ -300,13 +301,13 @@ router.get('/production', async (req, res, next) => {
     const [whByOrderRows] = await db.sequelize.query(`
       SELECT order_id, COALESCE(SUM(qty), 0)::int AS total
       FROM warehouse_stock WHERE order_id IN (:orderIds) GROUP BY order_id
-    `, { replacements: { orderIds } });
+    `, { replacements: { orderIds: orderIdsForQuery } });
     const whByOrder = {};
     (whByOrderRows || []).forEach((r) => { whByOrder[r.order_id] = r.total; });
 
     const planByOrder = {};
     const planDays = await db.ProductionPlanDay.findAll({
-      where: { order_id: orderIds },
+      where: { order_id: orderIdsForQuery },
       attributes: ['order_id', 'planned_qty'],
       raw: true,
     });

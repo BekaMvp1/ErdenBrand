@@ -139,21 +139,27 @@ export default function Qc() {
       if (sizeName) factBySize[sizeName] = (factBySize[sizeName] || 0) + (Number(bi.fact_qty) || 0);
     }
 
+    // В каждом цвете автоматически заполняем «Проверено» (доля факта по размеру на цвет); «Принято» не заполняем
     const items = [];
-    for (const color of colors) {
+    const numColors = colors.length;
+    for (let ci = 0; ci < numColors; ci++) {
+      const color = colors[ci];
       for (const sizeName of sizes) {
         const meta = sizeMap[sizeName];
-        const fact = factBySize[sizeName] || 0;
-        const initChecked = color === colors[0] ? fact : 0;
-        items.push({
+        const factTotal = factBySize[sizeName] || 0;
+        const perColor = numColors > 0 ? Math.floor(factTotal / numColors) : 0;
+        const remainder = numColors > 0 ? factTotal % numColors : 0;
+        const checkedQty = perColor + (ci < remainder ? 1 : 0);
+                items.push({
           rowKey: `${color}|${sizeName}`,
           color,
           size_name: sizeName,
           model_size_id: meta?.model_size_id,
           size_id: meta?.size_id,
-          checked_qty: initChecked,
-          passed_qty: initChecked,
-          defect_qty: 0,
+          checked_qty: checkedQty,
+          passed_qty: 0,
+                  defect_qty: 0,
+                  touched: false,
         });
       }
     }
@@ -216,21 +222,34 @@ export default function Qc() {
     setFormItems((prev) =>
       prev.map((it) => {
         if (it.rowKey !== rowKey) return it;
+        const base = { ...it, touched: true };
         if (field === 'checked_qty') {
-          const passed = Math.min(it.passed_qty, num);
-          return { ...it, checked_qty: num, passed_qty: passed, defect_qty: Math.max(0, num - passed) };
+          const passed = Math.min(base.passed_qty, num);
+          return { ...base, checked_qty: num, passed_qty: passed, defect_qty: Math.max(0, num - passed) };
         }
         if (field === 'passed_qty') {
-          const passed = Math.min(num, it.checked_qty);
-          return { ...it, passed_qty: passed, defect_qty: Math.max(0, it.checked_qty - passed) };
+          const passed = Math.min(num, base.checked_qty);
+          return { ...base, passed_qty: passed, defect_qty: Math.max(0, base.checked_qty - passed) };
         }
         if (field === 'defect_qty') {
-          const defect = Math.min(num, it.checked_qty);
-          return { ...it, defect_qty: defect, passed_qty: Math.max(0, it.checked_qty - defect) };
+          const defect = Math.min(num, base.checked_qty);
+          return { ...base, defect_qty: defect, passed_qty: Math.max(0, base.checked_qty - defect) };
         }
-        return it;
+        return base;
       })
     );
+  };
+
+  const handleInputKeyDown = (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const form = e.target.form;
+    if (!form) return;
+    const inputs = Array.from(form.querySelectorAll('input[type="number"]'));
+    const idx = inputs.indexOf(e.target);
+    if (idx >= 0 && idx + 1 < inputs.length) {
+      inputs[idx + 1].focus();
+    }
   };
 
   const formByColorSize = useMemo(() => {
@@ -258,14 +277,26 @@ export default function Qc() {
     try {
       const bySize = {};
       for (const it of formItems) {
+        const isTouched = it.touched || (it.passed_qty > 0 || it.defect_qty > 0);
+        if (!isTouched) continue;
         const key = it.model_size_id ? `m${it.model_size_id}` : (it.size_id ? `s${it.size_id}` : null);
         if (!key) continue;
-        if (!bySize[key]) bySize[key] = { model_size_id: it.model_size_id, size_id: it.size_id, checked_qty: 0, passed_qty: 0, defect_qty: 0 };
+        if (!bySize[key]) {
+          bySize[key] = {
+            model_size_id: it.model_size_id,
+            size_id: it.size_id,
+            checked_qty: 0,
+            passed_qty: 0,
+            defect_qty: 0,
+          };
+        }
         bySize[key].checked_qty += Number(it.checked_qty) || 0;
         bySize[key].passed_qty += Number(it.passed_qty) || 0;
         bySize[key].defect_qty += Number(it.defect_qty) || 0;
       }
-      const items = Object.values(bySize).filter((it) => (it.model_size_id || it.size_id) && (it.checked_qty > 0 || it.defect_qty > 0));
+      const items = Object.values(bySize).filter(
+        (it) => (it.model_size_id || it.size_id) && (it.passed_qty > 0 || it.defect_qty > 0)
+      );
       if (items.length === 0) {
         setError('Укажите проверенное количество хотя бы по одному размеру.');
         setSaving(false);
@@ -514,6 +545,7 @@ export default function Qc() {
                                       min={0}
                                       value={it.checked_qty ?? ''}
                                       onChange={(e) => handleChange(it.rowKey, 'checked_qty', e.target.value)}
+                                      onKeyDown={handleInputKeyDown}
                                       className="w-full max-w-[70px] ml-auto block px-2 py-1.5 rounded bg-white/10 border border-white/25 text-neon-text text-right text-sm"
                                     />
                                   </td>
@@ -524,6 +556,7 @@ export default function Qc() {
                                       max={it.checked_qty}
                                       value={it.passed_qty ?? ''}
                                       onChange={(e) => handleChange(it.rowKey, 'passed_qty', e.target.value)}
+                                      onKeyDown={handleInputKeyDown}
                                       className="w-full max-w-[70px] ml-auto block px-2 py-1.5 rounded bg-white/10 border border-white/25 text-neon-text text-right text-sm"
                                     />
                                   </td>
@@ -534,6 +567,7 @@ export default function Qc() {
                                       max={it.checked_qty}
                                       value={it.defect_qty ?? ''}
                                       onChange={(e) => handleChange(it.rowKey, 'defect_qty', e.target.value)}
+                                      onKeyDown={handleInputKeyDown}
                                       className="w-full max-w-[70px] ml-auto block px-2 py-1.5 rounded bg-white/10 border border-white/25 text-neon-text text-right text-sm"
                                     />
                                   </td>

@@ -130,7 +130,13 @@ async function getBoardOrders(req, res, next) {
     const sortKey = normalizeSort(sort);
     const sortOrder = normalizeOrder(order);
 
+    const workshopId = req.query.workshop_id ? parseInt(req.query.workshop_id, 10) : null;
+
     const andWhere = [];
+
+    if (workshopId && Number.isFinite(workshopId)) {
+      andWhere.push({ workshop_id: workshopId });
+    }
 
     if (q && String(q).trim()) {
       const term = String(q).trim();
@@ -158,6 +164,7 @@ async function getBoardOrders(req, res, next) {
       where,
       include: [
         { model: db.Client, as: 'Client', required: !!q },
+        { model: db.Workshop, as: 'Workshop', required: false, attributes: ['id', 'name'] },
         { model: db.OrderStatus, as: 'OrderStatus' },
         { model: db.ProcurementRequest, as: 'ProcurementRequest', required: false },
         {
@@ -236,6 +243,14 @@ async function getBoardOrders(req, res, next) {
         if (r.status === 'DONE') sewingByOrder[r.order_id] = 'DONE';
         else if (r.status === 'IN_PROGRESS' && sewingByOrder[r.order_id] !== 'DONE') sewingByOrder[r.order_id] = 'IN_PROGRESS';
       });
+      // Пошив считаем завершённым, если есть партия (отправлена в ОТК или уже проведена)
+      const anyBatches = await db.SewingBatch.findAll({
+        where: { order_id: orderIds, status: { [Op.in]: ['READY_FOR_QC', 'DONE'] } },
+        attributes: ['order_id'],
+        raw: true,
+      });
+      (anyBatches || []).forEach((b) => { sewingByOrder[b.order_id] = 'DONE'; });
+
       const doneBatches = await db.SewingBatch.findAll({
         where: { order_id: orderIds, status: 'DONE' },
         attributes: ['id', 'order_id'],
@@ -407,15 +422,18 @@ async function getBoardOrders(req, res, next) {
         }
       });
 
-      // Fallback: если в order_stages нет записи (старые заказы), определяем статус по фактическим данным
+      // Синхронизация этапа закуп с фактическим статусом заявки (received = DONE, sent = IN_PROGRESS)
       const procStageOut = stagesOut.find((s) => s.stage_key === 'procurement');
       const planStageOut = stagesOut.find((s) => s.stage_key === 'planning');
       const cutStageOut = stagesOut.find((s) => s.stage_key === 'cutting');
       const sewStageOut = stagesOut.find((s) => s.stage_key === 'sewing');
-      if (procStageOut && !getOsStage('procurement')) {
-        const pr = plain.ProcurementRequest;
-        if (pr && String(pr.status || '').toLowerCase() === 'received') procStageOut.status = 'DONE';
+      const pr = plain.ProcurementRequest;
+      if (procStageOut && pr) {
+        const prStatus = String(pr.status || '').toLowerCase();
+        if (prStatus === 'received') procStageOut.status = 'DONE';
+        else if (prStatus === 'sent') procStageOut.status = 'IN_PROGRESS';
       }
+      // Fallback для остальных этапов: если в order_stages нет записи, определяем по фактическим данным
       if (planStageOut && !getOsStage('planning')) {
         const planCount = planCountByOrderId[plain.id] || 0;
         if (planCount > 0) planStageOut.status = 'DONE';
@@ -424,10 +442,11 @@ async function getBoardOrders(req, res, next) {
         const cut = cuttingByOrder[plain.id];
         if (cut && cut.hasAny && cut.allDone) cutStageOut.status = 'DONE';
       }
-      if (sewStageOut && !getOsStage('sewing')) {
+      // Пошив: учитываем и order_stages, и факт наличия партии (SewingOrderFloor DONE или SewingBatch)
+      if (sewStageOut) {
         const sew = sewingByOrder[plain.id];
         if (sew === 'DONE') sewStageOut.status = 'DONE';
-        else if (sew === 'IN_PROGRESS') sewStageOut.status = 'IN_PROGRESS';
+        else if (!getOsStage('sewing') && sew === 'IN_PROGRESS') sewStageOut.status = 'IN_PROGRESS';
       }
       const qcStageOut = stagesOut.find((s) => s.stage_key === 'qc');
       if (qcStageOut && !getOsStage('qc') && qcByOrder[plain.id]?.hasQc) qcStageOut.status = 'DONE';
@@ -437,7 +456,6 @@ async function getBoardOrders(req, res, next) {
       const orderPlan = Number(plain.total_quantity ?? plain.quantity ?? 0) || 0;
 
       // Дополнительно: закуп — actual_qty из заказа при DONE
-      const pr = plain.ProcurementRequest;
       const procStage = stagesOut.find((s) => s.stage_key === 'procurement');
       if (procStage && pr && procStage.status === 'DONE') {
         procStage.actual_qty = orderPlan || procStage.actual_qty;
@@ -502,11 +520,15 @@ async function getBoardOrders(req, res, next) {
         status: s.status || 'NOT_STARTED',
       }));
 
+      const totalQty = Number(plain.total_quantity ?? plain.quantity ?? 0) || 0;
       prepared.push({
         id: plain.id,
         order_number: String(plain.id),
+        workshop_id: plain.workshop_id ?? null,
+        workshop_name: plain.Workshop?.name || '—',
         client_name: plain.Client?.name || '—',
         model_name: plain.title || '—',
+        total_quantity: totalQty,
         article: plain.color || null,
         priority: computedPriority,
         created_at: toDateOnly(plain.created_at),
@@ -558,7 +580,10 @@ async function getBoardOrders(req, res, next) {
     const totalPages = Math.max(1, Math.ceil(total / limitNum));
     const safePage = Math.min(pageNum, totalPages);
     const offset = (safePage - 1) * limitNum;
-    const paged = sorted.slice(offset, offset + limitNum).map(({ _done, ...row }) => row);
+    const paged = sorted.slice(offset, offset + limitNum).map(({ _done, ...row }, i) => ({
+      ...row,
+      display_index: offset + i + 1,
+    }));
 
     return res.json({
       pagination: {

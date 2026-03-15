@@ -7,6 +7,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../api';
 import { NeonButton, NeonInput, NeonSelect } from '../ui';
+import { useGridNavigation } from '../../hooks/useGridNavigation';
+import { numInputValue } from '../../utils/numInput';
 
 const UNIT_OPTIONS = ['шт', 'метр', 'кг', 'тонн', 'рулон'];
 
@@ -90,6 +92,9 @@ export default function ProcurementModal({ open, orderId, onClose, onSaved, from
   const displayRows = isReceived
     ? rows.filter((r) => String(r.material_name || '').trim())
     : rows;
+
+  const numCols = showPurchasedColumns ? 3 : 1;
+  const { registerRef, handleKeyDown } = useGridNavigation(displayRows.length, numCols);
 
   const updateRow = (localId, patch) => {
     setRows((prev) =>
@@ -298,11 +303,14 @@ export default function ProcurementModal({ open, orderId, onClose, onSaved, from
                         </td>
                         <td className="px-3 py-2">
                           <NeonInput
+                            ref={registerRef(idx, 0)}
                             type="number"
                             step="0.001"
                             min="0"
-                            value={row.planned_qty}
+                            placeholder="0"
+                            value={numInputValue(row.planned_qty)}
                             onChange={(e) => updateRow(row._localId, { planned_qty: e.target.value })}
+                            onKeyDown={handleKeyDown(idx, 0)}
                             disabled={!canEditMaterials}
                             readOnly={!canEditMaterials}
                             className={fieldErrors[`${idx}-planned_qty`] ? 'ring-1 ring-red-500' : ''}
@@ -325,22 +333,28 @@ export default function ProcurementModal({ open, orderId, onClose, onSaved, from
                           <>
                             <td className="px-3 py-2">
                               <NeonInput
+                                ref={registerRef(idx, 1)}
                                 type="number"
                                 step="0.001"
                                 min="0"
-                                value={row.purchased_qty}
+                                placeholder="0"
+                                value={numInputValue(row.purchased_qty)}
                                 onChange={(e) => updateRow(row._localId, { purchased_qty: e.target.value })}
+                                onKeyDown={handleKeyDown(idx, 1)}
                                 disabled={!canEditPurchased}
                                 className={fieldErrors[`${idx}-purchased`] ? 'ring-1 ring-red-500' : ''}
                               />
                             </td>
                             <td className="px-3 py-2">
                               <NeonInput
+                                ref={registerRef(idx, 2)}
                                 type="number"
                                 step="0.01"
                                 min="0"
-                                value={row.purchased_price}
+                                placeholder="0"
+                                value={numInputValue(row.purchased_price)}
                                 onChange={(e) => updateRow(row._localId, { purchased_price: e.target.value })}
+                                onKeyDown={handleKeyDown(idx, 2)}
                                 disabled={!canEditPurchased}
                                 className={fieldErrors[`${idx}-purchased`] ? 'ring-1 ring-red-500' : ''}
                               />

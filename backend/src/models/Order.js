@@ -48,6 +48,11 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.DATEONLY,
       allowNull: false,
     },
+    receipt_date: {
+      type: DataTypes.DATEONLY,
+      allowNull: true,
+      comment: 'Дата поступления заказа (выбирается при создании)',
+    },
     status_id: {
       type: DataTypes.INTEGER,
       allowNull: false,

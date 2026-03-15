@@ -10,6 +10,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import PrintButton from '../components/PrintButton';
 import ModelPhoto from '../components/ModelPhoto';
+import { useGridNavigation } from '../hooks/useGridNavigation';
+import { numInputValue } from '../utils/numInput';
 
 function getWeekStart() {
   const d = new Date();
@@ -204,6 +206,7 @@ export default function Sewing() {
   const available = matrixData?.available ?? 0;
   const hasMatrix = colors.length > 0 && sizes.length > 0;
   const simpleInputQty = Math.max(0, parseInt(String(factInput), 10) || 0);
+  const { registerRef, handleKeyDown } = useGridNavigation(colors.length, sizes.length);
 
   const rowTotals = {};
   const colTotals = {};
@@ -501,18 +504,21 @@ export default function Sewing() {
                                         </tr>
                                       </thead>
                                       <tbody>
-                                        {colors.map((color) => (
+                                        {colors.map((color, ci) => (
                                           <tr key={color} className="border-b border-white/10">
                                             <td className="px-2 py-1.5 text-white/90">{color}</td>
-                                            {sizes.map((size) => (
+                                            {sizes.map((size, si) => (
                                               <td key={size} className="px-1 py-0.5">
                                                 <input
+                                                  ref={registerRef(ci, si)}
                                                   type="number"
                                                   min={0}
                                                   max={cutByColorSize[`${color}|${size}`] ?? 9999}
+                                                  placeholder="0"
                                                   className="w-14 px-1 py-1 text-center rounded bg-white/10 border border-white/20 text-white text-sm"
-                                                  value={matrixInputs[`${color}|${size}`] ?? ''}
+                                                  value={numInputValue(matrixInputs[`${color}|${size}`])}
                                                   onChange={(e) => setCellValue(color, size, e.target.value)}
+                                                  onKeyDown={handleKeyDown(ci, si)}
                                                   onClick={(e) => e.stopPropagation()}
                                                 />
                                               </td>

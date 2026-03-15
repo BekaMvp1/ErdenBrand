@@ -80,7 +80,7 @@ const COL_WIDTHS = {
 
 const GRID_TEMPLATE = `${COL_WIDTHS.client}px ${COL_WIDTHS.priority}px ${COL_WIDTHS.created}px repeat(${STAGE_COLUMNS.length}, ${COL_WIDTHS.stage}px) ${COL_WIDTHS.forecast}px ${COL_WIDTHS.deadline}px`;
 const GRID_MIN_WIDTH = COL_WIDTHS.client + COL_WIDTHS.priority + COL_WIDTHS.created + STAGE_COLUMNS.length * COL_WIDTHS.stage + COL_WIDTHS.forecast + COL_WIDTHS.deadline;
-const UNIFIED_BOX_CLASS = 'm-1 min-h-[100px] rounded-lg border border-white/15 bg-slate-900/45 p-2.5 text-sm';
+const UNIFIED_BOX_CLASS = 'w-full min-h-full rounded-lg border border-white/15 bg-slate-900/45 p-2.5 text-sm';
 
 function formatDate(value) {
   if (!value) return '—';
@@ -222,8 +222,9 @@ function UnifiedCellBox({ className = '', children }) {
 function BoardHeader({
   q,
   setQ,
-  managerSearch,
-  setManagerSearch,
+  workshopId,
+  setWorkshopId,
+  workshops,
   priority,
   setPriority,
   showCompleted,
@@ -241,35 +242,28 @@ function BoardHeader({
   return (
     <div className="no-print sticky top-0 z-30 border-b border-white/10 bg-slate-950/90 backdrop-blur px-4 py-4 md:px-6">
       <div className="space-y-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="mr-2 text-xl font-bold tracking-wide text-neon-text">ЗАКАЗЫ</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-xl font-bold tracking-wide text-neon-text shrink-0">ЗАКАЗЫ</h1>
           <PrintButton />
 
-          <div className="min-w-[260px] flex-1">
+          <div className="w-[260px] max-w-full shrink-0">
             <NeonInput
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Поиск по номеру, модели, артикулу, клиенту"
-              className="h-[42px] py-2"
+              className="h-[42px] py-2 w-full"
             />
           </div>
 
-          <div className="min-w-[220px] flex-1">
-            <NeonInput
-              value={managerSearch}
-              onChange={(e) => setManagerSearch(e.target.value)}
-              placeholder="Поиск по бригадиру/технологу"
-              className="h-[42px] py-2 opacity-70"
-            />
+          <div className="w-[160px] shrink-0">
+            <NeonSelect value={priority} onChange={(e) => setPriority(e.target.value)} className="h-[42px] w-full max-w-full py-2">
+              {PRIORITIES.map((item) => (
+                <option key={item.key || 'all'} value={item.key}>
+                  {item.label}
+                </option>
+              ))}
+            </NeonSelect>
           </div>
-
-          <NeonSelect value={priority} onChange={(e) => setPriority(e.target.value)} className="h-[42px] w-[160px] shrink-0 py-2">
-            {PRIORITIES.map((item) => (
-              <option key={item.key || 'all'} value={item.key}>
-                {item.label}
-              </option>
-            ))}
-          </NeonSelect>
 
           <NeonButton
             variant={sort === 'forecast' ? 'primary' : 'secondary'}
@@ -297,9 +291,22 @@ function BoardHeader({
               Открыть дашборд
             </NeonButton>
           </Link>
+
+          <div className="w-[180px] shrink-0">
+            <NeonSelect
+              value={workshopId}
+              onChange={(e) => setWorkshopId(e.target.value)}
+              className="h-[42px] py-2 w-full"
+            >
+              <option value="">Все цеха</option>
+              {workshops.map((w) => (
+                <option key={w.id} value={w.id}>{w.name}</option>
+              ))}
+            </NeonSelect>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 gap-y-3">
           {FILTERS.map((item) => (
             <Chip key={item.key} onClick={() => setFilter(item.key)} active={filter === item.key}>
               <span className="inline-flex items-center gap-1">
@@ -313,8 +320,8 @@ function BoardHeader({
             </Chip>
           ))}
 
-          <div className="flex min-w-0 w-full flex-wrap items-center gap-3 sm:ml-auto sm:w-auto lg:flex-nowrap">
-            <div className="flex h-[44px] min-w-0 items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-2">
+          <div className="flex flex-wrap items-center gap-3 sm:ml-auto">
+            <div className="flex h-[44px] items-center gap-1 rounded-xl border border-white/10 bg-black/20 px-2 shrink-0">
               {VIEW_MODES.map((mode) => (
                 <button
                   key={mode.key}
@@ -330,21 +337,23 @@ function BoardHeader({
                 </button>
               ))}
             </div>
-            <NeonSelect
-              value={sort}
-              onChange={(e) => setSort(e.target.value)}
-              className="h-[44px] w-[140px] min-w-0 px-3 py-2 sm:w-[150px]"
-            >
-              {SORTS.map((item) => (
-                <option key={item.key} value={item.key}>
-                  {item.label}
-                </option>
-              ))}
-            </NeonSelect>
+            <div className="w-[150px] shrink-0">
+              <NeonSelect
+                value={sort}
+                onChange={(e) => setSort(e.target.value)}
+                className="h-[44px] w-full max-w-full px-3 py-2"
+              >
+                {SORTS.map((item) => (
+                  <option key={item.key} value={item.key}>
+                    {item.label}
+                  </option>
+                ))}
+              </NeonSelect>
+            </div>
             <NeonButton
               onClick={() => setOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
               variant="secondary"
-              className="h-[44px] px-3 py-2 text-sm whitespace-nowrap"
+              className="h-[44px] shrink-0 px-3 py-2 text-sm whitespace-nowrap"
             >
               {order === 'asc' ? '↑ ASC' : '↓ DESC'}
             </NeonButton>
@@ -366,14 +375,27 @@ function BoardRow({ orderRow, viewMode, onOpenOrder, onOpenStage }) {
       style={{ gridTemplateColumns: GRID_TEMPLATE }}
       onClick={() => onOpenOrder(orderRow.id)}
     >
-      <div className={`${stickyLeft} left-0 border-r border-white/10 px-0`}>
-        <UnifiedCellBox className="flex items-center gap-2">
+      <div className={`${stickyLeft} left-0 border-r border-white/10 px-0 flex flex-col min-h-[104px]`}>
+        <UnifiedCellBox className="flex flex-1 items-center gap-2 min-h-0">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-700 text-xs font-semibold text-slate-100">
             {(orderRow.client_name || '?').slice(0, 2).toUpperCase()}
           </div>
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold">{orderRow.client_name || '—'}</div>
-            <div className="truncate text-xs text-slate-400">{orderRow.model_name || '—'} • #{orderRow.order_number || orderRow.id}</div>
+            {orderRow.workshop_name && orderRow.workshop_name !== '—' && (
+              <div className="truncate text-[11px] font-medium text-amber-300/95 bg-amber-500/20 inline-block px-1.5 py-0.5 rounded mt-0.5">
+                {orderRow.workshop_name}
+              </div>
+            )}
+            <div className="truncate text-xs text-slate-400 mt-0.5">
+              {orderRow.total_quantity != null && orderRow.total_quantity > 0 && (
+                <span className="text-slate-300 font-medium">{orderRow.total_quantity} — </span>
+              )}
+              {orderRow.model_name || '—'}
+              {orderRow.display_index != null && (
+                <span className="text-slate-500 ml-1">№{orderRow.display_index}</span>
+              )}
+            </div>
             {orderRow.production_stages && orderRow.production_stages.length > 0 && (
               <div className="mt-1">
                 <div className="h-1 w-full rounded-full bg-slate-700 overflow-hidden">
@@ -409,16 +431,16 @@ function BoardRow({ orderRow, viewMode, onOpenOrder, onOpenStage }) {
         </UnifiedCellBox>
       </div>
 
-      <div className={`${stickyLeft} border-r border-white/10 px-0`} style={{ left: `${COL_WIDTHS.client}px` }}>
-        <UnifiedCellBox className="flex items-center justify-center">
-          <div className={`inline-flex min-w-[30px] items-center justify-center rounded-md px-2 py-0.5 text-xs font-semibold ${priorityBadge(orderRow.priority)}`}>
+      <div className={`${stickyLeft} border-r border-white/10 px-0 flex flex-col min-h-[104px]`} style={{ left: `${COL_WIDTHS.client}px` }}>
+        <UnifiedCellBox className="flex flex-1 items-center justify-center min-h-0">
+          <div className={`w-full flex items-center justify-center rounded-md py-1 text-xs font-semibold ${priorityBadge(orderRow.priority)}`}>
             {priorityNum(orderRow.priority)}
           </div>
         </UnifiedCellBox>
       </div>
 
-      <div className={`${stickyLeft} border-r border-white/10 px-0`} style={{ left: `${COL_WIDTHS.client + COL_WIDTHS.priority}px` }}>
-        <UnifiedCellBox className="flex items-center justify-center text-center text-xs text-slate-300">
+      <div className={`${stickyLeft} border-r border-white/10 px-0 flex flex-col min-h-[104px]`} style={{ left: `${COL_WIDTHS.client + COL_WIDTHS.priority}px` }}>
+        <UnifiedCellBox className="flex flex-1 items-center justify-center text-center text-xs text-slate-300 min-h-0">
           {formatDate(orderRow.created_at)}
         </UnifiedCellBox>
       </div>
@@ -446,8 +468,8 @@ function BoardRow({ orderRow, viewMode, onOpenOrder, onOpenStage }) {
         );
       })}
 
-      <div className={`${stickyRight} border-l border-white/10 px-0`} style={{ right: `${COL_WIDTHS.deadline}px` }}>
-        <UnifiedCellBox className="text-center">
+      <div className={`${stickyRight} border-l border-white/10 px-0 flex flex-col min-h-[104px]`} style={{ right: `${COL_WIDTHS.deadline}px` }}>
+        <UnifiedCellBox className="flex flex-1 items-center justify-center flex-col text-center min-h-0">
           <div className="text-[10px] text-slate-400">Прогноз</div>
           <div
             className={`mt-1 text-xs font-semibold ${
@@ -459,8 +481,8 @@ function BoardRow({ orderRow, viewMode, onOpenOrder, onOpenStage }) {
         </UnifiedCellBox>
       </div>
 
-      <div className={`${stickyRight} right-0 border-l border-white/10 px-0`}>
-        <UnifiedCellBox className="text-center">
+      <div className={`${stickyRight} right-0 border-l border-white/10 px-0 flex flex-col min-h-[104px]`}>
+        <UnifiedCellBox className="flex flex-1 items-center justify-center flex-col text-center min-h-0">
           <div className="text-[10px] text-slate-400">Сдача</div>
           <div
             className={`mt-1 text-xs font-semibold ${
@@ -481,8 +503,9 @@ function BoardRow({ orderRow, viewMode, onOpenOrder, onOpenStage }) {
 export default function OrdersBoard() {
   const navigate = useNavigate();
   const [q, setQ] = useState('');
-  const [managerSearch, setManagerSearch] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
+  const [workshops, setWorkshops] = useState([]);
+  const [workshopId, setWorkshopId] = useState('');
   // Фильтр из URL для перехода с дашборда (например /board?filter=overdue)
   const [filter, setFilter] = useState(() => {
     const p = new URLSearchParams(window.location.search);
@@ -502,13 +525,17 @@ export default function OrdersBoard() {
   const [data, setData] = useState({ pagination: { page: 1, limit: 20, total: 0, totalPages: 1 }, orders: [] });
 
   useEffect(() => {
+    api.workshops.list().then(setWorkshops).catch(() => setWorkshops([]));
+  }, []);
+
+  useEffect(() => {
     const timer = setTimeout(() => setDebouncedQ(q.trim()), 300);
     return () => clearTimeout(timer);
   }, [q]);
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedQ, filter, priority, showCompleted, sort, order]);
+  }, [debouncedQ, workshopId, filter, priority, showCompleted, sort, order]);
 
   useEffect(() => {
     let cancelled = false;
@@ -519,6 +546,7 @@ export default function OrdersBoard() {
       try {
         const response = await api.board.getOrders({
           q: debouncedQ || undefined,
+          workshop_id: workshopId || undefined,
           filter,
           priority: priority || undefined,
           showCompleted: String(showCompleted),
@@ -539,7 +567,7 @@ export default function OrdersBoard() {
     return () => {
       cancelled = true;
     };
-  }, [debouncedQ, filter, priority, showCompleted, sort, order, page, limit]);
+  }, [debouncedQ, workshopId, filter, priority, showCompleted, sort, order, page, limit]);
 
   const hasOrders = data.orders && data.orders.length > 0;
   const pagination = data.pagination || { page: 1, totalPages: 1, total: 0 };
@@ -553,8 +581,9 @@ export default function OrdersBoard() {
       <BoardHeader
         q={q}
         setQ={setQ}
-        managerSearch={managerSearch}
-        setManagerSearch={setManagerSearch}
+        workshopId={workshopId}
+        setWorkshopId={setWorkshopId}
+        workshops={workshops}
         priority={priority}
         setPriority={setPriority}
         showCompleted={showCompleted}

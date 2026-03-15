@@ -348,24 +348,11 @@ router.get('/calendar', async (req, res, next) => {
       planWhere.floor_id = null;
     }
 
+    // Заказы цеха для календаря:
+    // показываем **все** заказы выбранного цеха, независимо от назначенного этажа.
+    // Этаж влияет только на план/факт (planWhere), а не на видимость заказов —
+    // иначе новые заказы без этажа не попадают в таблицу и их нельзя запланировать.
     const ordersWhere = { workshop_id: Number(workshop_id) };
-    if (effectiveFloorId != null) {
-      const planForFloor = await db.ProductionPlanDay.findAll({
-        where: {
-          workshop_id: Number(workshop_id),
-          floor_id: effectiveFloorId,
-          date: { [Op.between]: [firstDay, to] },
-        },
-        attributes: ['order_id'],
-        raw: true,
-      });
-      const orderIdsWithPlan = [...new Set(planForFloor.map((r) => r.order_id))];
-      const orConditions = [{ building_floor_id: effectiveFloorId }];
-      if (orderIdsWithPlan.length > 0) {
-        orConditions.push({ id: { [Op.in]: orderIdsWithPlan } });
-      }
-      ordersWhere[Op.or] = orConditions;
-    }
     let orders = await db.Order.findAll({
       where: ordersWhere,
       include: [{ model: db.Client, as: 'Client' }],
@@ -434,10 +421,12 @@ router.get('/calendar', async (req, res, next) => {
         loadByDate[d] += qty;
         total += qty;
       }
+      const planQty = o.total_quantity ?? o.quantity ?? null;
       rows.push({
         order_id: o.id,
         order_title: orderTitle,
         model_name: modelName,
+        total_quantity: planQty,
         client_name: clientName,
         order_photos: o.photos,
         days,

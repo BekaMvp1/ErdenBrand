@@ -9,6 +9,8 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api';
 import PrintButton from '../components/PrintButton';
 import ModelPhoto from '../components/ModelPhoto';
+import { useGridNavigation } from '../hooks/useGridNavigation';
+import { numInputValue } from '../utils/numInput';
 
 const DEFAULT_TYPES = ['Аксы', 'Аутсорс', 'Наш цех'];
 
@@ -105,6 +107,7 @@ export function CompleteByFactModal({ task, onClose, onSave, isEditMode }) {
   });
   const [pivotState, setPivotState] = useState(() => JSON.parse(JSON.stringify(pivot)));
   const [endDate, setEndDate] = useState(task.end_date || today);
+  const { registerRef, handleKeyDown } = useGridNavigation(colors.length, sizes.length);
 
   const handleChange = (color, size, value) => {
     const n = Math.max(0, parseInt(value, 10) || 0);
@@ -151,16 +154,19 @@ export function CompleteByFactModal({ task, onClose, onSave, isEditMode }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {colors.map((color) => (
+                  {colors.map((color, ci) => (
                     <tr key={color} className="border-t border-white/10">
                       <td className="px-4 py-2.5">{color}</td>
-                      {sizes.map((size) => (
+                      {sizes.map((size, si) => (
                         <td key={size} className="px-2 py-2.5">
                           <input
+                            ref={registerRef(ci, si)}
                             type="number"
                             min="0"
-                            value={pivotState[color]?.[size] ?? ''}
+                            placeholder="0"
+                            value={numInputValue(pivotState[color]?.[size])}
                             onChange={(e) => handleChange(color, size, e.target.value)}
+                            onKeyDown={handleKeyDown(ci, si)}
                             className="w-full min-w-[3rem] px-2 py-1.5 rounded bg-accent-2/80 dark:bg-dark-800 border border-white/25 text-[#ECECEC] dark:text-dark-text text-center"
                           />
                         </td>
@@ -197,16 +203,21 @@ export function CompleteByFactModal({ task, onClose, onSave, isEditMode }) {
   return createPortal(modalContent, document.body);
 }
 
+const isOurWorkshopType = (t) => t === 'Наш цех';
+
 export default function Cutting() {
   const { type } = useParams();
   const navigate = useNavigate();
   const [cuttingTypes, setCuttingTypes] = useState([]);
+  const [workshops, setWorkshops] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [ordersLoading, setOrdersLoading] = useState(false);
   const [activeType, setActiveType] = useState(type || 'Аксы');
-  const [showAddForm, setShowAddForm] = useState(false);
+  const [addTaskModalOrder, setAddTaskModalOrder] = useState(null);
   const [completeModalTask, setCompleteModalTask] = useState(null);
+  const isOurWorkshop = isOurWorkshopType(activeType);
   const CUTTING_EXPANDED_KEY = 'cutting_expanded';
   const loadExpandedFor = (t) => {
     try {
@@ -236,6 +247,7 @@ export default function Cutting() {
 
   useEffect(() => {
     api.references.cuttingTypes().then(setCuttingTypes).catch(() => setCuttingTypes([]));
+    api.workshops.list().then(setWorkshops).catch(() => setWorkshops([]));
   }, []);
 
   useEffect(() => {
@@ -249,9 +261,29 @@ export default function Cutting() {
     }
   }, [activeType]);
 
+  // Заказы только выбранного цеха (тип раскроя = название цеха). Сопоставление без учёта регистра и пробелов.
+  const activeTypeNorm = String(activeType || '').trim().toLowerCase();
+  const workshopIdForType =
+    workshops.find((w) => String(w.name || '').trim().toLowerCase() === activeTypeNorm)?.id ?? null;
+
   useEffect(() => {
-    api.orders.list({ limit: 200 }).then(setOrders).catch(() => setOrders([]));
-  }, []);
+    setOrdersLoading(true);
+    if (workshopIdForType != null) {
+      api.orders
+        .list({ workshop_id: workshopIdForType, limit: 500 })
+        .then((list) => setOrders(Array.isArray(list) ? list : []))
+        .catch(() => setOrders([]))
+        .finally(() => setOrdersLoading(false));
+    } else if (workshops.length > 0) {
+      // Цеха загружены, но тип не совпал с цехом — показываем пустой список (не все заказы)
+      setOrders([]);
+      setOrdersLoading(false);
+    } else {
+      // Цеха ещё не загружены — не грузим заказы, чтобы не показать все по ошибке
+      setOrders([]);
+      setOrdersLoading(false);
+    }
+  }, [workshopIdForType, workshops.length]);
 
   // При выборе заказа подставляем рост из заказа (для раскроя)
   useEffect(() => {
@@ -265,6 +297,25 @@ export default function Cutting() {
       })
       .catch(() => {});
   }, [newTask.order_id]);
+
+  const openAddTaskModal = (order) => {
+    setAddTaskModalOrder(order);
+    setNewTask({
+      order_id: String(order.id),
+      floor: isOurWorkshop ? '' : '1',
+      operation: '',
+      status: 'Ожидает',
+      responsible: '',
+      start_date: '',
+      height_type: 'PRESET',
+      height_value: 170,
+    });
+  };
+
+  const closeAddTaskModal = () => {
+    setAddTaskModalOrder(null);
+    setNewTask({ order_id: '', floor: '', operation: '', status: 'Ожидает', responsible: '', start_date: '', height_type: 'PRESET', height_value: 170 });
+  };
 
   useEffect(() => {
     if (type && allTypes.includes(type)) {
@@ -290,7 +341,8 @@ export default function Cutting() {
       alert('Выберите заказ');
       return;
     }
-    if (!newTask.floor) {
+    const floorNum = isOurWorkshop ? (newTask.floor ? parseInt(newTask.floor, 10) : null) : 1;
+    if (isOurWorkshop && !floorNum) {
       alert('Выберите этаж');
       return;
     }
@@ -299,7 +351,7 @@ export default function Cutting() {
       await api.cutting.addTask({
         order_id: parseInt(newTask.order_id, 10),
         cutting_type: activeType,
-        floor: parseInt(newTask.floor, 10),
+        floor: floorNum ?? 1,
         operation: newTask.operation?.trim() || undefined,
         status: newTask.status,
         responsible: newTask.responsible?.trim() || undefined,
@@ -308,7 +360,7 @@ export default function Cutting() {
         height_value: heightVal,
       });
       setNewTask({ order_id: '', floor: '', operation: '', status: 'Ожидает', responsible: '', start_date: '', height_type: 'PRESET', height_value: 170 });
-      setShowAddForm(false);
+      setAddTaskModalOrder(null);
       const updated = await api.cutting.tasks(activeType);
       setTasks(updated);
     } catch (err) {
@@ -395,127 +447,188 @@ export default function Cutting() {
         Тип: <span className="font-medium text-[#ECECEC] dark:text-dark-text">{activeType}</span>
       </p>
 
-      {/* Кнопка добавить задачу */}
-      <div className="no-print mb-4">
-        <button
-          onClick={() => setShowAddForm(!showAddForm)}
-          className="px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700"
-        >
-          {showAddForm ? 'Отмена' : 'Добавить задачу на раскрой'}
-        </button>
+      {/* Заказы цеха — только те, что ещё не добавлены в раскрой; после добавления строка исчезает */}
+      <div className="no-print mb-6 rounded-xl border border-white/25 dark:border-white/25 overflow-hidden overflow-x-auto">
+        <h2 className="text-sm font-medium text-[#ECECEC]/80 dark:text-dark-text/80 mb-2 px-1">Заказы цеха «{activeType}» (ещё не в раскрое)</h2>
+        {ordersLoading ? (
+          <div className="p-6 text-[#ECECEC]/60 dark:text-dark-text/60">Загрузка заказов...</div>
+        ) : (() => {
+          const orderIdsInCutting = new Set((tasks || []).map((t) => t.order_id));
+          const ordersNotInCutting = orders.filter((o) => !orderIdsInCutting.has(o.id));
+          if (orders.length === 0) {
+            return <div className="p-6 text-[#ECECEC]/60 dark:text-dark-text/60">Нет заказов по цеху «{activeType}»</div>;
+          }
+          if (ordersNotInCutting.length === 0) {
+            return <div className="p-6 text-[#ECECEC]/60 dark:text-dark-text/60">Все заказы цеха уже добавлены в раскрой</div>;
+          }
+          return (
+          <table className="w-full min-w-[720px]">
+            <thead>
+              <tr className="bg-accent-3/80 dark:bg-dark-900 border-b border-white/25 dark:border-white/25">
+                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">ТЗ</th>
+                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Название</th>
+                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Клиент</th>
+                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Кол-во</th>
+                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Дата поступления</th>
+                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Дедлайн</th>
+                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Статус</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ordersNotInCutting.map((o) => (
+                <tr
+                  key={o.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openAddTaskModal(o)}
+                  onKeyDown={(e) => e.key === 'Enter' && openAddTaskModal(o)}
+                  className="border-b border-white/10 dark:border-white/10 hover:bg-white/5 dark:hover:bg-white/5 cursor-pointer transition-colors"
+                >
+                  <td className="px-4 py-3 text-primary-400 dark:text-primary-400 font-medium">
+                    {o.tz_code || o.id || '—'}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <ModelPhoto photo={o.photos?.[0]} modelName={o.title} size={48} className="shrink-0" />
+                      <span className="text-[#ECECEC] dark:text-dark-text">{o.title || o.model_name || '—'}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80">{o.Client?.name ?? '—'}</td>
+                  <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80">{o.total_quantity ?? o.quantity ?? '—'}</td>
+                  <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80 whitespace-nowrap">
+                    {o.receipt_date ? String(o.receipt_date).slice(0, 10) : (o.created_at ? String(o.created_at).slice(0, 10) : '—')}
+                  </td>
+                  <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80 whitespace-nowrap">{o.deadline ?? '—'}</td>
+                  <td className="px-4 py-3">
+                    <span className="inline-block px-2 py-1 rounded text-xs font-medium bg-accent-1/30 text-[#ECECEC]/90 dark:text-dark-text/90">
+                      {o.OrderStatus?.name ?? '—'}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          );
+        })()}
       </div>
 
-      {showAddForm && (
-        <form onSubmit={handleAddTask} className="no-print mb-4 sm:mb-6 p-3 sm:p-4 rounded-xl bg-accent-3/80 dark:bg-dark-900 border border-white/25 dark:border-white/25 flex flex-wrap gap-3 sm:gap-4 items-end">
-          <div>
-            <label className="block text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-1">Заказ</label>
-            <select
-              value={newTask.order_id}
-              onChange={(e) => setNewTask({ ...newTask, order_id: e.target.value })}
-              className="px-3 sm:px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text w-full sm:min-w-[200px]"
-              required
-            >
-              <option value="">— Выберите заказ —</option>
-              {orders.map((o) => (
-                <option key={o.id} value={o.id}>
-                  #{o.id} {o.Client?.name} — {o.title}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-1">Этаж</label>
-            <select
-              value={newTask.floor}
-              onChange={(e) => setNewTask({ ...newTask, floor: e.target.value })}
-              className="px-3 sm:px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
-              required
-            >
-              <option value="">— Выберите этаж —</option>
-              {FLOOR_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-1">Рост</label>
-            <select
-              value={newTask.height_type === 'CUSTOM' ? 'CUSTOM' : String(newTask.height_value)}
-              onChange={(e) => {
-                const v = e.target.value;
-                if (v === 'CUSTOM') setNewTask({ ...newTask, height_type: 'CUSTOM', height_value: 170 });
-                else setNewTask({ ...newTask, height_type: 'PRESET', height_value: v === '165' ? 165 : 170 });
-              }}
-              className="px-3 sm:px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
-            >
-              <option value="170">170</option>
-              <option value="165">165</option>
-              <option value="CUSTOM">Другое (ручной ввод)</option>
-            </select>
-            {newTask.height_type === 'CUSTOM' && (
-              <input
-                type="number"
-                min={120}
-                max={220}
-                value={newTask.height_value}
-                onChange={(e) => setNewTask({ ...newTask, height_value: e.target.value })}
-                className="mt-1 w-24 px-2 py-1 rounded bg-accent-2/80 dark:bg-dark-800 border border-white/25 text-[#ECECEC]"
-                placeholder="120–220"
-              />
-            )}
-          </div>
-          <div>
-            <label className="block text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-1">Начало раскроя</label>
-            <input
-              type="date"
-              value={newTask.start_date}
-              onChange={(e) => setNewTask({ ...newTask, start_date: e.target.value })}
-              className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-1">Операция</label>
-            <input
-              type="text"
-              value={newTask.operation}
-              onChange={(e) => setNewTask({ ...newTask, operation: e.target.value })}
-              placeholder="Операция"
-              className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-1">Статус</label>
-            <select
-              value={newTask.status}
-              onChange={(e) => setNewTask({ ...newTask, status: e.target.value })}
-              className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
-            >
-              <option value="Ожидает">Ожидает</option>
-              <option value="В работе">В работе</option>
-              <option value="Готово">Готово</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-1">Ответственный</label>
-            <input
-              type="text"
-              value={newTask.responsible}
-              onChange={(e) => setNewTask({ ...newTask, responsible: e.target.value })}
-              placeholder="ФИО"
-              className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={!newTask.order_id || !newTask.floor}
-            className="px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+      {/* Модалка: подготовка к раскрою (заказ выбран, заполняем этаж, рост, дату и т.д.) */}
+      {addTaskModalOrder && createPortal(
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto" onClick={closeAddTaskModal}>
+          <div
+            className="bg-accent-3 dark:bg-dark-900 rounded-xl border border-white/25 max-w-2xl w-full my-4 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
           >
-            Добавить
-          </button>
-        </form>
+            <div className="p-4 sm:p-6 border-b border-white/15">
+              <h3 className="text-lg font-semibold text-[#ECECEC] dark:text-dark-text">Подготовить к раскрою</h3>
+              <p className="mt-1 text-sm text-[#ECECEC]/80 dark:text-dark-text/80">
+                Заказ: #{addTaskModalOrder.id} {addTaskModalOrder.Client?.name} — {addTaskModalOrder.title}
+              </p>
+            </div>
+            <form onSubmit={handleAddTask} className="p-4 sm:p-6 flex flex-wrap gap-3 sm:gap-4 items-end">
+              {isOurWorkshop && (
+                <div>
+                  <label className="block text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-1">Этаж</label>
+                  <select
+                    value={newTask.floor}
+                    onChange={(e) => setNewTask({ ...newTask, floor: e.target.value })}
+                    className="px-3 sm:px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text min-w-[160px]"
+                    required
+                  >
+                    <option value="">— Выберите этаж —</option>
+                    {FLOOR_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <div>
+                <label className="block text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-1">Рост</label>
+                <select
+                  value={newTask.height_type === 'CUSTOM' ? 'CUSTOM' : String(newTask.height_value)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === 'CUSTOM') setNewTask({ ...newTask, height_type: 'CUSTOM', height_value: 170 });
+                    else setNewTask({ ...newTask, height_type: 'PRESET', height_value: v === '165' ? 165 : 170 });
+                  }}
+                  className="px-3 sm:px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
+                >
+                  <option value="170">170</option>
+                  <option value="165">165</option>
+                  <option value="CUSTOM">Другое (ручной ввод)</option>
+                </select>
+                {newTask.height_type === 'CUSTOM' && (
+                  <input
+                    type="number"
+                    min={120}
+                    max={220}
+                    value={newTask.height_value}
+                    onChange={(e) => setNewTask({ ...newTask, height_value: e.target.value })}
+                    className="mt-1 w-24 px-2 py-1 rounded bg-accent-2/80 dark:bg-dark-800 border border-white/25 text-[#ECECEC]"
+                    placeholder="120–220"
+                  />
+                )}
+              </div>
+              <div>
+                <label className="block text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-1">Начало раскроя</label>
+                <input
+                  type="date"
+                  value={newTask.start_date}
+                  onChange={(e) => setNewTask({ ...newTask, start_date: e.target.value })}
+                  className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-1">Операция</label>
+                <input
+                  type="text"
+                  value={newTask.operation}
+                  onChange={(e) => setNewTask({ ...newTask, operation: e.target.value })}
+                  placeholder="Операция"
+                  className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-1">Статус</label>
+                <select
+                  value={newTask.status}
+                  onChange={(e) => setNewTask({ ...newTask, status: e.target.value })}
+                  className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
+                >
+                  <option value="Ожидает">Ожидает</option>
+                  <option value="В работе">В работе</option>
+                  <option value="Готово">Готово</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-1">Ответственный</label>
+                <input
+                  type="text"
+                  value={newTask.responsible}
+                  onChange={(e) => setNewTask({ ...newTask, responsible: e.target.value })}
+                  placeholder="ФИО"
+                  className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
+                />
+              </div>
+              <div className="flex gap-2 w-full sm:w-auto">
+                <button
+                  type="submit"
+                  disabled={isOurWorkshop ? !newTask.floor : false}
+                  className="px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Добавить
+                </button>
+                <button type="button" onClick={closeAddTaskModal} className="px-4 py-2 rounded-lg bg-accent-1/30 dark:bg-dark-2 text-[#ECECEC] dark:text-dark-text">
+                  Отмена
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>,
+        document.body
       )}
 
-      {/* Таблица задач */}
+      {/* Таблица задач (с падающим блоками размеров и кол-ва) */}
       <div className="print-area rounded-xl border border-white/25 dark:border-white/25 overflow-hidden overflow-x-auto">
         <h1 className="print-title print-only">Раскрой — {activeType}</h1>
         {loading ? (
@@ -527,7 +640,9 @@ export default function Cutting() {
             <thead>
               <tr className="bg-accent-3/80 dark:bg-dark-900 border-b border-white/25 dark:border-white/25">
                 <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Заказ</th>
-                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Этаж</th>
+                {isOurWorkshop && (
+                  <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Этаж</th>
+                )}
                 <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Рост</th>
                 <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Операция</th>
                 <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Статус</th>
@@ -580,21 +695,23 @@ export default function Cutting() {
                         </button>
                       </div>
                     </td>
-                    <td className="px-4 py-3 align-top">
-                      {task.status === 'Готово' ? (
-                        <span className="text-[#ECECEC]/90 dark:text-dark-text/80">{formatFloor(task.floor)}</span>
-                      ) : (
-                        <select
-                          value={task.floor ?? ''}
-                          onChange={(e) => handleFloorChange(task, e.target.value)}
-                          className="px-2 py-1 rounded bg-accent-2/80 dark:bg-dark-800 border border-white/25 text-[#ECECEC] dark:text-dark-text text-sm"
-                        >
-                          {FLOOR_OPTIONS.map((o) => (
-                            <option key={o.value} value={o.value}>{o.label}</option>
-                          ))}
-                        </select>
-                      )}
-                    </td>
+                    {isOurWorkshop && (
+                      <td className="px-4 py-3 align-top">
+                        {task.status === 'Готово' ? (
+                          <span className="text-[#ECECEC]/90 dark:text-dark-text/80">{formatFloor(task.floor)}</span>
+                        ) : (
+                          <select
+                            value={task.floor ?? ''}
+                            onChange={(e) => handleFloorChange(task, e.target.value)}
+                            className="px-2 py-1 rounded bg-accent-2/80 dark:bg-dark-800 border border-white/25 text-[#ECECEC] dark:text-dark-text text-sm"
+                          >
+                            {FLOOR_OPTIONS.map((o) => (
+                              <option key={o.value} value={o.value}>{o.label}</option>
+                            ))}
+                          </select>
+                        )}
+                      </td>
+                    )}
                     <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80 align-top">
                       {task.height_value != null ? String(task.height_value) : '—'}
                     </td>
@@ -651,7 +768,7 @@ export default function Cutting() {
                     </td>
                   </tr>
                   <tr className="border-b border-white/15 dark:border-white/15 bg-accent-2/20 dark:bg-dark-900/50">
-                    <td colSpan={9} className="px-4 py-0 overflow-hidden">
+                    <td colSpan={isOurWorkshop ? 9 : 8} className="px-4 py-0 overflow-hidden">
                       <div
                         className={`grid transition-[grid-template-rows] duration-300 ease-out`}
                         style={{ gridTemplateRows: isExpanded ? '1fr' : '0fr' }}

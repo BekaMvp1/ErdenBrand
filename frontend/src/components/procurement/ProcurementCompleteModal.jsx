@@ -7,6 +7,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../api';
 import { NeonButton, NeonInput } from '../ui';
+import { useGridNavigation } from '../../hooks/useGridNavigation';
+import { numInputValue } from '../../utils/numInput';
 
 export default function ProcurementCompleteModal({ open, procurementId, onClose, onSaved, canEdit = true }) {
   const [loading, setLoading] = useState(false);
@@ -73,6 +75,10 @@ export default function ProcurementCompleteModal({ open, procurementId, onClose,
     () => rows.reduce((acc, row) => acc + (Number(row.purchased_sum) || 0), 0),
     [rows]
   );
+
+  const rowCount = rows.length;
+  const colCount = 2;
+  const { registerRef, handleKeyDown } = useGridNavigation(rowCount, colCount);
 
   const validate = () => {
     const nextErrors = {};
@@ -176,22 +182,28 @@ export default function ProcurementCompleteModal({ open, procurementId, onClose,
                         <td className="px-3 py-2 text-[#ECECEC]">{row.unit || '—'}</td>
                         <td className="px-3 py-2">
                           <NeonInput
+                            ref={registerRef(idx, 0)}
                             type="number"
                             step="0.001"
                             min="0"
-                            value={row.purchased_qty}
+                            placeholder="0"
+                            value={numInputValue(row.purchased_qty)}
                             onChange={(e) => updateRow(row.id, { purchased_qty: e.target.value })}
+                            onKeyDown={handleKeyDown(idx, 0)}
                             disabled={!canEdit || isReceived}
                             className={fieldErrors[`${idx}-purchased`] ? 'ring-1 ring-red-500' : ''}
                           />
                         </td>
                         <td className="px-3 py-2">
                           <NeonInput
+                            ref={registerRef(idx, 1)}
                             type="number"
                             step="0.01"
                             min="0"
-                            value={row.purchased_price}
+                            placeholder="0"
+                            value={numInputValue(row.purchased_price)}
                             onChange={(e) => updateRow(row.id, { purchased_price: e.target.value })}
+                            onKeyDown={handleKeyDown(idx, 1)}
                             disabled={!canEdit || isReceived}
                             className={fieldErrors[`${idx}-purchased`] ? 'ring-1 ring-red-500' : ''}
                           />

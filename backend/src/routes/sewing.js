@@ -52,20 +52,28 @@ function getCutQtyDeduplicated(cutTasks) {
 }
 
 /**
- * Получить id этажей пошива из building_floors: «Производство» или все кроме Финиш/ОТК и Склад.
+ * Получить id этажей пошива из building_floors.
+ * Логика:
+ *  - если есть этажи с названием «Производство» — считаем их швейными;
+ *  - ДОПОЛНИТЕЛЬНО всегда берём этажи 1–4, кроме «Склад» — чтобы
+ *    1-й этаж (Салиха / Финиш) тоже участвовал в цепочке пошива.
  */
 async function getSewingFloorIds() {
   const floors = await db.BuildingFloor.findAll({ attributes: ['id', 'name'], raw: true });
-  const withProizv = (floors || []).filter((f) => f.name && /Производство|производство/i.test(f.name));
-  if (withProizv.length > 0) {
-    return withProizv.map((f) => f.id).sort((a, b) => a - b);
-  }
-  // Все этажи 1–4, кроме Склад (включая 1 этаж / Салиха)
-  const notFinishNotSklad = (floors || []).filter(
-    (f) => f.id >= 1 && f.id <= 4 && (!f.name || !/склад/i.test(f.name))
-  );
-  if (notFinishNotSklad.length > 0) {
-    return notFinishNotSklad.map((f) => f.id).sort((a, b) => a - b);
+  const result = new Set();
+
+  (floors || []).forEach((f) => {
+    const name = String(f.name || '');
+    const isProizv = /Производство|производство/i.test(name);
+    const isSklad = /склад/i.test(name);
+    // 1) Все этажи с «Производство»
+    if (isProizv) result.add(f.id);
+    // 2) Все этажи 1–4 кроме «Склад» — включая 1 этаж (Салиха / Финиш)
+    if (f.id >= 1 && f.id <= 4 && !isSklad) result.add(f.id);
+  });
+
+  if (result.size > 0) {
+    return Array.from(result).sort((a, b) => a - b);
   }
   return SEWING_FLOOR_IDS_DEFAULT;
 }
@@ -1057,7 +1065,8 @@ router.post('/complete', async (req, res, next) => {
       const now = new Date();
       const dfStr = (df || now.toISOString().slice(0, 10)).replace(/-/g, '');
       const dtStr = (dt || df || now.toISOString().slice(0, 10)).replace(/-/g, '');
-      const batchCode = `AUTO-${order_id}-${effectiveFloorId}-${dfStr}-${dtStr}`;
+      // Читабельный код партии: ПШ-{order_id}-{этаж}-{дата_от}-{дата_до}
+      const batchCode = `ПШ-${order_id}-${effectiveFloorId}-${dfStr}-${dtStr}`;
 
       const batch = await db.SewingBatch.create(
         {
@@ -1172,7 +1181,32 @@ router.post('/complete', async (req, res, next) => {
         }
       }
 
-      // Ежедневная партия: не переводим sewing_order_floors и order_stages в DONE — партия сразу в pending ОТК
+      // Отмечаем пошив по этому заказу+этажу как завершённый (панель заказов показывает «Пошив ✓»)
+      await db.SewingOrderFloor.upsert(
+        {
+          order_id: Number(order_id),
+          floor_id: effectiveFloorId,
+          status: 'DONE',
+          done_at: now,
+          done_batch_id: batch.id,
+        },
+        { conflictFields: ['order_id', 'floor_id'], transaction: t }
+      );
+
+      const [sewingStage] = await db.OrderStage.findOrCreate({
+        where: { order_id: Number(order_id), stage_key: 'sewing' },
+        defaults: { status: 'NOT_STARTED' },
+        transaction: t,
+      });
+      await sewingStage.update({ status: 'DONE', completed_at: now }, { transaction: t });
+
+      const [qcStage] = await db.OrderStage.findOrCreate({
+        where: { order_id: Number(order_id), stage_key: 'qc' },
+        defaults: { status: 'NOT_STARTED' },
+        transaction: t,
+      });
+      await qcStage.update({ status: 'IN_PROGRESS', started_at: now }, { transaction: t });
+
       await t.commit();
       res.json({ ok: true, batch_id: batch.id });
     } catch (err) {

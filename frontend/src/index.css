@@ -74,6 +74,12 @@ input[type="date"].planning-date-input::-moz-focus-inner {
   border: 0;
 }
 
+/* Выпадающий список: опции видны на любом фоне (контраст в дропдауне) */
+select option {
+  background: #1e293b;
+  color: #f1f5f9;
+}
+
 /* Адаптив: таблицы с горизонтальным скроллом на мобильном */
 .table-responsive {
   @apply overflow-x-auto -mx-3 sm:mx-0;
@@ -333,15 +339,39 @@ html.dark * {
               background-color 0.3s ease;
 }
 
-/* Печать: A4, скрыть непечатаемое */
+/* Печать: A4, скрыть непечатаемое, показывать весь контент (включая скроллы) на нескольких листах */
 @media print {
   @page {
     size: A4;
     margin: 12mm;
   }
-  body {
+  html,
+  body,
+  #root {
     background: white;
     color: black;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+  /* Главное содержимое: убираем прокрутку, чтобы браузер печатал все страницы подряд */
+  main {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+  }
+  /* Любые контейнеры с overflow-auto не должны обрезать содержимое при печати */
+  .overflow-auto,
+  .overflow-y-auto,
+  .overflow-x-auto {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+  /* Печатная область может свободно разбиваться на несколько страниц */
+  .print-area {
+    display: block;
+    max-height: none !important;
+    overflow: visible !important;
   }
   .no-print,
   button.no-print,

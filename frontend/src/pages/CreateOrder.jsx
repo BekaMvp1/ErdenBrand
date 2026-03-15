@@ -7,6 +7,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useRefreshOnVisible } from '../hooks/useRefreshOnVisible';
+import { useGridNavigation } from '../hooks/useGridNavigation';
+import { numInputValue } from '../utils/numInput';
 import { NeonButton, NeonInput, NeonSelect } from '../components/ui';
 import PrintButton from '../components/PrintButton';
 
@@ -125,6 +127,7 @@ export default function CreateOrder() {
   };
 
   const getCell = (color, size) => matrix[`${color}|${size}`] || '';
+  const { registerRef, handleKeyDown } = useGridNavigation(colors.length, selectedSizes.length);
 
   const addSize = (sizeName) => {
     const name = String(sizeName || '').trim();
@@ -224,6 +227,7 @@ export default function CreateOrder() {
         total_quantity: totalQty,
         start_date: form.start_date || undefined,
         deadline: form.deadline,
+        receipt_date: form.start_date || undefined,
         comment: form.comment || undefined,
         planned_month: form.planned_month,
         workshop_id: form.workshop_id.toString().startsWith('floor-')
@@ -550,18 +554,21 @@ export default function CreateOrder() {
                   </tr>
                 </thead>
                 <tbody>
-                  {colors.map((color) => {
+                  {colors.map((color, ci) => {
                     const rowSum = selectedSizes.reduce((a, s) => a + (parseInt(getCell(color, s), 10) || 0), 0);
                     return (
                       <tr key={color} className="border-b border-white/15">
                         <td className="px-4 py-3 text-[#ECECEC] dark:text-dark-text border-r border-white/15">{color}</td>
-                        {selectedSizes.map((size) => (
+                        {selectedSizes.map((size, si) => (
                           <td key={size} className="px-2 py-2 border-b border-white/15 text-center w-20">
                             <input
+                              ref={registerRef(ci, si)}
                               type="number"
                               min="0"
-                              value={getCell(color, size)}
+                              placeholder="0"
+                              value={numInputValue(getCell(color, size))}
                               onChange={(e) => setCell(color, size, e.target.value)}
+                              onKeyDown={handleKeyDown(ci, si)}
                               className="w-16 min-w-16 mx-auto block px-2 py-1 rounded bg-accent-2/80 dark:bg-dark-800 border border-white/25 text-[#ECECEC] dark:text-dark-text text-center box-border"
                             />
                           </td>

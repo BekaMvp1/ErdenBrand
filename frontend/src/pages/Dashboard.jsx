@@ -181,6 +181,7 @@ export default function Dashboard() {
                 <th className="text-left px-4 py-3 text-sm font-medium text-neon-muted">Название</th>
                 <th className="text-left px-4 py-3 text-sm font-medium text-neon-muted">Клиент</th>
                 <th className="text-left px-4 py-3 text-sm font-medium text-neon-muted">Кол-во</th>
+                <th className="text-left px-4 py-3 text-sm font-medium text-neon-muted">Дата поступления заказа</th>
                 <th className="text-left px-4 py-3 text-sm font-medium text-neon-muted">Дедлайн</th>
                 <th className="text-left px-4 py-3 text-sm font-medium text-neon-muted">Статус</th>
                 <th className="text-left px-4 py-3 text-sm font-medium text-neon-muted">Цех пошива</th>
@@ -209,7 +210,10 @@ export default function Dashboard() {
                   </td>
                   <td className="px-4 py-3 text-neon-muted">{order.Client?.name}</td>
                   <td className="px-4 py-3 text-neon-muted">{order.quantity}</td>
-                  <td className="px-4 py-3 text-neon-muted whitespace-nowrap">{order.deadline}</td>
+                  <td className="px-4 py-3 text-neon-muted whitespace-nowrap">
+                    {order.receipt_date ? String(order.receipt_date).slice(0, 10) : (order.created_at ? String(order.created_at).slice(0, 10) : '—')}
+                  </td>
+                  <td className="px-4 py-3 text-neon-muted whitespace-nowrap">{order.deadline || '—'}</td>
                   <td className="px-4 py-3">
                     <span
                       className={`inline-block px-2 py-1 rounded text-xs font-medium ${
@@ -219,7 +223,7 @@ export default function Dashboard() {
                       {order.OrderStatus?.name}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-neon-muted">{order.Floor?.name || '—'}</td>
+                  <td className="px-4 py-3 text-neon-muted">{order.Workshop?.name || order.Floor?.name || '—'}</td>
                   {(canEdit || canDelete) && (
                     <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1">

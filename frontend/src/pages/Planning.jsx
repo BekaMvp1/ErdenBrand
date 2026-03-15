@@ -9,6 +9,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
 import ModelPhoto from '../components/ModelPhoto';
+import { useGridNavigation } from '../hooks/useGridNavigation';
+import { numInputValue } from '../utils/numInput';
 
 const PLANNING_WORKSHOP_KEY = 'planning_workshop_id';
 const PLANNING_FLOOR_KEY = 'planning_floor_id';
@@ -100,8 +102,11 @@ export default function Planning() {
   };
   const [cellEdits, setCellEdits] = useState(loadCellEdits);
   const saveTimeoutRef = useRef(null);
+  const [capacityWeekInput, setCapacityWeekInput] = useState('');
+  const [capacitySaving, setCapacitySaving] = useState(false);
 
   const user = JSON.parse(sessionStorage.getItem('user') || '{}');
+  const WORKING_DAYS_PER_WEEK = 6;
   const canEdit = ['admin', 'manager', 'technologist'].includes(user?.role);
 
   const weeks = getWeeksInMonth(monthKey);
@@ -203,6 +208,40 @@ export default function Planning() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Показать текущую мощность на неделю из загруженных данных
+  useEffect(() => {
+    const dts = data?.dates ?? [];
+    const sum = data?.summary ?? {};
+    if (dts.length > 0 && sum.capacity) {
+      const firstDate = typeof dts[0] === 'string' ? dts[0] : dts[0]?.date;
+      const cap = firstDate != null ? (sum.capacity[firstDate] ?? 0) : 0;
+      const weekCap = Math.round((Number(cap) || 0) * WORKING_DAYS_PER_WEEK);
+      setCapacityWeekInput(weekCap > 0 ? String(weekCap) : '');
+    } else {
+      setCapacityWeekInput('');
+    }
+  }, [data?.dates, data?.summary]);
+
+  const saveCapacityWeek = async () => {
+    if (!canEdit || !canLoad || !dateFrom) return;
+    const val = Math.max(0, parseInt(capacityWeekInput, 10) || 0);
+    setCapacitySaving(true);
+    setErrorMsg('');
+    try {
+      await api.planning.saveCapacity({
+        workshop_id: Number(workshopId),
+        floor_id: selectedWorkshop?.floors_count === 4 && floorId ? Number(floorId) : undefined,
+        week_start: dateFrom,
+        capacity_week: val,
+      });
+      loadData();
+    } catch (err) {
+      setErrorMsg(err?.message || 'Ошибка сохранения мощности');
+    } finally {
+      setCapacitySaving(false);
+    }
+  };
 
   const getCellValue = (orderId, date) => {
     const key = `${orderId}_${date}`;
@@ -311,6 +350,7 @@ export default function Planning() {
   const dates = data?.dates ?? [];
   const summary = data?.summary ?? { capacity: {}, load: {}, free: {} };
   const rows = data?.rows ?? [];
+  const { registerRef, handleKeyDown } = useGridNavigation(rows.length, dates.length);
 
   const monthLabel = monthKey
     ? new Date(monthKey + '-01').toLocaleDateString('ru-RU', {
@@ -334,7 +374,7 @@ export default function Planning() {
       </h1>
 
       {/* Фильтры: Месяц | Неделя | Цех | Этаж | Поиск */}
-      <div className="no-print flex flex-wrap items-end gap-3 mb-3">
+      <div className="no-print flex flex-wrap items-end gap-3 mb-3 overflow-visible">
         <div>
           <label className="block text-xs text-white/60 mb-0.5">Месяц</label>
           <input
@@ -344,16 +384,17 @@ export default function Planning() {
             className={selectClass(false)}
           />
         </div>
-        <div>
+        <div className="relative z-[100]">
           <label className="block text-xs text-white/60 mb-0.5">Неделя</label>
           <select
             value={weekNum}
             onChange={(e) => setWeekNum(Number(e.target.value))}
-            className={selectClass(false)}
+            className={`${selectClass(false)} min-w-[120px] appearance-none bg-white/10`}
+            style={{ colorScheme: 'dark' }}
           >
             {weeks.map((w) => (
-              <option key={w.weekNum} value={w.weekNum}>
-                {w.label}
+              <option key={w.weekNum} value={w.weekNum} className="bg-[#1e293b] text-white">
+                {w.label} ({w.dateFrom?.slice(5, 10)} – {w.dateTo?.slice(5, 10)})
               </option>
             ))}
           </select>
@@ -420,6 +461,27 @@ export default function Planning() {
         >
           Следующая неделя <span>→</span>
         </button>
+        {canEdit && canLoad && (
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="text-xs text-white/60 whitespace-nowrap">Мощность на неделю (шт.):</label>
+            <input
+              type="number"
+              min={0}
+              value={numInputValue(capacityWeekInput)}
+              onChange={(e) => setCapacityWeekInput(e.target.value)}
+              placeholder="0"
+              className="w-24 px-2 py-1.5 rounded border border-white/25 bg-white/10 text-white text-sm"
+            />
+            <button
+              type="button"
+              onClick={saveCapacityWeek}
+              disabled={capacitySaving}
+              className="px-3 py-1.5 rounded border border-white/25 bg-blue-600/80 text-white text-sm hover:bg-blue-600 disabled:opacity-50"
+            >
+              {capacitySaving ? 'Сохранение...' : 'Сохранить мощность'}
+            </button>
+          </div>
+        )}
         {canEdit && (
           <button
             type="button"
@@ -503,7 +565,7 @@ export default function Planning() {
                       </td>
                     </tr>
                   ) : null}
-                  {rows.map((row) => {
+                  {rows.map((row, rowIdx) => {
                     let rowTotal = 0;
                     return (
                       <tr
@@ -519,11 +581,14 @@ export default function Planning() {
                         </td>
                         <td className="px-2 py-1.5 text-white/90 text-xs">
                           {row.model_name || '—'}
+                          {row.total_quantity != null && row.total_quantity > 0 && (
+                            <span className="ml-1.5 text-white/60 font-medium">({row.total_quantity})</span>
+                          )}
                         </td>
                         <td className="px-2 py-1.5 text-white/90 text-xs">
                           {row.client_name}
                         </td>
-                        {dates.map((d) => {
+                        {dates.map((d, dateIdx) => {
                           const val = getCellValue(row.order_id, d.date);
                           rowTotal += val;
                           return (
@@ -533,13 +598,16 @@ export default function Planning() {
                             >
                               {canEdit && data?.period?.status !== 'CLOSED' ? (
                                 <input
+                                  ref={registerRef(rowIdx, dateIdx)}
                                   type="number"
                                   min="0"
+                                  placeholder="0"
                                   className="w-full min-w-[36px] px-1 py-1 text-center rounded bg-white/10 border border-white/20 text-white text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                                  value={val}
+                                  value={numInputValue(val)}
                                   onChange={(e) =>
                                     setCellValue(row.order_id, d.date, e.target.value)
                                   }
+                                  onKeyDown={handleKeyDown(rowIdx, dateIdx)}
                                   onBlur={() => handleBlur(row.order_id, d.date)}
                                 />
                               ) : (

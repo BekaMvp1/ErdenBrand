@@ -244,6 +244,24 @@ router.put('/tasks/:id', async (req, res, next) => {
 
     await task.update(updates);
     await logAudit(req.user.id, 'UPDATE', 'cutting_task', taskId);
+
+    // Когда задача переведена в «Готово» — автоматически передаём заказ в пошив
+    if (String(updates.status ?? task.status).trim() === 'Готово') {
+      const orderId = task.order_id;
+      const floorId = Number(updates.floor ?? task.floor);
+      if (orderId && floorId && SEWING_FLOOR_IDS.includes(floorId)) {
+        await db.SewingOrderFloor.upsert(
+          { order_id: orderId, floor_id: floorId, status: 'IN_PROGRESS', done_at: null, done_batch_id: null },
+          { conflictFields: ['order_id', 'floor_id'] }
+        );
+      }
+      const now = new Date();
+      const cutStage = await db.OrderStage.findOne({ where: { order_id: orderId, stage_key: 'cutting' } });
+      if (cutStage) await cutStage.update({ status: 'DONE', completed_at: now });
+      const sewingStage = await db.OrderStage.findOne({ where: { order_id: orderId, stage_key: 'sewing' } });
+      if (sewingStage) await sewingStage.update({ status: 'IN_PROGRESS', started_at: now });
+    }
+
     res.json(task);
   } catch (err) {
     next(err);

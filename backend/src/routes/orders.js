@@ -158,6 +158,7 @@ router.post('/', async (req, res, next) => {
       quantity,
       total_quantity,
       deadline,
+      receipt_date,
       comment,
       planned_month,
       floor_id,
@@ -295,6 +296,7 @@ router.post('/', async (req, res, next) => {
           quantity: qty,
           total_quantity: qty,
           deadline,
+          receipt_date: receipt_date ? String(receipt_date).slice(0, 10) : null,
           comment: comment || null,
           planned_month: String(planned_month).trim(),
           workshop_id: effectiveWorkshopId,
@@ -417,12 +419,13 @@ router.get('/', async (req, res, next) => {
     const ordersCount = await db.Order.count();
     console.log('Orders count in DB:', ordersCount);
 
-    const { status_id, floor_id, client_id, search, page, limit } = req.query;
+    const { status_id, floor_id, client_id, workshop_id, search, page, limit } = req.query;
     const andConditions = [];
 
     if (status_id) andConditions.push({ status_id });
     if (floor_id) andConditions.push({ floor_id });
     if (client_id) andConditions.push({ client_id });
+    if (workshop_id) andConditions.push({ workshop_id: parseInt(workshop_id, 10) });
 
     // Ограничение для технолога: свой этаж или нераспределённые (floor_id = null)
     if (req.user.role === 'technologist' && req.allowedFloorId) {
@@ -461,6 +464,7 @@ router.get('/', async (req, res, next) => {
       { model: db.Client, as: 'Client', required: !!search },
       { model: db.OrderStatus, as: 'OrderStatus' },
       { model: db.Floor, as: 'Floor' },
+      { model: db.Workshop, as: 'Workshop', required: false, attributes: ['id', 'name'] },
       { model: db.BuildingFloor, as: 'BuildingFloor' },
       { model: db.Technologist, as: 'Technologist', include: [{ model: db.User, as: 'User' }] },
     ];
@@ -1365,9 +1369,11 @@ router.put('/:id', async (req, res, next) => {
       quantity,
       total_quantity,
       deadline,
+      receipt_date,
       comment,
       planned_month,
       floor_id,
+      workshop_id,
       color,
       size_in_numbers,
       size_in_letters,
@@ -1394,9 +1400,11 @@ router.put('/:id', async (req, res, next) => {
     }
     if (article !== undefined) updates.article = article ? String(article).trim() : null;
     if (deadline != null) updates.deadline = deadline;
+    if (receipt_date !== undefined) updates.receipt_date = receipt_date ? String(receipt_date).slice(0, 10) : null;
     if (comment !== undefined) updates.comment = comment ? String(comment).trim() : null;
     if (planned_month !== undefined) updates.planned_month = planned_month ? String(planned_month).trim() : null;
     if (floor_id !== undefined) updates.floor_id = floor_id ? parseInt(floor_id, 10) : null;
+    if (workshop_id !== undefined) updates.workshop_id = workshop_id ? parseInt(workshop_id, 10) : null;
     if (color !== undefined) updates.color = color ? String(color).trim() : null;
     if (size_in_numbers !== undefined) updates.size_in_numbers = size_in_numbers ? String(size_in_numbers).trim() : null;
     if (size_in_letters !== undefined) updates.size_in_letters = size_in_letters ? String(size_in_letters).trim() : null;

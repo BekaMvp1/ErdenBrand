@@ -318,25 +318,48 @@ router.post('/qc/batch', async (req, res, next) => {
       await t.rollback();
       return res.status(404).json({ error: 'Партия не найдена' });
     }
-    if (batch.status !== 'READY_FOR_QC') {
+    if (batch.status !== 'READY_FOR_QC' && batch.status !== 'QC_DONE') {
       await t.rollback();
       return res.status(400).json({ error: 'Партия должна быть в статусе «Готова к ОТК» (READY_FOR_QC)' });
     }
-    const existingQc = await db.QcBatch.findOne({ where: { batch_id: Number(batch_id) }, transaction: t });
-    if (existingQc) {
-      await t.rollback();
-      return res.status(400).json({ error: 'ОТК по этой партии уже проведён' });
-    }
 
     const batchItemsBySize = {};
+    let totalFact = 0;
     batch.SewingBatchItems.forEach((bi) => {
       const key = bi.model_size_id != null ? `m${bi.model_size_id}` : (bi.size_id != null ? `s${bi.size_id}` : `i${bi.id}`);
-      batchItemsBySize[key] = { model_size_id: bi.model_size_id, size_id: bi.size_id, planned_qty: Number(bi.planned_qty) || 0, fact_qty: Number(bi.fact_qty) || 0 };
+      const fact = Number(bi.fact_qty) || 0;
+      batchItemsBySize[key] = {
+        model_size_id: bi.model_size_id,
+        size_id: bi.size_id,
+        planned_qty: Number(bi.planned_qty) || 0,
+        fact_qty: fact,
+      };
+      totalFact += fact;
     });
 
-    let checkedTotal = 0;
-    let passedTotal = 0;
-    let defectTotal = 0;
+    // Уже проверенное количество по размерам (если ОТК проводился ранее по этой партии)
+    const existingQc = await db.QcBatch.findOne({
+      where: { batch_id: Number(batch_id) },
+      include: [{ model: db.QcBatchItem, as: 'QcBatchItems' }],
+      transaction: t,
+    });
+    const alreadyByKey = {};
+    let alreadyCheckedTotal = 0;
+    if (existingQc && existingQc.QcBatchItems) {
+      existingQc.QcBatchItems.forEach((qci) => {
+        const key =
+          qci.model_size_id != null
+            ? `m${qci.model_size_id}`
+            : (qci.size_id != null ? `s${qci.size_id}` : `i${qci.id}`);
+        const checked = Number(qci.checked_qty) || 0;
+        alreadyByKey[key] = (alreadyByKey[key] || 0) + checked;
+        alreadyCheckedTotal += checked;
+      });
+    }
+
+    let checkedTotalDelta = 0;
+    let passedTotalDelta = 0;
+    let defectTotalDelta = 0;
     const qcItems = [];
 
     const validItems = items.filter((it) => (Number(it.model_size_id) || 0) > 0 || (Number(it.size_id) || 0) > 0);
@@ -351,33 +374,75 @@ router.post('/qc/batch', async (req, res, next) => {
       const key = model_size_id ? `m${model_size_id}` : (size_id ? `s${size_id}` : null);
       const bi = key ? batchItemsBySize[key] : null;
       const factQty = bi?.fact_qty ?? 0;
+      const alreadyChecked = alreadyByKey[key] || 0;
+      const remainingFact = Math.max(0, factQty - alreadyChecked);
+      if (remainingFact <= 0) {
+        continue;
+      }
       let checked = parseInt(it.checked_qty, 10);
-      if (Number.isNaN(checked)) checked = factQty;
-      checked = Math.max(0, checked);
+      if (Number.isNaN(checked)) checked = remainingFact;
+      checked = Math.max(0, Math.min(checked, remainingFact));
       let defect = parseInt(it.defect_qty, 10);
       if (Number.isNaN(defect)) defect = 0;
       defect = Math.max(0, Math.min(defect, checked));
       const good_qty = Math.max(0, checked - defect);
-      checkedTotal += checked;
-      passedTotal += good_qty;
-      defectTotal += defect;
-      qcItems.push({ model_size_id: model_size_id || undefined, size_id: size_id || undefined, checked_qty: checked, passed_qty: good_qty, defect_qty: defect, good_qty });
+      checkedTotalDelta += checked;
+      passedTotalDelta += good_qty;
+      defectTotalDelta += defect;
+      qcItems.push({
+        model_size_id: model_size_id || undefined,
+        size_id: size_id || undefined,
+        checked_qty: checked,
+        passed_qty: good_qty,
+        defect_qty: defect,
+        good_qty,
+        key,
+      });
     }
 
-    const qcBatch = await db.QcBatch.create(
-      {
-        batch_id: Number(batch_id),
-        status: 'DONE',
-        checked_total: checkedTotal,
-        passed_total: passedTotal,
-        defect_total: defectTotal,
-      },
-      { transaction: t }
-    );
+    if (qcItems.length === 0) {
+      await t.rollback();
+      return res.status(400).json({ error: 'Нет нового количества к проверке (всё уже проверено ранее).' });
+    }
 
-    for (const it of qcItems) {
-      await db.QcBatchItem.create(
+    const totalCheckedAfter = alreadyCheckedTotal + checkedTotalDelta;
+    const isFullyChecked = totalCheckedAfter >= totalFact;
+
+    let qcBatch;
+    if (existingQc) {
+      qcBatch = existingQc;
+      await qcBatch.update(
         {
+          checked_total: Number(qcBatch.checked_total || 0) + checkedTotalDelta,
+          passed_total: Number(qcBatch.passed_total || 0) + passedTotalDelta,
+          defect_total: Number(qcBatch.defect_total || 0) + defectTotalDelta,
+          status: isFullyChecked ? 'DONE' : qcBatch.status,
+        },
+        { transaction: t }
+      );
+    } else {
+      qcBatch = await db.QcBatch.create(
+        {
+          batch_id: Number(batch_id),
+          status: isFullyChecked ? 'DONE' : 'IN_PROGRESS',
+          checked_total: checkedTotalDelta,
+          passed_total: passedTotalDelta,
+          defect_total: defectTotalDelta,
+        },
+        { transaction: t }
+      );
+    }
+
+    // Обновляем/создаём позиции по размерам и пополняем склад только на дельту
+    for (const it of qcItems) {
+      const whereItem = {
+        qc_batch_id: qcBatch.id,
+        model_size_id: it.model_size_id || null,
+        size_id: it.size_id || null,
+      };
+      const [existingItem, createdItem] = await db.QcBatchItem.findOrCreate({
+        where: whereItem,
+        defaults: {
           qc_batch_id: qcBatch.id,
           model_size_id: it.model_size_id || null,
           size_id: it.size_id || null,
@@ -385,16 +450,27 @@ router.post('/qc/batch', async (req, res, next) => {
           passed_qty: it.passed_qty,
           defect_qty: it.defect_qty,
         },
-        { transaction: t }
-      );
+        transaction: t,
+      });
+      if (!createdItem) {
+        await existingItem.update(
+          {
+            checked_qty: Number(existingItem.checked_qty || 0) + it.checked_qty,
+            passed_qty: Number(existingItem.passed_qty || 0) + it.passed_qty,
+            defect_qty: Number(existingItem.defect_qty || 0) + it.defect_qty,
+          },
+          { transaction: t }
+        );
+      }
+
       const warehouse_qty = it.good_qty ?? it.passed_qty ?? 0;
       if (warehouse_qty > 0 && ((it.model_size_id && it.model_size_id > 0) || (it.size_id && it.size_id > 0))) {
         const batchCode = batch.batch_code || `batch-${batch_id}`;
-        const where = it.model_size_id
+        const whereStock = it.model_size_id
           ? { batch_id: Number(batch_id), model_size_id: it.model_size_id }
           : { batch_id: Number(batch_id), size_id: it.size_id };
-        const [stockRow, created] = await db.WarehouseStock.findOrCreate({
-          where,
+        const [stockRow, createdStock] = await db.WarehouseStock.findOrCreate({
+          where: whereStock,
           defaults: {
             order_id: batch.order_id,
             model_size_id: it.model_size_id || null,
@@ -405,21 +481,23 @@ router.post('/qc/batch', async (req, res, next) => {
           },
           transaction: t,
         });
-        if (!created) {
+        if (!createdStock) {
           await stockRow.increment('qty', { by: warehouse_qty, transaction: t });
         }
       }
     }
 
-    // Партия переходит в статус ОТК проведён
-    await batch.update({ status: 'QC_DONE' }, { transaction: t });
+    // Партия переходит в статус ОТК проведён только когда всё проверено
+    if (isFullyChecked) {
+      await batch.update({ status: 'QC_DONE' }, { transaction: t });
 
-    // Цепочка: ОТК DONE → Склад IN_PROGRESS
-    const now = new Date();
-    const qcStage = await db.OrderStage.findOne({ where: { order_id: batch.order_id, stage_key: 'qc' }, transaction: t });
-    if (qcStage) await qcStage.update({ status: 'DONE', completed_at: now }, { transaction: t });
-    const whStage = await db.OrderStage.findOne({ where: { order_id: batch.order_id, stage_key: 'warehouse' }, transaction: t });
-    if (whStage) await whStage.update({ status: 'IN_PROGRESS', started_at: now }, { transaction: t });
+      // Цепочка: ОТК DONE → Склад IN_PROGRESS
+      const now = new Date();
+      const qcStage = await db.OrderStage.findOne({ where: { order_id: batch.order_id, stage_key: 'qc' }, transaction: t });
+      if (qcStage) await qcStage.update({ status: 'DONE', completed_at: now }, { transaction: t });
+      const whStage = await db.OrderStage.findOne({ where: { order_id: batch.order_id, stage_key: 'warehouse' }, transaction: t });
+      if (whStage) await whStage.update({ status: 'IN_PROGRESS', started_at: now }, { transaction: t });
+    }
 
     await t.commit();
 

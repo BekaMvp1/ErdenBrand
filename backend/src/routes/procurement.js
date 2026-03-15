@@ -271,6 +271,13 @@ router.put('/:id/complete', async (req, res, next) => {
       }
     }
 
+    // Цепочка этапов: закуп DONE → планирование IN_PROGRESS (чтобы на панели заказов отображалось «Закуп ✓»)
+    const now = new Date();
+    const procStage = await db.OrderStage.findOne({ where: { order_id: pr.order_id, stage_key: 'procurement' }, transaction: t });
+    if (procStage) await procStage.update({ status: 'DONE', completed_at: now }, { transaction: t });
+    const planStage = await db.OrderStage.findOne({ where: { order_id: pr.order_id, stage_key: 'planning' }, transaction: t });
+    if (planStage) await planStage.update({ status: 'IN_PROGRESS', started_at: now }, { transaction: t });
+
     const { logAudit } = require('../utils/audit');
     await logAudit(req.user.id, 'UPDATE', 'procurement_request', pr.id);
 

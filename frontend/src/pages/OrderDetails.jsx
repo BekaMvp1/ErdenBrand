@@ -14,6 +14,8 @@ import { usePrintHeader } from '../context/PrintContext';
 import { CompleteByFactModal, buildBatchPivot, buildTotalsPivot } from './Cutting';
 import ProcurementViewModal from '../components/procurement/ProcurementViewModal';
 import ProcurementPlanModal from '../components/procurement/ProcurementPlanModal';
+import { useGridNavigation } from '../hooks/useGridNavigation';
+import { numInputValue } from '../utils/numInput';
 
 const LETTER_SIZES = ['S', 'M', 'L', 'XL', 'XXL', '3XL', '4XL', '5XL'];
 const NUMERIC_SIZES = ['38', '40', '42', '44', '46', '48', '50', '52', '54', '56'];
@@ -74,7 +76,7 @@ export default function OrderDetails() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [clients, setClients] = useState([]);
-  const [floors, setFloors] = useState([]);
+  const [workshops, setWorkshops] = useState([]);
   const [statuses, setStatuses] = useState([]);
   const [editForm, setEditForm] = useState({});
   const [editSelectedSizes, setEditSelectedSizes] = useState([]);
@@ -154,7 +156,7 @@ export default function OrderDetails() {
   useEffect(() => {
     if (showEditModal) {
       api.references.clients().then(setClients);
-      api.references.floors().then(setFloors);
+      api.workshops.list().then(setWorkshops).catch(() => setWorkshops([]));
       api.references.orderStatus().then(setStatuses);
     }
   }, [showEditModal]);
@@ -202,9 +204,10 @@ export default function OrderDetails() {
         model_name: order.model_name || fallbackModel,
         total_quantity: String(order.total_quantity ?? order.quantity ?? ''),
         deadline: order.deadline,
+        receipt_date: order.receipt_date || '',
         comment: order.comment || '',
         planned_month: order.planned_month || '',
-        floor_id: order.floor_id || '',
+        workshop_id: order.workshop_id ?? '',
         status_id: order.status_id,
         order_height_type: order.order_height_type === 'CUSTOM' ? 'CUSTOM' : 'PRESET',
         order_height_value: order.order_height_value ?? 170,
@@ -328,6 +331,7 @@ export default function OrderDetails() {
   const editTotalQty = parseInt(editForm.total_quantity, 10) || 0;
   const editMatrixSum = Object.values(editMatrix).reduce((a, b) => a + (parseInt(b, 10) || 0), 0);
   const editVariantsValid = editTotalQty > 0 && editSelectedSizes.length > 0 && editColors.length > 0 && editMatrixSum === editTotalQty;
+  const { registerRef: registerEditRef, handleKeyDown: handleEditKeyDown } = useGridNavigation(editColors.length, editSelectedSizes.length);
 
   /** Распределить итог по строке на размеры (равномерно) */
   const editDistributeRowTotal = (color, totalStr) => {
@@ -369,9 +373,10 @@ export default function OrderDetails() {
         title: `${editForm.tz_code?.trim() || ''} — ${editForm.model_name?.trim() || ''}`.trim(),
         total_quantity: editTotalQty,
         deadline: editForm.deadline,
+        receipt_date: editForm.receipt_date ? String(editForm.receipt_date).slice(0, 10) : undefined,
         comment: editForm.comment?.trim() || undefined,
         planned_month: editForm.planned_month?.trim() || undefined,
-        floor_id: editForm.floor_id ? parseInt(editForm.floor_id, 10) : undefined,
+        workshop_id: editForm.workshop_id ? parseInt(editForm.workshop_id, 10) : undefined,
         sizes: editSelectedSizes,
         variants,
         order_height_type: editForm.order_height_type === 'CUSTOM' ? 'CUSTOM' : 'PRESET',
@@ -649,6 +654,10 @@ export default function OrderDetails() {
                     </td>
                   </tr>
                   <tr className="border-b border-white/15 dark:border-white/15">
+                    <td className="px-0 sm:px-4 py-2 sm:py-3 text-[#ECECEC]/80 dark:text-dark-text/80">Дата поступления заказа</td>
+                    <td className="px-0 sm:px-4 py-2 sm:py-3 text-[#ECECEC] dark:text-dark-text whitespace-nowrap">{order.receipt_date || '—'}</td>
+                  </tr>
+                  <tr className="border-b border-white/15 dark:border-white/15">
                     <td className="px-0 sm:px-4 py-2 sm:py-3 text-[#ECECEC]/80 dark:text-dark-text/80">Дедлайн</td>
                     <td className="px-0 sm:px-4 py-2 sm:py-3 text-[#ECECEC] dark:text-dark-text whitespace-nowrap">{order.deadline}</td>
                   </tr>
@@ -674,7 +683,7 @@ export default function OrderDetails() {
                   )}
                   <tr className="border-b border-white/15 dark:border-white/15">
                     <td className="px-0 sm:px-4 py-2 sm:py-3 text-[#ECECEC]/80 dark:text-dark-text/80">Цех пошива</td>
-                    <td className="px-0 sm:px-4 py-2 sm:py-3 text-[#ECECEC] dark:text-dark-text">{order.Floor?.name || '—'}</td>
+                    <td className="px-0 sm:px-4 py-2 sm:py-3 text-[#ECECEC] dark:text-dark-text">{order.Workshop?.name || order.Floor?.name || '—'}</td>
                   </tr>
                   <tr className="border-b border-white/15 dark:border-white/15">
                     <td className="px-0 sm:px-4 py-2 sm:py-3 text-[#ECECEC]/80 dark:text-dark-text/80">Рост</td>
@@ -1059,62 +1068,49 @@ export default function OrderDetails() {
                             style={{ gridTemplateRows: isExpanded ? '1fr' : '0fr' }}
                           >
                             <div className="min-h-0 overflow-hidden">
-                              <div className="px-4 py-2 space-y-4">
-                                <div>
-                                  <p className="text-xs text-[#ECECEC]/60 dark:text-dark-text/60 mb-1">Раскрой по партиям</p>
-                                  <table className="w-full text-sm border border-white/15 dark:border-white/15 rounded overflow-hidden max-w-[560px]">
-                                    <thead>
-                                      <tr className="bg-accent-2/50 dark:bg-dark-800">
-                                        <th className="text-left px-4 py-1.5 font-medium">Цвет</th>
-                                        {batchPivot.sizes.map((s) => (
-                                          <th key={s} className="text-center px-2 py-1.5 font-medium">{s}</th>
-                                        ))}
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {batchPivot.rows.length === 0 ? (
-                                        <tr><td colSpan={batchPivot.sizes.length + 1} className="px-4 py-1.5 text-[#ECECEC]/60">Нет данных</td></tr>
-                                      ) : batchPivot.rows.map((r) => (
-                                        <tr key={r.color} className="border-t border-white/10">
-                                          <td className="px-4 py-1">{r.color}</td>
-                                          {batchPivot.sizes.map((size) => (
-                                            <td key={size} className="px-2 py-1 text-center">{r.bySize[size] ?? '—'}</td>
-                                          ))}
-                                        </tr>
+                              <div className="px-4 py-2">
+                                <p className="text-xs text-[#ECECEC]/60 dark:text-dark-text/60 mb-1">Итог по цветам</p>
+                                <table className="w-full text-sm border border-white/15 dark:border-white/15 rounded overflow-hidden max-w-[560px]">
+                                  <thead>
+                                    <tr className="bg-accent-2/50 dark:bg-dark-800">
+                                      <th className="text-left px-4 py-1.5 font-medium">Цвет</th>
+                                      {batchPivot.sizes.map((s) => (
+                                        <th key={s} className="text-center px-2 py-1.5 font-medium">{s}</th>
                                       ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                                <div>
-                                  <p className="text-xs text-[#ECECEC]/60 dark:text-dark-text/60 mb-1">Итог по цветам</p>
-                                  <table className="w-full text-sm border border-white/15 dark:border-white/15 rounded overflow-hidden max-w-[560px]">
-                                    <thead>
-                                      <tr className="bg-accent-2/50 dark:bg-dark-800">
-                                        <th className="text-left px-4 py-1.5 font-medium">Цвет</th>
-                                        {batchPivot.sizes.map((s) => (
-                                          <th key={s} className="text-center px-2 py-1.5 font-medium">{s}</th>
-                                        ))}
-                                        <th className="text-right px-4 py-1.5 font-medium">Итого</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {batchPivot.rows.length === 0 ? (
-                                        <tr><td colSpan={batchPivot.sizes.length + 2} className="px-4 py-1.5 text-[#ECECEC]/60">Нет данных</td></tr>
-                                      ) : batchPivot.rows.map((r) => {
-                                        const total = Object.values(r.bySize).reduce((a, b) => a + b, 0);
-                                        return (
-                                          <tr key={r.color} className="border-t border-white/10">
-                                            <td className="px-4 py-1">{r.color}</td>
-                                            {batchPivot.sizes.map((size) => (
-                                              <td key={size} className="px-2 py-1 text-center">{r.bySize[size] ?? 0}</td>
-                                            ))}
-                                            <td className="px-4 py-1 text-right font-medium">{total}</td>
-                                          </tr>
-                                        );
-                                      })}
-                                    </tbody>
-                                  </table>
-                                </div>
+                                      <th className="text-right px-4 py-1.5 font-medium">Итого</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {batchPivot.rows.length === 0 ? (
+                                      <tr><td colSpan={batchPivot.sizes.length + 2} className="px-4 py-1.5 text-[#ECECEC]/60">Нет данных</td></tr>
+                                    ) : (
+                                      <>
+                                        {batchPivot.rows.map((r) => {
+                                          const total = Object.values(r.bySize).reduce((a, b) => a + b, 0);
+                                          return (
+                                            <tr key={r.color} className="border-t border-white/10">
+                                              <td className="px-4 py-1">{r.color}</td>
+                                              {batchPivot.sizes.map((size) => (
+                                                <td key={size} className="px-2 py-1 text-center">{r.bySize[size] ?? 0}</td>
+                                              ))}
+                                              <td className="px-4 py-1 text-right font-medium">{total}</td>
+                                            </tr>
+                                          );
+                                        })}
+                                        <tr className="border-t-2 border-white/20 bg-accent-2/30 dark:bg-dark-800 font-semibold">
+                                          <td className="px-4 py-1.5">Итого по размерам</td>
+                                          {batchPivot.sizes.map((s) => {
+                                            const colSum = batchPivot.rows.reduce((acc, r) => acc + (r.bySize[s] ?? 0), 0);
+                                            return <td key={s} className="px-2 py-1.5 text-center">{colSum}</td>;
+                                          })}
+                                          <td className="px-4 py-1.5 text-right">
+                                            {batchPivot.rows.reduce((acc, r) => acc + Object.values(r.bySize).reduce((a, b) => a + b, 0), 0)}
+                                          </td>
+                                        </tr>
+                                      </>
+                                    )}
+                                  </tbody>
+                                </table>
                               </div>
                             </div>
                           </div>
@@ -1342,7 +1338,8 @@ export default function OrderDetails() {
                           <input
                             type="number"
                             min="0"
-                            value={displayVal}
+                            placeholder="0"
+                            value={numInputValue(displayVal)}
                             onChange={(e) => handleActualChange(op.id, e.target.value)}
                             className="w-20 px-2 py-1 rounded bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text text-sm"
                           />
@@ -1489,10 +1486,20 @@ export default function OrderDetails() {
                   <input
                     type="number"
                     min="1"
-                    value={editForm.total_quantity}
+                    placeholder="0"
+                    value={numInputValue(editForm.total_quantity)}
                     onChange={(e) => setEditForm({ ...editForm, total_quantity: e.target.value })}
                     className="w-full px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
                     required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-[#ECECEC] dark:text-dark-text/90 mb-1">Дата поступления заказа</label>
+                  <input
+                    type="date"
+                    value={editForm.receipt_date || ''}
+                    onChange={(e) => setEditForm({ ...editForm, receipt_date: e.target.value })}
+                    className="w-full px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
                   />
                 </div>
                 <div>
@@ -1517,13 +1524,13 @@ export default function OrderDetails() {
                 <div>
                   <label className="block text-sm text-[#ECECEC] dark:text-dark-text/90 mb-1">Цех пошива</label>
                   <select
-                    value={editForm.floor_id}
-                    onChange={(e) => setEditForm({ ...editForm, floor_id: e.target.value })}
+                    value={editForm.workshop_id ?? ''}
+                    onChange={(e) => setEditForm({ ...editForm, workshop_id: e.target.value })}
                     className="w-full px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
                   >
                     <option value="">—</option>
-                    {floors.map((f) => (
-                      <option key={f.id} value={f.id}>{f.name}</option>
+                    {workshops.map((w) => (
+                      <option key={w.id} value={w.id}>{w.name}</option>
                     ))}
                   </select>
                 </div>
@@ -1697,18 +1704,21 @@ export default function OrderDetails() {
                         </tr>
                       </thead>
                       <tbody>
-                        {editColors.map((color) => {
+                        {editColors.map((color, ci) => {
                           const rowSum = editSelectedSizes.reduce((a, s) => a + (parseInt(editGetCell(color, s), 10) || 0), 0);
                           return (
                             <tr key={color} className="border-b border-white/15 dark:border-white/15">
                               <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">{color}</td>
-                              {editSelectedSizes.map((size) => (
+                              {editSelectedSizes.map((size, si) => (
                                 <td key={size} className="px-2 py-2 text-center w-20">
                                   <input
+                                    ref={registerEditRef(ci, si)}
                                     type="number"
                                     min="0"
-                                    value={editGetCell(color, size)}
+                                    placeholder="0"
+                                    value={numInputValue(editGetCell(color, size))}
                                     onChange={(e) => editSetCell(color, size, e.target.value)}
+                                    onKeyDown={handleEditKeyDown(ci, si)}
                                     className="w-16 min-w-16 mx-auto block px-2 py-1 rounded bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text text-center text-sm box-border"
                                   />
                                 </td>

@@ -77,6 +77,7 @@ const db = {
   SewingPlan: require('./SewingPlan')(sequelize, Sequelize.DataTypes),
   SewingPlanRow: require('./SewingPlanRow')(sequelize, Sequelize.DataTypes),
   SewingFact: require('./SewingFact')(sequelize, Sequelize.DataTypes),
+  SewingFactMatrix: require('./SewingFactMatrix')(sequelize, Sequelize.DataTypes),
   SewingBatch: require('./SewingBatch')(sequelize, Sequelize.DataTypes),
   SewingBatchItem: require('./SewingBatchItem')(sequelize, Sequelize.DataTypes),
   SewingOrderFloor: require('./SewingOrderFloor')(sequelize, Sequelize.DataTypes),

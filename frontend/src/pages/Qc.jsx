@@ -37,6 +37,7 @@ export default function Qc() {
   const [loading, setLoading] = useState(true);
   const [modalBatch, setModalBatch] = useState(null);
   const [formItems, setFormItems] = useState([]);
+  const [completedColors, setCompletedColors] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -106,6 +107,7 @@ export default function Qc() {
   const setModalFromBatch = useCallback((batch) => {
     setError('');
     setModalBatch(batch);
+    setCompletedColors([]);
     const variants = batch.Order?.OrderVariants || [];
     const batchItems = batch.SewingBatchItems || [];
 
@@ -158,8 +160,9 @@ export default function Qc() {
           size_id: meta?.size_id,
           checked_qty: checkedQty,
           passed_qty: 0,
-                  defect_qty: 0,
-                  touched: false,
+          defect_qty: 0,
+          touched: false,
+          submitted: false,
         });
       }
     }
@@ -276,9 +279,12 @@ export default function Qc() {
     setError('');
     try {
       const bySize = {};
+      const touchedColorsSet = new Set();
       for (const it of formItems) {
+        if (it.submitted) continue;
         const isTouched = it.touched || (it.passed_qty > 0 || it.defect_qty > 0);
         if (!isTouched) continue;
+        touchedColorsSet.add(it.color);
         const key = it.model_size_id ? `m${it.model_size_id}` : (it.size_id ? `s${it.size_id}` : null);
         if (!key) continue;
         if (!bySize[key]) {
@@ -312,9 +318,18 @@ export default function Qc() {
           defect_qty: it.defect_qty,
         })),
       });
-      setModalBatch(null);
+
+      const touchedColors = Array.from(touchedColorsSet);
+      setCompletedColors((prev) => Array.from(new Set([...prev, ...touchedColors])));
+      setFormItems((prev) =>
+        prev.map((it) =>
+          touchedColors.includes(it.color)
+            ? { ...it, submitted: true, touched: false }
+            : it
+        )
+      );
       loadPending();
-      setSuccessMsg('ОТК проведён. Принятое количество поступило на склад.');
+      setSuccessMsg('ОТК сохранён. Принятое количество поступило на склад.');
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch (err) {
       setError(err.error || err.message || 'Ошибка сохранения');
@@ -520,9 +535,14 @@ export default function Qc() {
                       </tbody>
                     </table>
                   ) : (
-                    colors.map((color) => (
-                      <div key={color} className="mb-4 last:mb-0">
-                        <p className="text-sm font-medium text-neon-text mb-2">Цвет: {color}</p>
+                    colors.map((color) => {
+                      const isCompleted = completedColors.includes(color);
+                      return (
+                      <div key={color} className={`mb-4 last:mb-0 ${isCompleted ? 'opacity-80' : ''}`}>
+                        <p className="text-sm font-medium text-neon-text mb-2">
+                          Цвет: {color}{' '}
+                          {isCompleted && <span className="text-green-400 text-xs align-middle">✓ на склад</span>}
+                        </p>
                         <table className="w-full text-sm border-collapse">
                           <thead>
                             <tr className="border-b border-white/25">
@@ -538,7 +558,7 @@ export default function Qc() {
                               if (!it) return null;
                               return (
                                 <tr key={it.rowKey} className="border-b border-white/10">
-                                  <td className="py-2 px-3 text-neon-text">{sizeName}</td>
+                                   <td className="py-2 px-3 text-neon-text">{sizeName}</td>
                                   <td className="py-2 px-3 text-right">
                                     <input
                                       type="number"
@@ -577,7 +597,8 @@ export default function Qc() {
                           </tbody>
                         </table>
                       </div>
-                    ))
+                    );
+                    })
                   )}
                 </div>
                 </div>

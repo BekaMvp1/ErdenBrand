@@ -104,6 +104,7 @@ export default function Sewing() {
       const data = await api.sewing.matrix({ order_id, floor_id });
       setMatrixData(data);
       if (!preserveInputs) {
+        const sewnByColorSize = data.sewnByColorSize || {};
         let init = matrixInputsCacheRef.current[cacheKey];
         if (!init) {
           try {
@@ -118,7 +119,10 @@ export default function Sewing() {
         (data.colors || []).forEach((color) => {
           (data.sizes || []).forEach((size) => {
             const k = `${color}|${size}`;
-            if (init[k] === undefined) init[k] = '';
+            if (init[k] === undefined) {
+              const saved = sewnByColorSize[k];
+              init[k] = saved !== undefined && saved !== null && Number(saved) >= 0 ? String(saved) : '';
+            }
           });
         });
         setMatrixInputs(init);
@@ -492,8 +496,9 @@ export default function Sewing() {
                                   <span><strong>Остаток:</strong> {available}</span>
                                 </div>
                                 {matrixData && hasMatrix ? (
-                                  <div className="overflow-x-auto mb-3">
-                                    <table className="w-full text-sm border-collapse max-w-[560px]">
+                                  <div className="flex flex-wrap gap-6 items-start mb-3">
+                                  <div className="overflow-x-auto w-full md:w-1/2">
+                                    <table className="w-full text-sm border-collapse">
                                       <thead>
                                         <tr className="border-b border-white/20">
                                           <th className="text-left px-2 py-2 text-white/80 font-medium">Цвет</th>
@@ -535,9 +540,46 @@ export default function Sewing() {
                                         </tr>
                                       </tbody>
                                     </table>
-                                    {grandTotal > available && (
-                                      <p className="text-red-400 text-xs mt-1">Превышено количество раскроя.</p>
-                                    )}
+                                  </div>
+                                  <div className="shrink-0 rounded-lg bg-blue-900/30 border border-blue-500/30 overflow-hidden w-full md:w-1/2">
+                                    <p className="px-3 py-2 text-sm font-medium text-white/90 border-b border-blue-500/30 bg-blue-900/40">Итог по цветам (раскрой)</p>
+                                    <table className="w-full text-sm border-collapse min-w-[200px]">
+                                      <thead>
+                                        <tr className="border-b border-white/20 bg-white/5">
+                                          <th className="text-left px-3 py-2 text-white/80 font-medium">Цвет</th>
+                                          {sizes.map((s) => (
+                                            <th key={s} className="text-center px-2 py-2 text-white/80 font-medium">{s}</th>
+                                          ))}
+                                          <th className="text-right px-3 py-2 text-white/80 font-medium">Итого</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {colors.map((color) => {
+                                          let rowSum = 0;
+                                          sizes.forEach((size) => { rowSum += Number(cutByColorSize[`${color}|${size}`]) || 0; });
+                                          return (
+                                            <tr key={color} className="border-b border-white/10">
+                                              <td className="px-3 py-1.5 text-white/90">{color}</td>
+                                              {sizes.map((size) => {
+                                                const v = Number(cutByColorSize[`${color}|${size}`]) || 0;
+                                                return <td key={size} className="px-2 py-1.5 text-center text-white/90">{v}</td>;
+                                              })}
+                                              <td className="px-3 py-1.5 text-right font-medium text-white">{rowSum}</td>
+                                            </tr>
+                                          );
+                                        })}
+                                        <tr className="border-t-2 border-white/20 bg-white/5 font-semibold">
+                                          <td className="px-3 py-2 text-white/90">Итого по размерам</td>
+                                          {sizes.map((s) => {
+                                            let colSum = 0;
+                                            colors.forEach((color) => { colSum += Number(cutByColorSize[`${color}|${s}`]) || 0; });
+                                            return <td key={s} className="px-2 py-2 text-center text-white">{colSum}</td>;
+                                          })}
+                                          <td className="px-3 py-2 text-right text-white">{cutTotal}</td>
+                                        </tr>
+                                      </tbody>
+                                    </table>
+                                  </div>
                                   </div>
                                 ) : (
                                   <div className="mb-3 max-w-[200px]">
@@ -545,7 +587,6 @@ export default function Sewing() {
                                     <input
                                       type="number"
                                       min={0}
-                                      max={available}
                                       placeholder="0"
                                       value={factInput}
                                       onChange={(e) => {
@@ -565,16 +606,13 @@ export default function Sewing() {
                                       onClick={(e) => e.stopPropagation()}
                                       className="w-full px-3 py-2.5 rounded-lg bg-white/10 border border-white/30 text-white text-base placeholder-white/40 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                                     />
-                                    {simpleInputQty > available && (
-                                      <p className="text-red-400 text-xs mt-1">Превышено ({available})</p>
-                                    )}
                                   </div>
                                 )}
                                 <div className="flex gap-2 flex-wrap">
                                   <button
                                     type="button"
                                     onClick={(e) => { e.stopPropagation(); handleSave(); }}
-                                    disabled={saving || (hasMatrix ? (grandTotal <= 0 || grandTotal > available) : (simpleInputQty <= 0 || simpleInputQty > available))}
+                                    disabled={saving || (hasMatrix ? grandTotal <= 0 : simpleInputQty <= 0)}
                                     className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-50"
                                   >
                                     {saving ? '...' : 'Сохранить'}
@@ -582,7 +620,7 @@ export default function Sewing() {
                                   <button
                                     type="button"
                                     onClick={(e) => { e.stopPropagation(); handleComplete(); }}
-                                    disabled={completing || (sewn <= 0 && (hasMatrix ? (grandTotal <= 0 || grandTotal > available) : (simpleInputQty <= 0 || simpleInputQty > available)))}
+                                    disabled={completing || (sewn <= 0 && (hasMatrix ? grandTotal <= 0 : simpleInputQty <= 0))}
                                     className="px-4 py-2 rounded-lg bg-green-600 text-white text-sm hover:bg-green-700 disabled:opacity-50"
                                   >
                                     {completing ? '...' : 'Завершить → ОТК'}

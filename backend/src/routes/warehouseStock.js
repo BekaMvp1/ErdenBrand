@@ -742,7 +742,16 @@ router.get('/shipments', async (req, res, next) => {
       where,
       include: [
         { model: db.ModelSize, as: 'ModelSize', include: [{ model: db.Size, as: 'Size' }], required: false },
-        { model: db.Order, as: 'Order', attributes: ['id', 'title', 'model_name', 'tz_code', 'total_quantity', 'quantity', 'photos'], include: [{ model: db.Client, as: 'Client', attributes: ['name'] }], required: false },
+        {
+          model: db.Order,
+          as: 'Order',
+          attributes: ['id', 'title', 'model_name', 'tz_code', 'total_quantity', 'quantity', 'photos'],
+          include: [
+            { model: db.Client, as: 'Client', attributes: ['name'] },
+            { model: db.Workshop, as: 'Workshop', attributes: ['name'] },
+          ],
+          required: false,
+        },
         { model: db.SewingBatch, as: 'SewingBatch', attributes: ['id', 'batch_code', 'order_id'], required: false },
         {
           model: db.ShipmentItem,

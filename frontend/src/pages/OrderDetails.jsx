@@ -1036,13 +1036,16 @@ export default function OrderDetails() {
                                 {task.status === 'Готово' ? 'Редактировать по факту' : 'Завершить по факту'}
                               </button>
                             ) : !isExpanded ? (
-                              <div className="text-sm text-[#ECECEC]/90 dark:text-dark-text/90">
-                                <span>План: {planTotal}</span>
+                              <div className="text-sm text-[#ECECEC]/90 dark:text-dark-text/90 flex flex-col gap-0.5">
+                                <div className="flex items-baseline gap-2">
+                                  <span className="shrink-0 w-10">План:</span>
+                                  <span className="tabular-nums">{planTotal}</span>
+                                </div>
                                 {task.status === 'Готово' && (
-                                  <>
-                                    <span className="mx-2">|</span>
-                                    <span>Факт: {totalQty}</span>
-                                  </>
+                                  <div className="flex items-baseline gap-2">
+                                    <span className="shrink-0 w-10">Факт:</span>
+                                    <span className="tabular-nums">{totalQty}</span>
+                                  </div>
                                 )}
                               </div>
                             ) : !canEditCutting && task.status === 'Готово' ? (

@@ -449,17 +449,17 @@ export default function Cutting() {
 
       {/* Заказы цеха — только те, что ещё не добавлены в раскрой; после добавления строка исчезает */}
       <div className="no-print mb-6 rounded-xl border border-white/25 dark:border-white/25 overflow-hidden overflow-x-auto">
-        <h2 className="text-sm font-medium text-[#ECECEC]/80 dark:text-dark-text/80 mb-2 px-1">Заказы цеха «{activeType}» (ещё не в раскрое)</h2>
+        <h2 className="text-sm font-medium text-[#ECECEC]/80 dark:text-dark-text/80 mb-2 px-1">Заказы цеха «{activeType}»</h2>
         {ordersLoading ? (
           <div className="p-6 text-[#ECECEC]/60 dark:text-dark-text/60">Загрузка заказов...</div>
         ) : (() => {
           const orderIdsInCutting = new Set((tasks || []).map((t) => t.order_id));
           const ordersNotInCutting = orders.filter((o) => !orderIdsInCutting.has(o.id));
           if (orders.length === 0) {
-            return <div className="p-6 text-[#ECECEC]/60 dark:text-dark-text/60">Нет заказов по цеху «{activeType}»</div>;
+            return null;
           }
           if (ordersNotInCutting.length === 0) {
-            return <div className="p-6 text-[#ECECEC]/60 dark:text-dark-text/60">Все заказы цеха уже добавлены в раскрой</div>;
+            return null;
           }
           return (
           <table className="w-full min-w-[720px]">
@@ -738,13 +738,16 @@ export default function Cutting() {
                             {task.status === 'Готово' ? 'Редактировать по факту' : 'Завершить по факту'}
                           </button>
                         ) : (
-                          <div className="text-sm text-[#ECECEC]/90 dark:text-dark-text/90">
-                            <span>План: {planTotal}</span>
+                          <div className="text-sm text-[#ECECEC]/90 dark:text-dark-text/90 flex flex-col gap-0.5">
+                            <div className="flex items-baseline gap-2">
+                              <span className="shrink-0 w-10">План:</span>
+                              <span className="tabular-nums">{planTotal}</span>
+                            </div>
                             {task.status === 'Готово' && (
-                              <>
-                                <span className="mx-2">|</span>
-                                <span>Факт: {totalQty}</span>
-                              </>
+                              <div className="flex items-baseline gap-2">
+                                <span className="shrink-0 w-10">Факт:</span>
+                                <span className="tabular-nums">{totalQty}</span>
+                              </div>
                             )}
                           </div>
                         )

@@ -207,7 +207,34 @@ router.get('/matrix', async (req, res, next) => {
       raw: true,
     });
     const sewn = factRows.reduce((s, r) => s + (Number(r.fact_qty) || 0), 0);
+
+    const matrixRows = await db.SewingFactMatrix.findAll({
+      where: { order_id, floor_id },
+      attributes: ['color', 'size', 'fact_qty'],
+      raw: true,
+    });
+    let sewnByColorSize = {};
+    matrixRows.forEach((r) => {
+      const color = String(r.color || '').trim() || '—';
+      const size = String(r.size || '').trim() || '—';
+      const key = `${color}|${size}`;
+      sewnByColorSize[key] = (sewnByColorSize[key] || 0) + (Number(r.fact_qty) || 0);
+    });
     const cut_total = Object.values(cutByColorSize).reduce((s, q) => s + q, 0);
+    if (sewn > 0 && cut_total > 0 && Object.keys(sewnByColorSize).length === 0) {
+      colors.forEach((color) => {
+        sizes.forEach((size) => {
+          const key = `${color}|${size}`;
+          const cut = cutByColorSize[key] || 0;
+          sewnByColorSize[key] = Math.round((sewn * cut) / cut_total);
+        });
+      });
+      const roundedSum = Object.values(sewnByColorSize).reduce((a, b) => a + b, 0);
+      if (roundedSum !== sewn && colors.length > 0 && sizes.length > 0) {
+        const firstKey = `${colors[0]}|${sizes[0]}`;
+        sewnByColorSize[firstKey] = (sewnByColorSize[firstKey] || 0) + (sewn - roundedSum);
+      }
+    }
     const available = Math.max(0, cut_total - sewn);
 
     res.json({
@@ -217,6 +244,7 @@ router.get('/matrix', async (req, res, next) => {
       cut_total,
       sewn,
       available,
+      sewnByColorSize,
     });
   } catch (err) {
     next(err);
@@ -278,6 +306,22 @@ router.put('/fact-matrix', async (req, res, next) => {
       },
       { conflictFields: ['order_id', 'floor_id', 'date'] }
     );
+
+    await db.SewingFactMatrix.destroy({ where: { order_id: Number(order_id), floor_id: effectiveFloorId } });
+    if (Array.isArray(items) && items.length > 0) {
+      const toInsert = items
+        .map((i) => ({
+          order_id: Number(order_id),
+          floor_id: effectiveFloorId,
+          color: String(i.color || '').trim() || '—',
+          size: String(i.size || '').trim() || '—',
+          fact_qty: Math.max(0, parseInt(i.fact_qty, 10) || 0),
+        }))
+        .filter((i) => i.fact_qty > 0);
+      if (toInsert.length > 0) {
+        await db.SewingFactMatrix.bulkCreate(toInsert);
+      }
+    }
 
     res.json({ ok: true, new_sewn: newSewn, new_available: Math.max(0, cutTotal - newSewn) });
   } catch (err) {

@@ -396,6 +396,8 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ warehouse_stock_id: warehouseStockId, qty }),
       }),
+    completeShipment: (id) =>
+      request(`/api/warehouse-stock/shipments/${id}/complete`, { method: 'POST' }),
   },
   // sewing-plans отключён; партии создаются только через Пошив → «Завершить пошив → ОТК»
   sewingPlans: {

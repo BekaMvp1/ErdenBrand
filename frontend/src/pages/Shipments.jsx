@@ -28,6 +28,7 @@ export default function Shipments() {
   const [formItems, setFormItems] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [completingId, setCompletingId] = useState(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -56,11 +57,28 @@ export default function Shipments() {
     load();
   }, [load]);
 
+  const handleCompleteShipment = useCallback(async (shipmentId) => {
+    setCompletingId(shipmentId);
+    setError('');
+    try {
+      await api.warehouseStock.completeShipment(shipmentId);
+      await load();
+    } catch (err) {
+      setError(err.message || err.error || 'Ошибка завершения отгрузки');
+    } finally {
+      setCompletingId(null);
+    }
+  }, [load]);
+
   const modelName = (row) =>
     row.Order?.model_name || row.Order?.title || `#${row.order_id}`;
   const sizeName = (row) =>
     row.size_name ?? row.ModelSize?.Size?.name ?? row.Size?.name ?? (row.model_size_id ? `#${row.model_size_id}` : '—');
   const batchCode = (row) => row.batch_code ?? row.batch ?? '—';
+  const formatQty = (val) => {
+    const n = Number(val);
+    return Number.isFinite(n) ? String(Math.round(n)) : '0';
+  };
 
   // Группировка остатков по партии (batch_id или batch для легаси)
   const stockByBatch = () => {
@@ -82,6 +100,7 @@ export default function Shipments() {
   };
 
   const orderLabel = (row) => modelName(row) || `#${row.order_id}`;
+  const workshopName = (row) => row.Order?.Workshop?.name || '';
   const tzCode = (row) => row.Order?.tz_code || '';
   const plannedQty = (row) => row.Order?.total_quantity ?? row.Order?.quantity ?? 0;
 
@@ -320,7 +339,12 @@ export default function Shipments() {
               <div key={order_id} className="p-4 first:pt-4">
                 <div className="flex items-center gap-3 mb-3 pb-2 border-b border-white/20">
                   <ModelPhoto photo={photo} modelName={tz ? `${tz} — ${label}` : label} size={64} />
-                  {plan > 0 && <span className="text-neon-muted font-normal">План: {plan}</span>}
+                  <div className="flex flex-col text-xs text-neon-muted">
+                    {plan > 0 && <span>План: {plan}</span>}
+                    {rows?.[0]?.Order?.Workshop?.name && (
+                      <span>Цех: {rows[0].Order.Workshop.name}</span>
+                    )}
+                  </div>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[480px]">
@@ -328,14 +352,16 @@ export default function Shipments() {
                       <tr className="bg-accent-3/80 border-b border-white/25">
                         <th className="text-left px-4 py-2 text-sm font-medium text-neon-text">Дата</th>
                         <th className="text-left px-4 py-2 text-sm font-medium text-neon-text">Партия</th>
-                        <th className="text-left px-4 py-2 text-sm font-medium text-neon-text">Размеры / Кол-во</th>
+                        <th className="text-left px-4 py-2 text-sm font-medium text-neon-text">Размер / Кол-во</th>
                         <th className="text-right px-4 py-2 text-sm font-medium text-neon-text">Итого</th>
+                        <th className="text-left px-4 py-2 text-sm font-medium text-neon-text no-print">Действие</th>
                       </tr>
                     </thead>
                     <tbody>
                       {rows.map((row) => {
                         const batchCodeVal = row.SewingBatch?.batch_code ?? row.batch ?? '—';
                         const hasItems = row.ShipmentItems?.length > 0;
+                        const isCompleted = String(row.status || '').toLowerCase() === 'completed';
                         return (
                           <tr key={row.id} className="border-b border-white/15">
                             <td className="px-4 py-2 text-neon-text">
@@ -344,13 +370,48 @@ export default function Shipments() {
                             <td className="px-4 py-2 text-neon-text">{batchCodeVal}</td>
                             <td className="px-4 py-2 text-neon-text">
                               {hasItems
-                                ? row.ShipmentItems.map((it) => `${it.ModelSize?.Size?.name ?? it.Size?.name ?? it.model_size_id ?? it.size_id ?? '—'}: ${it.qty}`).join(', ')
-                                : `${row.ModelSize?.Size?.name ?? '—'} ${row.qty ?? 0}`}
+                                ? row.ShipmentItems.map((it) => {
+                                    const sizeLabel =
+                                      it.ModelSize?.Size?.name ??
+                                      it.Size?.name ??
+                                      (it.model_size_id != null
+                                        ? `#${it.model_size_id}`
+                                        : it.size_id != null
+                                        ? `#${it.size_id}`
+                                        : '—');
+                                    return (
+                                      <div
+                                        key={it.id ?? `${sizeLabel}-${it.qty}`}
+                                        className="text-neon-text"
+                                      >
+                                        {sizeLabel} | {formatQty(it.qty)}
+                                      </div>
+                                    );
+                                  })
+                                : (
+                                  <span className="text-neon-text">
+                                    {row.ModelSize?.Size?.name ?? '—'} | {formatQty(row.qty)}
+                                  </span>
+                                )}
                             </td>
                             <td className="px-4 py-2 text-right">
                               {hasItems
-                                ? row.ShipmentItems.reduce((s, it) => s + (Number(it.qty) || 0), 0)
-                                : row.qty ?? 0}
+                                ? formatQty(row.ShipmentItems.reduce((s, it) => s + (Number(it.qty) || 0), 0))
+                                : formatQty(row.qty)}
+                            </td>
+                            <td className="px-4 py-2 no-print">
+                              {isCompleted ? (
+                                <span className="text-green-400 text-sm">✓ Завершено</span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCompleteShipment(row.id)}
+                                  disabled={completingId === row.id}
+                                  className="text-sm px-3 py-1.5 rounded-lg bg-green-600/80 text-white hover:bg-green-600 disabled:opacity-50"
+                                >
+                                  {completingId === row.id ? '...' : 'Завершить отгрузку'}
+                                </button>
+                              )}
                             </td>
                           </tr>
                         );

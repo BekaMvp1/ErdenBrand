@@ -227,9 +227,9 @@ export default function ProcurementModal({ open, orderId, onClose, onSaved, from
   if (!open) return null;
 
   const modalContent = (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 overflow-hidden" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-stretch justify-center lg:items-center p-0 lg:p-4 overflow-hidden" onClick={onClose}>
       <div
-        className="card-neon rounded-card w-[min(96vw,72rem)] max-h-[90vh] p-5 flex flex-col"
+        className="card-neon rounded-none lg:rounded-card w-full lg:w-[min(96vw,72rem)] h-full lg:h-auto max-h-none lg:max-h-[90vh] p-4 sm:p-5 flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3 mb-4 shrink-0">

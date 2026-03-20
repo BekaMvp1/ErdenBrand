@@ -45,6 +45,7 @@ app.set("trust proxy", 1);
 // CORS — первым, до helmet и роутов
 const allowedOrigins = [
   "https://erdenbrand1.netlify.app",
+  "https://erdenbrand.netlify.app",
   "http://localhost:5173",
   "http://localhost:3000",
 ];

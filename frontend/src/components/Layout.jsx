@@ -183,6 +183,15 @@ export default function Layout() {
   }, [user?.role]);
 
   useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)');
+    const onChange = () => {
+      if (mq.matches) setMobileMenuOpen(false);
+    };
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  useEffect(() => {
     if (shouldShowSummary) {
       setSummaryLoading(true);
       setConnectionError(false);
@@ -253,7 +262,7 @@ export default function Layout() {
       {/* Mobile menu overlay */}
       {mobileMenuOpen && (
         <div
-          className="fixed inset-0 bg-black/50 z-40 md:hidden animate-fade-in"
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden animate-fade-in"
           onClick={() => setMobileMenuOpen(false)}
           aria-hidden="true"
         />
@@ -263,14 +272,14 @@ export default function Layout() {
       <aside
         onMouseEnter={() => setSidebarHovered(true)}
         onMouseLeave={() => setSidebarHovered(false)}
-        className={`fixed md:relative inset-y-0 left-0 z-50 bg-neon-bg2 sidebar-header-border flex flex-col transform transition-all duration-200 ease-out overflow-hidden
-          w-64
-          ${sidebarExpanded ? 'md:w-56' : 'md:w-16'}
-          ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}
+        className={`fixed lg:relative inset-y-0 left-0 z-50 bg-neon-bg2 sidebar-header-border flex flex-col transform transition-all duration-200 ease-out overflow-hidden
+          w-[min(100vw-2rem,16rem)] max-w-[16rem] sm:w-64
+          ${sidebarExpanded ? 'lg:w-56' : 'lg:w-16'}
+          ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
       >
-        <div className={`header-top flex items-center gap-2 p-4 md:px-2 md:py-3 shrink-0 border-b border-white/10 ${sidebarExpanded ? 'md:justify-start' : 'md:justify-center'}`}>
-          {/* Свёрнуто: логотип */}
-          <div className={`hidden md:flex items-center justify-center flex-1 min-w-0 ${sidebarExpanded ? 'md:hidden' : ''}`}>
+        <div className={`header-top flex items-center gap-2 p-4 lg:px-2 lg:py-3 shrink-0 border-b border-white/10 ${sidebarExpanded ? 'lg:justify-start' : 'lg:justify-center'}`}>
+          {/* Свёрнуто: логотип (только desktop lg+) */}
+          <div className={`hidden lg:flex items-center justify-center flex-1 min-w-0 ${sidebarExpanded ? 'lg:hidden' : ''}`}>
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" className="w-9 h-9 flex-shrink-0 rounded-full overflow-hidden" aria-label="ERDEN BRAND">
               <defs>
                 <clipPath id="sidebar-logo-circle">
@@ -281,10 +290,9 @@ export default function Layout() {
             </svg>
           </div>
           {/* Развёрнуто: название и замок */}
-          <div className={`flex items-center gap-2 flex-1 min-w-0 ${sidebarExpanded ? '' : 'md:hidden'}`}>
-            <h1 className="text-lg font-semibold text-neon-text truncate overflow-hidden whitespace-nowrap text-center md:text-left flex-1 min-w-0">
-              <span className="md:hidden">ERDEN BRAND</span>
-              <span className="hidden md:inline">ERDEN BRAND</span>
+          <div className={`flex items-center gap-2 flex-1 min-w-0 ${sidebarExpanded ? '' : 'lg:hidden'}`}>
+            <h1 className="text-base sm:text-lg font-semibold text-neon-text truncate overflow-hidden whitespace-nowrap text-center lg:text-left flex-1 min-w-0">
+              ERDEN BRAND
             </h1>
             <button
               type="button"
@@ -325,13 +333,13 @@ export default function Layout() {
                   }`}
                 >
                   <span className="flex-shrink-0">{NAV_ICONS[icon]}</span>
-                  <span className={`hidden truncate whitespace-nowrap ${sidebarExpanded ? 'md:inline' : ''}`}>{label}</span>
-                  <svg className={`w-4 h-4 ml-auto hidden flex-shrink-0 transition-transform ${sidebarExpanded ? 'md:block' : ''} ${cuttingOpen ? 'rotate-180' : ''}`} fill="currentColor" viewBox="0 0 20 20">
+                  <span className={`truncate whitespace-nowrap ${mobileMenuOpen ? 'inline' : 'max-lg:hidden'} ${sidebarExpanded ? 'lg:inline' : 'lg:hidden'}`}>{label}</span>
+                  <svg className={`w-4 h-4 ml-auto flex-shrink-0 transition-transform ${mobileMenuOpen ? 'block' : 'max-lg:hidden'} ${sidebarExpanded ? 'lg:block' : 'lg:hidden'} ${cuttingOpen ? 'rotate-180' : ''}`} fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
                   </svg>
                 </button>
                 {cuttingOpen && (
-                  <div className={`mt-1 ml-4 pl-2 border-l border-white/20 dark:border-white/20 space-y-0.5 block ${sidebarExpanded ? 'md:block' : 'md:hidden'}`}>
+                  <div className={`mt-1 ml-4 pl-2 border-l border-white/20 dark:border-white/20 space-y-0.5 block ${mobileMenuOpen ? 'block' : 'max-lg:hidden'} ${sidebarExpanded ? 'lg:block' : 'lg:hidden'}`}>
                     {dropdown.map((type) => (
                       <NavLink
                         key={type}
@@ -366,7 +374,7 @@ export default function Layout() {
                 }
               >
                 <span className="flex-shrink-0">{NAV_ICONS[icon]}</span>
-                <span className={`hidden truncate whitespace-nowrap ${sidebarExpanded ? 'md:inline' : ''}`}>{label}</span>
+                <span className={`truncate whitespace-nowrap ${mobileMenuOpen ? 'inline' : 'max-lg:hidden'} ${sidebarExpanded ? 'lg:inline' : 'lg:hidden'}`}>{label}</span>
               </NavLink>
             );
           })}
@@ -375,12 +383,12 @@ export default function Layout() {
 
       {/* Main */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-        <header className="header-top bg-neon-surface flex items-center justify-between px-3 md:px-6 gap-2">
-          <div className="flex items-center gap-1">
-            <BackButton className="text-neon-text hover:bg-white/10" />
+        <header className="header-top bg-neon-surface flex items-center justify-between px-3 md:px-6 lg:px-8 gap-2 min-h-[3rem]">
+          <div className="flex items-center gap-1 min-w-0">
+            <BackButton className="text-neon-text hover:bg-white/10 shrink-0" />
             <button
               onClick={() => setMobileMenuOpen(true)}
-              className="p-2 rounded-lg md:hidden hover:bg-white/10 text-neon-text"
+              className="p-2 rounded-lg lg:hidden hover:bg-white/10 text-neon-text shrink-0"
               aria-label="Меню"
             >
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -389,8 +397,8 @@ export default function Layout() {
           </button>
           </div>
           <div className="flex-1" />
-          <div className="flex items-center gap-2 md:gap-4 flex-shrink-0">
-            <span className="text-xs md:text-sm text-neon-text truncate max-w-[120px] md:max-w-none">
+          <div className="flex items-center gap-2 md:gap-4 flex-shrink-0 min-w-0">
+            <span className="text-xs sm:text-sm text-neon-text truncate max-w-[100px] sm:max-w-[200px] md:max-w-none">
               {user?.name}
               {user?.role && (ROLE_LABELS[user.role] || user.role) !== user?.name && (
                 <span className="hidden sm:inline"> • {ROLE_LABELS[user.role] || user.role}</span>
@@ -398,14 +406,14 @@ export default function Layout() {
             </span>
             <button
               onClick={logout}
-              className="btn-neon px-2 md:px-3 py-1.5 text-xs md:text-sm bg-neon-surface2 text-neon-text hover:shadow-neon"
+              className="btn-neon px-2 sm:px-3 py-1.5 text-xs sm:text-sm bg-neon-surface2 text-neon-text hover:shadow-neon shrink-0 whitespace-nowrap"
             >
               Выход
             </button>
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto p-3 sm:p-4 md:p-6 bg-transparent relative">
+        <main className="flex-1 overflow-x-hidden overflow-y-auto px-3 py-3 sm:py-4 md:px-6 md:py-5 lg:px-8 lg:py-6 bg-transparent relative">
           <PrintDocHeader />
           {connectionError && (
             <div className="no-print mb-4 p-4 rounded-xl bg-red-500/20 border border-red-500/50 text-red-400">

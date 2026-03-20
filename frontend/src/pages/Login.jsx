@@ -60,9 +60,9 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-transparent px-4">
-      <NeonCard className="w-full max-w-sm p-8 animate-page-enter">
-        <h1 className="text-3xl font-bold text-center text-neon-text mb-1">
+    <div className="min-h-screen flex items-center justify-center bg-transparent px-3 md:px-6 lg:px-8 py-6">
+      <NeonCard className="w-full max-w-sm p-6 sm:p-8 animate-page-enter">
+        <h1 className="text-xl md:text-2xl lg:text-3xl font-bold text-center text-neon-text mb-1">
           Швейная фабрика
         </h1>
         <p className="text-center text-sm text-neon-muted mb-6">Neon Dark Dashboard</p>

@@ -41,8 +41,12 @@
   }
 }
 
+html {
+  @apply overflow-x-hidden;
+}
+
 body {
-  @apply antialiased;
+  @apply antialiased overflow-x-hidden;
   color: var(--text-primary);
   background:
     radial-gradient(circle at 15% 10%, rgba(199, 255, 26, 0.08), transparent 38%),
@@ -59,6 +63,7 @@ body {
 #root {
   min-height: 100vh;
   color: inherit;
+  overflow-x: hidden;
 }
 
 /* Скрыть нативную иконку календаря — используем свою */

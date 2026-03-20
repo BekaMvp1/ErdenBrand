@@ -34,7 +34,7 @@ const CARD_CONFIG = [
 export default function DashboardSummary({ data, loading }) {
   if (loading) {
     return (
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-4 md:mb-6">
         {[1, 2, 3, 4].map((i) => (
           <div
             key={i}
@@ -59,7 +59,7 @@ export default function DashboardSummary({ data, loading }) {
             <span className="text-xl opacity-90">{icon}</span>
             <span className="text-sm font-medium text-white/90">{label}</span>
           </div>
-          <div className="text-2xl font-bold text-white">
+          <div className="text-xl sm:text-2xl font-bold text-white">
             {data[key] ?? 0}
             {suffix}
           </div>

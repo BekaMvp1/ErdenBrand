@@ -144,13 +144,13 @@ export default function Warehouse() {
 
   return (
     <div className="min-h-screen" style={{ background: PAGE_BG }}>
-      <div className="no-print flex flex-wrap items-center justify-between gap-4 mb-6 p-4 md:p-6">
-        <h1 className="text-2xl font-bold text-white">Склад</h1>
-        <div className="flex items-center gap-3 flex-wrap">
+      <div className="no-print flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4 md:mb-6 px-3 md:px-6 lg:px-8 pt-2 sm:pt-4">
+        <h1 className="text-xl md:text-2xl lg:text-3xl font-bold text-white">Склад</h1>
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 w-full sm:w-auto">
           <select
             value={workshopId}
             onChange={(e) => setWorkshopId(e.target.value)}
-            className="px-4 py-2 rounded-lg bg-black/30 border border-white/20 text-white min-w-[160px]"
+            className="px-4 py-2 rounded-lg bg-black/30 border border-white/20 text-white w-full sm:min-w-[160px] sm:w-auto"
           >
             <option value="">Все цеха</option>
             {workshops.map((w) => (
@@ -161,7 +161,7 @@ export default function Warehouse() {
             type="button"
             onClick={load}
             disabled={loading}
-            className={`px-4 py-2 rounded-lg font-medium ${BTN_SECONDARY} disabled:opacity-50`}
+            className={`px-4 py-2 rounded-lg font-medium w-full sm:w-auto ${BTN_SECONDARY} disabled:opacity-50`}
           >
             Обновить
           </button>
@@ -169,7 +169,7 @@ export default function Warehouse() {
         </div>
       </div>
 
-      <div className="px-4 md:px-6 pb-8">
+      <div className="px-3 md:px-6 lg:px-8 pb-6 md:pb-8 overflow-x-hidden">
         {error && (
           <div className="mb-4 p-3 rounded-lg bg-red-500/20 text-red-400 text-sm">{error}</div>
         )}

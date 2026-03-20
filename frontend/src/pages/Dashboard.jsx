@@ -104,7 +104,7 @@ export default function Dashboard() {
     <div className="text-neon-text">
       <div className="no-print flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4 md:mb-6">
         <div className="flex items-center gap-2">
-          <h1 className="text-xl md:text-2xl font-bold">Заказы</h1>
+          <h1 className="text-xl md:text-2xl lg:text-3xl font-bold">Заказы</h1>
           <PrintButton />
           <NeonButton
             type="button"
@@ -184,7 +184,7 @@ export default function Dashboard() {
                 <th className="text-left px-4 py-3 text-sm font-medium text-neon-muted">Дата поступления заказа</th>
                 <th className="text-left px-4 py-3 text-sm font-medium text-neon-muted">Дедлайн</th>
                 <th className="text-left px-4 py-3 text-sm font-medium text-neon-muted">Статус</th>
-                <th className="text-left px-4 py-3 text-sm font-medium text-neon-muted">Цех пошива</th>
+                <th className="text-left px-4 py-3 text-sm font-medium text-neon-muted hidden lg:table-cell">Цех пошива</th>
                 {(canEdit || canDelete) && <th className="w-24 px-4 py-3 text-neon-muted">Действия</th>}
               </tr>
             </thead>
@@ -210,10 +210,10 @@ export default function Dashboard() {
                   </td>
                   <td className="px-4 py-3 text-neon-muted">{order.Client?.name}</td>
                   <td className="px-4 py-3 text-neon-muted">{order.quantity}</td>
-                  <td className="px-4 py-3 text-neon-muted whitespace-nowrap">
+                  <td className="px-4 py-3 text-neon-muted whitespace-nowrap hidden md:table-cell">
                     {order.receipt_date ? String(order.receipt_date).slice(0, 10) : (order.created_at ? String(order.created_at).slice(0, 10) : '—')}
                   </td>
-                  <td className="px-4 py-3 text-neon-muted whitespace-nowrap">{order.deadline || '—'}</td>
+                  <td className="px-4 py-3 text-neon-muted whitespace-nowrap hidden md:table-cell">{order.deadline || '—'}</td>
                   <td className="px-4 py-3">
                     <span
                       className={`inline-block px-2 py-1 rounded text-xs font-medium ${
@@ -223,7 +223,7 @@ export default function Dashboard() {
                       {order.OrderStatus?.name}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-neon-muted">{order.Workshop?.name || order.Floor?.name || '—'}</td>
+                  <td className="px-4 py-3 text-neon-muted hidden lg:table-cell">{order.Workshop?.name || order.Floor?.name || '—'}</td>
                   {(canEdit || canDelete) && (
                     <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1">

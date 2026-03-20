@@ -346,7 +346,7 @@ export default function Qc() {
   return (
     <div>
       <div className="no-print flex flex-wrap items-center justify-between gap-4 mb-6">
-        <h1 className="text-2xl font-bold text-neon-text">ОТК (контроль качества)</h1>
+        <h1 className="text-xl md:text-2xl lg:text-3xl font-bold text-neon-text">ОТК (контроль качества)</h1>
         <PrintButton />
       </div>
       <p className="text-sm text-neon-muted mb-4">
@@ -362,18 +362,18 @@ export default function Qc() {
       )}
 
       {/* Фильтры: поиск по заказу/модели/клиенту, этаж */}
-      <div className="no-print flex flex-wrap items-center gap-3 mb-4">
+      <div className="no-print flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-3 mb-4 w-full min-w-0">
         <input
           type="text"
           placeholder="Поиск по заказу, модели, клиенту"
           value={searchQ ?? ''}
           onChange={(e) => setSearchQ(e.target.value)}
-          className="px-3 py-2 rounded-lg bg-neon-surface border border-neon-border text-neon-text min-w-[200px] text-sm"
+          className="px-3 py-2 rounded-lg bg-neon-surface border border-neon-border text-neon-text w-full sm:min-w-[200px] sm:max-w-md sm:flex-1 text-sm"
         />
         <select
           value={filterFloorId ?? ''}
           onChange={(e) => setFilterFloorId(e.target.value)}
-          className="px-3 py-2 rounded-lg bg-neon-surface border border-neon-border text-neon-text text-sm"
+          className="px-3 py-2 rounded-lg bg-neon-surface border border-neon-border text-neon-text text-sm w-full sm:w-auto"
         >
           <option value="">Все этажи</option>
           {SEWING_FLOOR_IDS.map((fid) => (
@@ -383,7 +383,7 @@ export default function Qc() {
         <select
           value={workshopId ?? ''}
           onChange={(e) => setWorkshopId(e.target.value)}
-          className="px-3 py-2 rounded-lg bg-neon-surface border border-neon-border text-neon-text text-sm min-w-[160px]"
+          className="px-3 py-2 rounded-lg bg-neon-surface border border-neon-border text-neon-text text-sm w-full sm:min-w-[160px] sm:w-auto"
         >
           <option value="">Все цеха</option>
           {workshops.map((w) => (
@@ -406,16 +406,16 @@ export default function Qc() {
                 Показаны партии: заказ #{orderIdParam}, этаж #{floorIdParam}
               </p>
             )}
-            <table className="w-full">
+            <table className="w-full min-w-[560px]">
               <thead>
                 <tr className="bg-accent-3/80 border-b border-white/25">
                   <th className="text-left px-4 py-3 text-sm font-medium text-neon-text">Партия</th>
                   <th className="text-left px-4 py-3 text-sm font-medium text-neon-text">Заказ (TZ — модель)</th>
-                  <th className="text-left px-4 py-3 text-sm font-medium text-neon-text">Этаж</th>
-                  <th className="text-left px-4 py-3 text-sm font-medium text-neon-text">Дата завершения</th>
+                  <th className="text-left px-4 py-3 text-sm font-medium text-neon-text hidden sm:table-cell">Этаж</th>
+                  <th className="text-left px-4 py-3 text-sm font-medium text-neon-text hidden md:table-cell">Дата завершения</th>
                   <th className="text-right px-4 py-3 text-sm font-medium text-neon-text">Всего (факт)</th>
                   <th className="text-left px-4 py-3 text-sm font-medium text-neon-text">Действие</th>
-                <th className="text-left px-4 py-3 text-sm font-medium text-neon-text no-print">Печать</th>
+                <th className="text-left px-4 py-3 text-sm font-medium text-neon-text no-print hidden sm:table-cell">Печать</th>
                 </tr>
               </thead>
               <tbody>
@@ -429,8 +429,8 @@ export default function Qc() {
                         size={48}
                       />
                     </td>
-                    <td className="px-4 py-3 text-neon-text">{row.floor_name}</td>
-                    <td className="px-4 py-3 text-neon-text">
+                    <td className="px-4 py-3 text-neon-text hidden sm:table-cell">{row.floor_name}</td>
+                    <td className="px-4 py-3 text-neon-text hidden md:table-cell">
                       {row.finished_at ? new Date(row.finished_at).toLocaleDateString('ru-RU') : '—'}
                     </td>
                     <td className="px-4 py-3 text-right font-medium">{row.total_fact}</td>
@@ -443,7 +443,7 @@ export default function Qc() {
                         Проверить
                       </button>
                     </td>
-                    <td className="px-4 py-3 no-print">
+                    <td className="px-4 py-3 no-print hidden sm:table-cell">
                       <Link
                         to={`/print/qc/${row.id}`}
                         className="text-primary-400 hover:underline text-sm"
@@ -462,11 +462,11 @@ export default function Qc() {
       {modalBatch &&
         createPortal(
           <div
-            className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-hidden"
+            className="fixed inset-0 bg-black/50 z-50 flex items-stretch justify-center lg:items-center p-0 lg:p-4 overflow-hidden"
             onClick={() => !saving && setModalBatch(null)}
           >
             <div
-              className="bg-neon-bg2 border border-neon-border rounded-card max-w-2xl w-full max-h-[90vh] flex flex-col shadow-xl"
+              className="bg-neon-bg2 border-0 lg:border border-neon-border rounded-none lg:rounded-card max-w-2xl w-full h-full max-h-none lg:max-h-[90vh] lg:h-auto flex flex-col shadow-xl"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="shrink-0 p-6 pb-0">
@@ -617,13 +617,13 @@ export default function Qc() {
                   )}
                 </div>
                 </div>
-                <div className="shrink-0 p-6 pt-4 border-t border-white/10">
+                <div className="shrink-0 p-4 sm:p-6 pt-4 border-t border-white/10">
                   {error && <p className="text-sm text-red-400 mb-2">{error}</p>}
-                  <div className="flex gap-2">
-                    <NeonButton type="submit" disabled={saving}>
+                  <div className="flex flex-col-reverse sm:flex-row gap-2 w-full">
+                    <NeonButton type="submit" disabled={saving} className="w-full sm:w-auto">
                       {saving ? 'Сохранение...' : 'Сохранить (принятое поступит на склад)'}
                     </NeonButton>
-                    <NeonButton type="button" variant="secondary" onClick={() => setModalBatch(null)} disabled={saving}>
+                    <NeonButton type="button" variant="secondary" onClick={() => setModalBatch(null)} disabled={saving} className="w-full sm:w-auto">
                       Отмена
                     </NeonButton>
                   </div>

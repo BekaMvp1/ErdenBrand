@@ -255,13 +255,13 @@ export default function Shipments() {
 
   return (
     <div>
-      <div className="no-print flex flex-wrap items-center justify-between gap-4 mb-6">
-        <h1 className="text-2xl font-bold text-neon-text">Отгрузка</h1>
-        <div className="flex items-center gap-3">
+      <div className="no-print flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4 md:mb-6">
+        <h1 className="text-xl md:text-2xl lg:text-3xl font-bold text-neon-text">Отгрузка</h1>
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 w-full sm:w-auto">
           <select
             value={workshopId}
             onChange={(e) => setWorkshopId(e.target.value)}
-            className="px-4 py-2 rounded-lg bg-accent-2/80 border border-white/25 text-neon-text min-w-[160px]"
+            className="px-4 py-2 rounded-lg bg-accent-2/80 border border-white/25 text-neon-text w-full sm:min-w-[160px] sm:w-auto"
           >
             <option value="">Все цеха</option>
             {workshops.map((w) => (
@@ -476,11 +476,11 @@ export default function Shipments() {
       {modalBatch?.batch_id &&
         createPortal(
           <div
-            className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto"
+            className="fixed inset-0 bg-black/50 z-50 flex items-stretch justify-center lg:items-center p-0 lg:p-4 overflow-y-auto"
             onClick={() => !saving && setModalBatch(null)}
           >
             <div
-              className="bg-neon-bg2 border border-neon-border rounded-card p-6 max-w-md w-full shadow-xl my-4"
+              className="bg-neon-bg2 border-0 lg:border border-neon-border rounded-none lg:rounded-card p-4 sm:p-6 max-w-md w-full h-full lg:h-auto lg:max-h-[90vh] shadow-xl lg:my-4 flex flex-col justify-center"
               onClick={(e) => e.stopPropagation()}
             >
               <h3 className="text-lg font-semibold text-neon-text mb-2">Отгрузка партии {modalBatch.batch_code}</h3>
@@ -501,11 +501,11 @@ export default function Shipments() {
                   </div>
                 ))}
                 {error && <p className="text-sm text-red-400">{error}</p>}
-                <div className="flex gap-2 pt-2">
-                  <NeonButton type="submit" disabled={saving}>
+                <div className="flex flex-col-reverse sm:flex-row gap-2 pt-2 w-full sm:w-auto">
+                  <NeonButton type="submit" disabled={saving} className="w-full sm:w-auto">
                     {saving ? 'Сохранение...' : 'Отгрузить'}
                   </NeonButton>
-                  <NeonButton type="button" variant="secondary" onClick={() => setModalBatch(null)} disabled={saving}>
+                  <NeonButton type="button" variant="secondary" onClick={() => setModalBatch(null)} disabled={saving} className="w-full sm:w-auto">
                     Отмена
                   </NeonButton>
                 </div>
@@ -518,11 +518,11 @@ export default function Shipments() {
       {modalLegacy &&
         createPortal(
           <div
-            className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+            className="fixed inset-0 bg-black/50 z-50 flex items-stretch justify-center lg:items-center p-0 lg:p-4 overflow-y-auto"
             onClick={() => !saving && setModalLegacy(null)}
           >
             <div
-              className="bg-neon-bg2 border border-neon-border rounded-card p-6 max-w-sm w-full shadow-xl"
+              className="bg-neon-bg2 border-0 lg:border border-neon-border rounded-none lg:rounded-card p-4 sm:p-6 max-w-sm w-full h-full lg:h-auto lg:max-h-[90vh] shadow-xl flex flex-col justify-center"
               onClick={(e) => e.stopPropagation()}
             >
               <h3 className="text-lg font-semibold text-neon-text mb-2">Отгрузка</h3>
@@ -542,11 +542,11 @@ export default function Shipments() {
                   />
                 </div>
                 {error && <p className="text-sm text-red-400">{error}</p>}
-                <div className="flex gap-2">
-                  <NeonButton type="submit" disabled={saving}>
+                <div className="flex flex-col-reverse sm:flex-row gap-2 w-full sm:w-auto">
+                  <NeonButton type="submit" disabled={saving} className="w-full sm:w-auto">
                     {saving ? 'Сохранение...' : 'Отгрузить'}
                   </NeonButton>
-                  <NeonButton type="button" variant="secondary" onClick={() => setModalLegacy(null)} disabled={saving}>
+                  <NeonButton type="button" variant="secondary" onClick={() => setModalLegacy(null)} disabled={saving} className="w-full sm:w-auto">
                     Отмена
                   </NeonButton>
                 </div>

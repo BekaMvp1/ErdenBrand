@@ -79,9 +79,9 @@ export default function Dispatcher() {
   }
 
   return (
-    <div className="p-6">
-      <div className="no-print mb-6 flex flex-wrap items-center gap-4">
-          <h1 className="text-2xl font-bold text-neon-text">
+    <div className="px-3 md:px-6 lg:px-8 py-4 md:py-6 overflow-x-hidden">
+      <div className="no-print mb-4 md:mb-6 flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 sm:gap-4">
+          <h1 className="text-xl md:text-2xl lg:text-3xl font-bold text-neon-text">
           Планировщик
         </h1>
           <PrintButton />

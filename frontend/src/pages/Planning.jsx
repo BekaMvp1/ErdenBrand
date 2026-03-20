@@ -412,14 +412,14 @@ export default function Planning() {
     }`;
 
   return (
-    <div className="min-h-screen p-4">
+    <div className="min-h-screen px-3 md:px-6 lg:px-8 py-4 overflow-x-hidden">
       {/* Заголовок */}
-      <h1 className="text-lg font-semibold text-white mb-3">
+      <h1 className="text-xl md:text-2xl lg:text-3xl font-semibold text-white mb-3">
         Планирование
       </h1>
 
       {/* Фильтры: Месяц | Неделя | Цех | Этаж | Поиск */}
-      <div className="no-print flex flex-wrap items-end gap-3 mb-3 overflow-visible">
+      <div className="no-print flex flex-col md:flex-row flex-wrap md:items-end gap-3 mb-3 overflow-visible">
         <div>
           <label className="block text-xs text-white/60 mb-0.5">Месяц</label>
           <input

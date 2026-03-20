@@ -40,9 +40,9 @@ export default function ProductionDashboard() {
 
   if (loading) {
     return (
-      <div className="min-h-screen p-6 text-white">
-        <h1 className="text-xl font-semibold mb-6">Production Dashboard</h1>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="min-h-screen px-3 md:px-6 lg:px-8 py-4 md:py-6 text-white">
+        <h1 className="text-xl md:text-2xl lg:text-3xl font-semibold mb-6">Production Dashboard</h1>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
           {[...Array(6)].map((_, i) => (
             <div key={i} className="h-24 rounded-xl bg-white/5 animate-pulse" />
           ))}
@@ -54,8 +54,8 @@ export default function ProductionDashboard() {
 
   if (error) {
     return (
-      <div className="min-h-screen p-6 text-white">
-        <h1 className="text-xl font-semibold mb-4">Production Dashboard</h1>
+      <div className="min-h-screen px-3 md:px-6 lg:px-8 py-4 md:py-6 text-white">
+        <h1 className="text-xl md:text-2xl lg:text-3xl font-semibold mb-4">Production Dashboard</h1>
         <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-red-300">{error}</div>
       </div>
     );
@@ -77,12 +77,12 @@ export default function ProductionDashboard() {
   ];
 
   return (
-    <div className="min-h-screen p-4 md:p-6 text-white bg-[#0f0f12]">
-      <div className="max-w-[1400px] mx-auto">
-        <h1 className="text-2xl font-bold mb-6 text-white">Production Dashboard</h1>
+    <div className="min-h-screen px-3 md:px-6 lg:px-8 py-4 md:py-6 text-white bg-[#0f0f12] overflow-x-hidden">
+      <div className="max-w-[1400px] mx-auto w-full min-w-0">
+        <h1 className="text-xl md:text-2xl lg:text-3xl font-bold mb-4 md:mb-6 text-white">Production Dashboard</h1>
 
         {/* Block 1: Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 mb-8">
           {statCards.map(({ key, label, value }) => (
             <Link
               key={key}

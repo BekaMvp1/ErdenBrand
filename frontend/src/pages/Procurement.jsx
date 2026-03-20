@@ -38,6 +38,7 @@ function formatDate(iso) {
 }
 
 export default function Procurement() {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const canEditProcurement = ['admin', 'manager', 'technologist'].includes(user?.role);
   const [list, setList] = useState([]);
@@ -84,12 +85,12 @@ export default function Procurement() {
 
   return (
     <div>
-      <div className="no-print flex flex-wrap items-center justify-between gap-4 mb-4 sm:mb-6">
-        <h1 className="text-xl sm:text-2xl font-bold text-neon-text">Закуп</h1>
+      <div className="no-print flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4 sm:mb-6">
+        <h1 className="text-xl md:text-2xl lg:text-3xl font-bold text-neon-text">Закуп</h1>
         <PrintButton />
       </div>
-      <NeonCard className="p-4 mb-4 flex flex-wrap gap-3 items-end">
-        <div className="min-w-[220px] flex-1">
+      <NeonCard className="p-4 mb-4 flex flex-col md:flex-row flex-wrap gap-3 md:items-end">
+        <div className="min-w-0 w-full md:min-w-[220px] md:flex-1">
           <label className="block text-sm text-[#ECECEC]/80 mb-1">Поиск</label>
           <NeonInput
             value={filters.q}
@@ -97,7 +98,7 @@ export default function Procurement() {
             placeholder="TZ / MODEL / клиент"
           />
         </div>
-        <div className="w-[180px]">
+        <div className="w-full md:w-[180px]">
           <label className="block text-sm text-[#ECECEC]/80 mb-1">Статус</label>
           <NeonSelect
             value={filters.status}

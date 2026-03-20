@@ -389,8 +389,8 @@ export default function References() {
 
   return (
     <div>
-      <div className="no-print flex items-center justify-between gap-4 mb-6 flex-wrap">
-        <h1 className="text-2xl font-bold text-neon-text">Справочники</h1>
+      <div className="no-print flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4 md:mb-6">
+        <h1 className="text-xl md:text-2xl lg:text-3xl font-bold text-neon-text">Справочники</h1>
         <div className="flex items-center gap-2">
           <PrintButton />
           <NeonButton
@@ -422,7 +422,7 @@ export default function References() {
       </div>
 
       {tab === 'workshops' && ['admin', 'manager'].includes(user?.role) && (
-        <form onSubmit={handleAddWorkshop} className="mb-4 flex gap-2 flex-wrap items-end">
+        <form onSubmit={handleAddWorkshop} className="mb-4 flex flex-col md:flex-row gap-2 flex-wrap md:items-end">
           <NeonInput
             type="text"
             value={newWorkshopName}
@@ -450,7 +450,7 @@ export default function References() {
         </form>
       )}
       {tab === 'floors' && ['admin', 'manager'].includes(user?.role) && (
-        <form onSubmit={handleAddFloor} className="mb-4 flex gap-2">
+        <form onSubmit={handleAddFloor} className="mb-4 flex flex-col sm:flex-row gap-2">
           <NeonInput
             type="text"
             value={newFloorName}

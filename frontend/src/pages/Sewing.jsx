@@ -350,37 +350,39 @@ export default function Sewing() {
   };
 
   return (
-    <div className="p-4 max-w-[1200px] mx-auto">
-      <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
-        <h1 className="text-xl font-semibold text-white">Пошив</h1>
-        <div className="flex gap-2 items-center">
+    <div className="px-3 md:px-6 lg:px-8 py-2 max-w-[1200px] mx-auto w-full min-w-0 overflow-x-hidden">
+      <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4">
+        <h1 className="text-xl md:text-2xl lg:text-3xl font-semibold text-white">Пошив</h1>
+        <div className="flex flex-col sm:flex-row gap-2 sm:items-center w-full sm:w-auto">
           <select
             value={workshopId}
             onChange={(e) => setWorkshopId(e.target.value)}
-            className="px-4 py-2 rounded-lg bg-black/30 border border-white/20 text-white min-w-[160px]"
+            className="px-4 py-2 rounded-lg bg-black/30 border border-white/20 text-white w-full sm:min-w-[160px] sm:w-auto"
           >
             <option value="">Все цеха</option>
             {workshops.map((w) => (
               <option key={w.id} value={w.id}>{w.name}</option>
             ))}
           </select>
-          <PrintButton />
-          <Link
-          to="/qc"
-            className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white text-sm hover:bg-white/15"
-          >
-            ОТК
-          </Link>
+          <div className="flex gap-2 items-center justify-stretch sm:justify-end w-full sm:w-auto">
+            <PrintButton />
+            <Link
+              to="/qc"
+              className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white text-sm hover:bg-white/15 text-center flex-1 sm:flex-initial"
+            >
+              ОТК
+            </Link>
+          </div>
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 mb-4">
+      <div className="flex flex-wrap items-stretch sm:items-center gap-3 mb-4 w-full">
         <input
           type="text"
           placeholder="Поиск: клиент / модель"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          className="px-3 py-2 rounded-lg bg-white/10 border border-white/20 text-white text-sm min-w-[200px] placeholder-white/40"
+          className="px-3 py-2 rounded-lg bg-white/10 border border-white/20 text-white text-sm w-full sm:min-w-[200px] sm:max-w-md placeholder-white/40"
         />
       </div>
 

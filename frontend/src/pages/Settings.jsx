@@ -39,8 +39,8 @@ export default function Settings() {
 
   return (
     <div>
-      <div className="no-print flex flex-wrap items-center justify-between gap-4 mb-6">
-        <h1 className="text-2xl font-bold text-neon-text">Настройки</h1>
+      <div className="no-print flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4 md:mb-6">
+        <h1 className="text-xl md:text-2xl lg:text-3xl font-bold text-neon-text">Настройки</h1>
         <PrintButton />
       </div>
 
@@ -105,24 +105,25 @@ export default function Settings() {
       </div>
 
       {showDeleteConfirm && createPortal(
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-hidden">
-          <div className="card-neon rounded-card p-6 max-w-md w-full border border-red-500/30">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-stretch justify-center lg:items-center p-0 lg:p-4 overflow-hidden">
+          <div className="card-neon rounded-none lg:rounded-card p-4 sm:p-6 max-w-md w-full h-full lg:h-auto border border-red-500/30 flex flex-col justify-center">
             <h2 className="text-lg font-semibold text-red-400 mb-4">Подтверждение</h2>
             <p className="text-[#ECECEC]/90 dark:text-dark-text/80 mb-6">
               Вы уверены, что хотите удалить все заказы? Это действие нельзя отменить.
             </p>
-            <div className="flex gap-3 justify-end">
+            <div className="flex flex-col-reverse sm:flex-row gap-3 sm:justify-end w-full">
               <NeonButton
                 type="button"
                 onClick={() => setShowDeleteConfirm(false)}
                 variant="secondary"
+                className="w-full sm:w-auto"
               >
                 Отмена
               </NeonButton>
               <NeonButton
                 type="button"
                 onClick={handleDeleteAll}
-                className="bg-red-500/80 hover:bg-red-500 text-white"
+                className="bg-red-500/80 hover:bg-red-500 text-white w-full sm:w-auto"
               >
                 Удалить всё
               </NeonButton>

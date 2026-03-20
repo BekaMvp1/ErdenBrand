@@ -439,7 +439,7 @@ export default function Cutting() {
   return (
     <div>
       <div className="no-print flex flex-wrap items-center justify-between gap-4 mb-4 sm:mb-6">
-        <h1 className="text-xl sm:text-2xl font-bold text-[#ECECEC] dark:text-dark-text">Раскрой</h1>
+        <h1 className="text-xl md:text-2xl lg:text-3xl font-bold text-[#ECECEC] dark:text-dark-text">Раскрой</h1>
         <PrintButton />
       </div>
 

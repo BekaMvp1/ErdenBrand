@@ -240,13 +240,13 @@ function BoardHeader({
   setViewMode,
 }) {
   return (
-    <div className="no-print sticky top-0 z-30 border-b border-white/10 bg-slate-950/90 backdrop-blur px-4 py-4 md:px-6">
+    <div className="no-print sticky top-0 z-30 border-b border-white/10 bg-slate-950/90 backdrop-blur px-3 md:px-6 lg:px-8 py-3 md:py-4">
       <div className="space-y-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-xl font-bold tracking-wide text-neon-text shrink-0">ЗАКАЗЫ</h1>
+        <div className="flex flex-col lg:flex-row lg:flex-wrap lg:items-center gap-3 w-full min-w-0">
+          <h1 className="text-xl md:text-2xl lg:text-3xl font-bold tracking-wide text-neon-text shrink-0">ЗАКАЗЫ</h1>
           <PrintButton />
 
-          <div className="w-[260px] max-w-full shrink-0">
+          <div className="w-full lg:w-[260px] lg:max-w-full lg:shrink-0 min-w-0">
             <NeonInput
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -255,7 +255,7 @@ function BoardHeader({
             />
           </div>
 
-          <div className="w-[160px] shrink-0">
+          <div className="w-full sm:w-[160px] sm:shrink-0 min-w-0">
             <NeonSelect value={priority} onChange={(e) => setPriority(e.target.value)} className="h-[42px] w-full max-w-full py-2">
               {PRIORITIES.map((item) => (
                 <option key={item.key || 'all'} value={item.key}>
@@ -268,12 +268,12 @@ function BoardHeader({
           <NeonButton
             variant={sort === 'forecast' ? 'primary' : 'secondary'}
             onClick={() => setSort('forecast')}
-            className="h-[42px] w-[120px] shrink-0 px-3 py-2 text-xs"
+            className="h-[42px] w-full sm:w-[120px] sm:shrink-0 px-3 py-2 text-xs"
           >
             Прогноз
           </NeonButton>
 
-          <div className="flex h-[42px] w-[190px] shrink-0 items-center justify-center gap-2 rounded-lg border border-white/15 bg-slate-900/80 px-3 py-2 whitespace-nowrap">
+          <div className="flex h-[42px] w-full sm:w-[190px] sm:shrink-0 items-center justify-center gap-2 rounded-lg border border-white/15 bg-slate-900/80 px-3 py-2 whitespace-nowrap">
             <input
               id="showCompleted"
               type="checkbox"
@@ -286,13 +286,13 @@ function BoardHeader({
             </label>
           </div>
 
-          <Link to="/production-dashboard">
-            <NeonButton variant="secondary" className="h-[42px] shrink-0 px-3 py-2 text-sm whitespace-nowrap">
+          <Link to="/production-dashboard" className="w-full sm:w-auto">
+            <NeonButton variant="secondary" className="h-[42px] w-full sm:w-auto sm:shrink-0 px-3 py-2 text-sm whitespace-nowrap">
               Открыть дашборд
             </NeonButton>
           </Link>
 
-          <div className="w-[180px] shrink-0">
+          <div className="w-full sm:w-[180px] sm:shrink-0 min-w-0">
             <NeonSelect
               value={workshopId}
               onChange={(e) => setWorkshopId(e.target.value)}

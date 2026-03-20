@@ -111,9 +111,9 @@ export default function Finance2026() {
 
   return (
     <div>
-      <div className="no-print flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-[#ECECEC] dark:text-dark-text">Финансы 2026</h1>
-        <div className="flex gap-2">
+      <div className="no-print flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-4 md:mb-6">
+        <h1 className="text-xl md:text-2xl lg:text-3xl font-bold text-[#ECECEC] dark:text-dark-text">Финансы 2026</h1>
+        <div className="flex flex-wrap gap-2 w-full sm:w-auto">
           <PrintButton />
           <button
             type="button"

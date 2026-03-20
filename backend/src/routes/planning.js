@@ -355,7 +355,10 @@ router.get('/calendar', async (req, res, next) => {
     const ordersWhere = { workshop_id: Number(workshop_id) };
     let orders = await db.Order.findAll({
       where: ordersWhere,
-      include: [{ model: db.Client, as: 'Client' }],
+      include: [
+        { model: db.Client, as: 'Client' },
+        { model: db.OrderPart, as: 'OrderParts', required: false },
+      ],
       order: [[db.Client, 'name', 'ASC'], ['title', 'ASC']],
     });
 
@@ -413,25 +416,54 @@ router.get('/calendar', async (req, res, next) => {
       const orderTitle = o.title || o.tz_code || o.model_name || '—';
       const modelName = o.model_name || o.tz_code || '';
       const clientName = o.Client?.name || '—';
-      const days = [];
-      let total = 0;
-      for (const d of dates) {
-        const qty = planByOrderDate[`${o.id}_${d}`] || 0;
-        days.push({ date: d, planned_qty: qty });
-        loadByDate[d] += qty;
-        total += qty;
+      const parts = (o.OrderParts || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+
+      if (parts.length > 0 && effectiveFloorId != null) {
+        const partForFloor = parts.find((p) => Number(p.floor_id) === Number(effectiveFloorId));
+        if (!partForFloor) continue;
+        const displayTitle = `${orderTitle} — ${partForFloor.part_name}`;
+        const days = [];
+        let total = 0;
+        for (const d of dates) {
+          const qty = planByOrderDate[`${o.id}_${d}`] || 0;
+          days.push({ date: d, planned_qty: qty });
+          loadByDate[d] += qty;
+          total += qty;
+        }
+        rows.push({
+          order_id: o.id,
+          order_title: displayTitle,
+          model_name: `${modelName} — ${partForFloor.part_name}`,
+          total_quantity: o.total_quantity ?? o.quantity ?? null,
+          client_name: clientName,
+          order_photos: o.photos,
+          days,
+          total,
+          part_name: partForFloor.part_name,
+          floor_id: partForFloor.floor_id,
+          order_parts: parts.map((p) => ({ id: p.id, part_name: p.part_name, floor_id: p.floor_id, sort_order: p.sort_order })),
+        });
+      } else {
+        const days = [];
+        let total = 0;
+        for (const d of dates) {
+          const qty = planByOrderDate[`${o.id}_${d}`] || 0;
+          days.push({ date: d, planned_qty: qty });
+          loadByDate[d] += qty;
+          total += qty;
+        }
+        rows.push({
+          order_id: o.id,
+          order_title: orderTitle,
+          model_name: modelName,
+          total_quantity: o.total_quantity ?? o.quantity ?? null,
+          client_name: clientName,
+          order_photos: o.photos,
+          days,
+          total,
+          order_parts: [],
+        });
       }
-      const planQty = o.total_quantity ?? o.quantity ?? null;
-      rows.push({
-        order_id: o.id,
-        order_title: orderTitle,
-        model_name: modelName,
-        total_quantity: planQty,
-        client_name: clientName,
-        order_photos: o.photos,
-        days,
-        total,
-      });
     }
 
     const weekStarts = [...new Set(dates.map((d) => getWeekStart(d)))];

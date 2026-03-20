@@ -33,6 +33,7 @@ function saveShipInputs(inputs) {
 
 export default function Warehouse() {
   const [list, setList] = useState([]);
+  const [kitOrders, setKitOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [shipInputs, setShipInputs] = useState(loadShipInputs);
   const [shipping, setShipping] = useState(null);
@@ -48,8 +49,15 @@ export default function Warehouse() {
     const params = workshopId ? { workshop_id: workshopId } : {};
     api.warehouseStock
       .stock(params)
-      .then(setList)
-      .catch(() => setList([]))
+      .then((data) => {
+        const rows = Array.isArray(data) ? data : (data?.rows ?? []);
+        setList(rows);
+        setKitOrders(Array.isArray(data) ? [] : (data?.kit_orders ?? []));
+      })
+      .catch(() => {
+        setList([]);
+        setKitOrders([]);
+      })
       .finally(() => setLoading(false));
   };
 
@@ -112,6 +120,11 @@ export default function Warehouse() {
       setError(`Нельзя отгрузить больше ${currentQty}. На складе: ${currentQty}`);
       return;
     }
+    const kitOrder = kitOrders.find((ko) => ko.order_id === row.order_id);
+    if (kitOrder && qty > kitOrder.kit_qty) {
+      setError(`Нельзя отгрузить больше ${kitOrder.kit_qty} комплектов (готово к отгрузке: ${kitOrder.kit_qty})`);
+      return;
+    }
     setShipping(id);
     try {
       await api.warehouseStock.ship(id, qty);
@@ -159,6 +172,41 @@ export default function Warehouse() {
       <div className="px-4 md:px-6 pb-8">
         {error && (
           <div className="mb-4 p-3 rounded-lg bg-red-500/20 text-red-400 text-sm">{error}</div>
+        )}
+
+        {kitOrders.length > 0 && (
+          <div
+            className="rounded-xl overflow-hidden border border-blue-500/30 mb-6 print-area"
+            style={{ background: CARD_BG }}
+          >
+            <div className="px-4 py-2 border-b border-blue-500/30 font-medium text-white">Сводка по комплектам (готово на складе)</div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[400px]">
+                <thead>
+                  <tr className="border-b border-white/20" style={{ background: 'rgba(255,255,255,0.05)' }}>
+                    <th className="text-left px-4 py-2 font-medium text-white/90">Модель</th>
+                    <th className="text-right px-4 py-2 font-medium text-white/90">Части</th>
+                    <th className="text-right px-4 py-2 font-medium text-white/90">Комплект</th>
+                    <th className="text-right px-4 py-2 font-medium text-white/70 text-xs">Остатки</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {kitOrders.map((ko) => (
+                    <tr key={ko.order_id} className="border-b border-white/10">
+                      <td className="px-4 py-2 text-white">{ko.order_title}</td>
+                      <td className="px-4 py-2 text-right text-white/90">
+                        {(ko.parts || []).map((p) => `${p.part_name}: ${p.qty}`).join(' | ')}
+                      </td>
+                      <td className="px-4 py-2 text-right font-semibold text-green-400">{ko.kit_qty}</td>
+                      <td className="px-4 py-2 text-right text-white/60 text-xs">
+                        {(ko.parts || []).map((p) => `${p.part_name}: ${p.remainder ?? 0}`).join(', ')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
 
         <div

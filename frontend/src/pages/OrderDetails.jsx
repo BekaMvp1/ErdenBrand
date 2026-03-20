@@ -91,6 +91,9 @@ export default function OrderDetails() {
   const [viewingPhoto, setViewingPhoto] = useState(null);
   const [cuttingCompleteModalTask, setCuttingCompleteModalTask] = useState(null);
   const [expandedCuttingTaskIds, setExpandedCuttingTaskIds] = useState(() => new Set());
+  const [newCommentText, setNewCommentText] = useState('');
+  const [newCommentPhotos, setNewCommentPhotos] = useState([]);
+  const [addingComment, setAddingComment] = useState(false);
   const [showProcurementModal, setShowProcurementModal] = useState(false);
   const [showProcurementPlanModal, setShowProcurementPlanModal] = useState(false);
   const [procurement, setProcurement] = useState(null);
@@ -211,6 +214,7 @@ export default function OrderDetails() {
         status_id: order.status_id,
         order_height_type: order.order_height_type === 'CUSTOM' ? 'CUSTOM' : 'PRESET',
         order_height_value: order.order_height_value ?? 170,
+        model_type: order.model_type || 'regular',
       });
       const variants = order.variants || [];
       const sizes = order.sizes || [];
@@ -383,6 +387,7 @@ export default function OrderDetails() {
         order_height_value: editForm.order_height_type === 'CUSTOM'
           ? Math.min(220, Math.max(120, parseInt(editForm.order_height_value, 10) || 170))
           : (editForm.order_height_value === 165 ? 165 : 170),
+        model_type: editForm.model_type || 'regular',
       };
       if (['admin', 'manager'].includes(user?.role)) {
         payload.status_id = parseInt(editForm.status_id, 10);
@@ -487,6 +492,32 @@ export default function OrderDetails() {
       loadOrder();
     } catch (err) {
       setErrorMsg(err.message || 'Ошибка сохранения');
+    }
+  };
+
+  const handleAddComment = async (e) => {
+    e?.preventDefault?.();
+    if (!order?.id) return;
+    if (!(newCommentText || '').trim() && newCommentPhotos.length === 0) {
+      setErrorMsg('Введите текст или прикрепите фото');
+      return;
+    }
+    setAddingComment(true);
+    setErrorMsg('');
+    try {
+      await api.orders.addComment(order.id, {
+        text: (newCommentText || '').trim() || undefined,
+        photos: newCommentPhotos.length > 0 ? newCommentPhotos : undefined,
+      });
+      setNewCommentText('');
+      setNewCommentPhotos([]);
+      loadOrder();
+      setSuccessMsg('Комментарий добавлен');
+      setTimeout(() => setSuccessMsg(''), 2000);
+    } catch (err) {
+      setErrorMsg(err.message || 'Ошибка добавления комментария');
+    } finally {
+      setAddingComment(false);
     }
   };
 
@@ -785,6 +816,94 @@ export default function OrderDetails() {
               })()}
 
             </div>
+          </div>
+
+          {/* Комментарии с фото */}
+          <div className="p-4 sm:p-6 border-t border-white/25 dark:border-white/25">
+            <h3 className="text-sm font-semibold text-[#ECECEC] dark:text-dark-text mb-3">Комментарии и фото для производства</h3>
+            {(order.order_comments || []).length > 0 ? (
+              <div className="space-y-4 mb-4">
+                {order.order_comments.map((c) => (
+                  <div key={c.id} className="rounded-lg border border-white/20 dark:border-white/20 p-3 bg-accent-2/20 dark:bg-dark-800/50">
+                    {c.text && <p className="text-sm text-[#ECECEC] dark:text-dark-text whitespace-pre-wrap mb-2">{c.text}</p>}
+                    <div className="flex items-center gap-2 text-xs text-[#ECECEC]/70 dark:text-dark-text/70 mb-2">
+                      {c.created_at && (
+                        <span>{new Date(c.created_at).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })}</span>
+                      )}
+                      {c.author?.name && <span>— {c.author.name}</span>}
+                    </div>
+                    {c.photos?.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {c.photos.map((photo, idx) => (
+                          <img
+                            key={idx}
+                            src={photo}
+                            alt={`Фото ${idx + 1}`}
+                            className="w-[180px] h-[120px] object-cover rounded-lg border border-white/20 cursor-pointer hover:opacity-90 transition-opacity"
+                            onClick={() => setViewingPhoto(photo)}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-[#ECECEC]/60 dark:text-dark-text/60 mb-4">Нет комментариев</p>
+            )}
+            {canEditOrder(user) && (
+              <form onSubmit={handleAddComment} className="space-y-2">
+                <textarea
+                  value={newCommentText}
+                  onChange={(e) => setNewCommentText(e.target.value)}
+                  placeholder="Текст комментария (опционально)"
+                  className="w-full px-3 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 text-[#ECECEC] dark:text-dark-text text-sm"
+                  rows={2}
+                />
+                <div className="flex flex-wrap gap-2 items-center">
+                  {newCommentPhotos.map((photo, idx) => (
+                    <div key={idx} className="relative group">
+                      <img src={photo} alt={`Фото ${idx + 1}`} className="w-16 h-16 object-cover rounded-lg border border-white/25" />
+                      <button
+                        type="button"
+                        onClick={() => setNewCommentPhotos((p) => p.filter((_, i) => i !== idx))}
+                        className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 text-white text-xs hover:bg-red-600 flex items-center justify-center"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  {newCommentPhotos.length < 10 && (
+                    <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border-2 border-dashed border-white/30 hover:border-primary-500 cursor-pointer transition-colors text-sm text-[#ECECEC]/80">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const reader = new FileReader();
+                          reader.onload = () => setNewCommentPhotos((p) => [...p, reader.result].slice(0, 10));
+                          reader.readAsDataURL(file);
+                          e.target.value = '';
+                        }}
+                      />
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      Добавить фото
+                    </label>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={addingComment || (!(newCommentText || '').trim() && newCommentPhotos.length === 0)}
+                    className="px-3 py-1.5 rounded-lg bg-primary-600 text-white text-sm hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {addingComment ? 'Сохранение...' : 'Отправить'}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
 
@@ -1485,6 +1604,17 @@ export default function OrderDetails() {
                   />
                 </div>
                 <div>
+                  <label className="block text-sm text-[#ECECEC] dark:text-dark-text/90 mb-1">Тип модели</label>
+                  <select
+                    value={editForm.model_type || 'regular'}
+                    onChange={(e) => setEditForm({ ...editForm, model_type: e.target.value })}
+                    className="w-full px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
+                  >
+                    <option value="regular">Обычная</option>
+                    <option value="set">Комплект (двойка, тройка и т.д.)</option>
+                  </select>
+                </div>
+                <div>
                   <label className="block text-sm text-[#ECECEC] dark:text-dark-text/90 mb-1">Общее количество</label>
                   <input
                     type="number"
@@ -1793,6 +1923,14 @@ export default function OrderDetails() {
           className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 overflow-hidden"
           onClick={() => setViewingPhoto(null)}
         >
+          <button
+            type="button"
+            className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/20 hover:bg-white/30 text-white flex items-center justify-center text-xl"
+            onClick={() => setViewingPhoto(null)}
+            aria-label="Закрыть"
+          >
+            ×
+          </button>
           <img
             src={viewingPhoto}
             alt="Фото"

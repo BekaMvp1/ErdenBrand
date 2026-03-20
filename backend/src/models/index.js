@@ -84,6 +84,8 @@ const db = {
   QcBatch: require('./QcBatch')(sequelize, Sequelize.DataTypes),
   QcBatchItem: require('./QcBatchItem')(sequelize, Sequelize.DataTypes),
   ShipmentItem: require('./ShipmentItem')(sequelize, Sequelize.DataTypes),
+  OrderComment: require('./OrderComment')(sequelize, Sequelize.DataTypes),
+  OrderPart: require('./OrderPart')(sequelize, Sequelize.DataTypes),
 };
 
 // Связи
@@ -284,6 +286,14 @@ db.SewingBatch.hasMany(db.SewingBatchItem, { foreignKey: 'batch_id' });
     db.SewingBatchItem.belongsTo(db.SewingBatch, { foreignKey: 'batch_id' });
 db.Order.hasMany(db.SewingOrderFloor, { foreignKey: 'order_id' });
 db.SewingOrderFloor.belongsTo(db.Order, { foreignKey: 'order_id' });
+db.Order.hasMany(db.OrderComment, { foreignKey: 'order_id' });
+db.OrderComment.belongsTo(db.Order, { foreignKey: 'order_id' });
+db.User.hasMany(db.OrderComment, { foreignKey: 'author_id' });
+db.OrderComment.belongsTo(db.User, { foreignKey: 'author_id', as: 'Author' });
+db.Order.hasMany(db.OrderPart, { foreignKey: 'order_id' });
+db.OrderPart.belongsTo(db.Order, { foreignKey: 'order_id' });
+db.BuildingFloor.hasMany(db.OrderPart, { foreignKey: 'floor_id' });
+db.OrderPart.belongsTo(db.BuildingFloor, { foreignKey: 'floor_id' });
 db.BuildingFloor.hasMany(db.SewingOrderFloor, { foreignKey: 'floor_id' });
 db.SewingOrderFloor.belongsTo(db.BuildingFloor, { foreignKey: 'floor_id' });
 db.SewingBatch.hasOne(db.SewingOrderFloor, { foreignKey: 'done_batch_id' });

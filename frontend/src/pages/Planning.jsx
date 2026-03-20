@@ -6,6 +6,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
 import ModelPhoto from '../components/ModelPhoto';
@@ -104,6 +105,9 @@ export default function Planning() {
   const saveTimeoutRef = useRef(null);
   const [capacityWeekInput, setCapacityWeekInput] = useState('');
   const [capacitySaving, setCapacitySaving] = useState(false);
+  const [splitOrder, setSplitOrder] = useState(null);
+  const [splitParts, setSplitParts] = useState([]);
+  const [splitSaving, setSplitSaving] = useState(false);
 
   const user = JSON.parse(sessionStorage.getItem('user') || '{}');
   const WORKING_DAYS_PER_WEEK = 6;
@@ -321,6 +325,47 @@ export default function Planning() {
     }
   };
 
+  const openSplitModal = (row) => {
+    setSplitOrder(row);
+    const parts = (row.order_parts || []).map((p) => ({ part_name: p.part_name, floor_id: String(p.floor_id) }));
+    setSplitParts(parts.length > 0 ? parts : [{ part_name: '', floor_id: String(floors[0]?.id ?? '2') }]);
+  };
+  const closeSplitModal = () => {
+    setSplitOrder(null);
+    setSplitParts([]);
+  };
+  const addSplitPart = () => {
+    setSplitParts((prev) => [...prev, { part_name: '', floor_id: String(floors[0]?.id ?? '') }]);
+  };
+  const removeSplitPart = (idx) => {
+    setSplitParts((prev) => prev.filter((_, i) => i !== idx));
+  };
+  const updateSplitPart = (idx, field, value) => {
+    setSplitParts((prev) => prev.map((p, i) => (i === idx ? { ...p, [field]: value } : p)));
+  };
+  const saveSplitParts = async () => {
+    if (!splitOrder) return;
+    const valid = splitParts.filter((p) => String(p.part_name || '').trim());
+    if (valid.length === 0 && splitParts.length > 0) {
+      setErrorMsg('Укажите название для каждой части или удалите пустые');
+      return;
+    }
+    setSplitSaving(true);
+    setErrorMsg('');
+    try {
+      await api.orders.updateParts(splitOrder.order_id, valid.map((p) => ({
+        part_name: String(p.part_name).trim(),
+        floor_id: parseInt(p.floor_id, 10) || 1,
+      })));
+      closeSplitModal();
+      loadData();
+    } catch (err) {
+      setErrorMsg(err?.message || 'Ошибка сохранения');
+    } finally {
+      setSplitSaving(false);
+    }
+  };
+
   const handleSaveAll = async () => {
     const keys = Object.keys(cellEdits);
     if (keys.length === 0) return;
@@ -535,6 +580,11 @@ export default function Planning() {
                     <th className="sticky left-0 z-20 bg-[#1a1a1f] px-2 py-1.5 text-left font-medium text-white/80 whitespace-nowrap border-r border-white/10 min-w-[100px]">
                       Заказ
                     </th>
+                    {canEdit && selectedWorkshop?.floors_count === 4 && (
+                      <th className="px-2 py-1.5 text-left font-medium text-white/80 min-w-[90px]">
+                        Действия
+                      </th>
+                    )}
                     <th className="px-2 py-1.5 text-left font-medium text-white/80 min-w-[100px]">
                       Модель
                     </th>
@@ -560,7 +610,7 @@ export default function Planning() {
                 <tbody>
                   {rows.length === 0 ? (
                     <tr>
-                      <td colSpan={4 + (dates?.length || 0) + 1} className="px-4 py-8 text-center text-white/60 text-sm">
+                      <td colSpan={4 + (canEdit && selectedWorkshop?.floors_count === 4 ? 1 : 0) + (dates?.length || 0) + 1} className="px-4 py-8 text-center text-white/60 text-sm">
                         Нет заказов для выбранного этажа. Назначьте этаж заказам в карточке заказа или выберите другой этаж.
                       </td>
                     </tr>
@@ -579,6 +629,17 @@ export default function Planning() {
                             size={48}
                           />
                         </td>
+                        {canEdit && selectedWorkshop?.floors_count === 4 && (
+                          <td className="px-2 py-1.5 text-white/80 text-xs">
+                            <button
+                              type="button"
+                              onClick={() => openSplitModal(row)}
+                              className="text-blue-400 hover:text-blue-300 hover:underline"
+                            >
+                              Разделить заказ
+                            </button>
+                          </td>
+                        )}
                         <td className="px-2 py-1.5 text-white/90 text-xs">
                           {row.model_name || '—'}
                           {row.total_quantity != null && row.total_quantity > 0 && (
@@ -690,6 +751,80 @@ export default function Planning() {
             </div>
           )}
         </div>
+      )}
+
+      {splitOrder && createPortal(
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+          onClick={closeSplitModal}
+        >
+          <div
+            className="bg-[#1a1a1f] rounded-xl border border-white/25 p-6 max-w-lg w-full"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold text-white mb-2">Разделить заказ</h3>
+            <p className="text-white/70 text-sm mb-4">{splitOrder.order_title}</p>
+            <div className="space-y-3 mb-4">
+              {splitParts.map((p, idx) => (
+                <div key={idx} className="flex gap-2 items-center">
+                  <input
+                    type="text"
+                    placeholder="Название части (напр. Пиджак)"
+                    value={p.part_name}
+                    onChange={(e) => updateSplitPart(idx, 'part_name', e.target.value)}
+                    className="flex-1 px-3 py-2 rounded-lg bg-white/10 border border-white/25 text-white text-sm placeholder-white/40"
+                  />
+                  <select
+                    value={p.floor_id}
+                    onChange={(e) => updateSplitPart(idx, 'floor_id', e.target.value)}
+                    className="px-3 py-2 rounded-lg bg-white/10 border border-white/25 text-white text-sm min-w-[120px]"
+                  >
+                    {floors.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.id === 1 ? '1 (Финиш)' : f.name || `Этаж ${f.id}`}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => removeSplitPart(idx)}
+                    className="p-2 rounded text-red-400 hover:bg-red-500/20"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={addSplitPart}
+                className="text-sm text-blue-400 hover:text-blue-300"
+              >
+                + Добавить часть
+              </button>
+            </div>
+            <p className="text-white/50 text-xs mb-4">
+              Пустой список — заказ не разделён. После сохранения каждая часть будет отображаться на своём этаже.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={closeSplitModal}
+                className="px-4 py-2 rounded-lg bg-white/10 text-white hover:bg-white/20"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                onClick={saveSplitParts}
+                disabled={splitSaving}
+                className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {splitSaving ? 'Сохранение...' : 'Сохранить'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );

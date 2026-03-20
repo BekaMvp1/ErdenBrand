@@ -482,6 +482,21 @@ export default function Qc() {
                     </p>
                   </div>
                 </div>
+                {modalBatch.kit_info && (
+                  <div className="mb-4 p-3 rounded-lg bg-blue-500/10 border border-blue-500/30 text-sm">
+                    <p className="font-medium text-neon-text mb-1">Комплект: {modalBatch.kit_info.order_title}</p>
+                    <p className="text-neon-muted">
+                      Части: {(modalBatch.kit_info.parts || []).map((p) => `${p.part_name}: ${p.qty}`).join(' | ')}
+                      {' → '}
+                      <span className="text-green-400 font-semibold">готово комплектов: {modalBatch.kit_info.kit_qty}</span>
+                      {((modalBatch.kit_info.parts || []).some((p) => (p.remainder ?? 0) > 0)) && (
+                        <span className="text-neon-muted ml-1">
+                          (остатки: {(modalBatch.kit_info.parts || []).map((p) => `${p.part_name}: ${p.remainder ?? 0}`).join(', ')})
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                )}
               </div>
               <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
                 <div className="flex-1 min-h-0 overflow-auto px-6 pr-1 pb-2">

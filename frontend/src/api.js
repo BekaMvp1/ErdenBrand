@@ -87,6 +87,16 @@ export const api = {
       }),
     deletePhoto: (id, index) =>
       request(`/api/orders/${id}/photos/${index}`, { method: 'DELETE' }),
+    addComment: (id, data) =>
+      request(`/api/orders/${id}/comments`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    updateParts: (id, parts) =>
+      request(`/api/orders/${id}/parts`, {
+        method: 'PUT',
+        body: JSON.stringify({ parts }),
+      }),
     getProcurement: (id) =>
       request(`/api/orders/${id}/procurement`),
     getProductionStages: (id) =>

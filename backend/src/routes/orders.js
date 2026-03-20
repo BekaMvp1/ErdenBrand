@@ -170,6 +170,7 @@ router.post('/', async (req, res, next) => {
       variants,
       photos,
       start_date,
+      model_type,
     } = req.body;
 
     const nameFields = resolveOrderNameFields({ title, tz_code, model_name });
@@ -306,6 +307,7 @@ router.post('/', async (req, res, next) => {
           size_in_letters: size_in_letters ? String(size_in_letters).trim() : null,
           status_id: statusAccepted.id,
           photos: photosArr,
+          model_type: (model_type === 'set' ? 'set' : 'regular') || 'regular',
         },
         { transaction: t }
       );
@@ -1380,6 +1382,7 @@ router.put('/:id', async (req, res, next) => {
       status_id,
       sizes,
       variants,
+      model_type,
     } = req.body;
 
     const updates = {};
@@ -1410,6 +1413,9 @@ router.put('/:id', async (req, res, next) => {
     if (size_in_letters !== undefined) updates.size_in_letters = size_in_letters ? String(size_in_letters).trim() : null;
     if (status_id != null && ['admin', 'manager'].includes(req.user.role)) {
       updates.status_id = parseInt(status_id, 10);
+    }
+    if (model_type !== undefined) {
+      updates.model_type = model_type === 'set' ? 'set' : 'regular';
     }
 
     const { order_height_type, order_height_value } = req.body;
@@ -1707,6 +1713,18 @@ router.get('/:id', async (req, res, next) => {
           as: 'CuttingTasks',
           required: false,
         },
+        {
+          model: db.OrderComment,
+          as: 'OrderComments',
+          required: false,
+          include: [{ model: db.User, as: 'Author', attributes: ['id', 'name'] }],
+        },
+        {
+          model: db.OrderPart,
+          as: 'OrderParts',
+          required: false,
+          include: [{ model: db.BuildingFloor, as: 'BuildingFloor', attributes: ['id', 'name'] }],
+        },
       ],
     });
 
@@ -1738,6 +1756,22 @@ router.get('/:id', async (req, res, next) => {
     const sizes = [...new Set(variants.map((v) => v.Size?.name).filter(Boolean))].sort();
     const colors = [...new Set(variants.map((v) => v.color).filter(Boolean))].sort();
 
+    const orderParts = (plain.OrderParts || []).map((p) => ({
+      id: p.id,
+      part_name: p.part_name,
+      floor_id: p.floor_id,
+      floor_name: p.BuildingFloor?.name,
+      sort_order: p.sort_order,
+    })).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+
+    const orderComments = (plain.OrderComments || []).map((c) => ({
+      id: c.id,
+      text: c.text || '',
+      author: c.Author ? { id: c.Author.id, name: c.Author.name } : null,
+      created_at: c.created_at,
+      photos: Array.isArray(c.photos) ? c.photos : [],
+    }));
+
     res.json({
       ...plain,
       variants: variants.map((v) => ({
@@ -1748,6 +1782,8 @@ router.get('/:id', async (req, res, next) => {
       sizes,
       colors,
       photos: plain.photos || [],
+      order_comments: orderComments,
+      order_parts: orderParts,
     });
   } catch (err) {
     next(err);
@@ -1878,6 +1914,134 @@ router.get('/:id/production-stages', async (req, res, next) => {
       })),
       warehouse,
       shipping,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PUT /api/orders/:id/parts
+ * Разделить заказ на части (для комплектов). body: { parts: [{ part_name, floor_id }, ...] }
+ */
+router.put('/:id/parts', async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.id);
+    const order = await db.Order.findByPk(orderId);
+    if (!order) return res.status(404).json({ error: 'Заказ не найден' });
+
+    if (req.user.role === 'technologist') {
+      const allowed = req.allowedBuildingFloorId ?? req.allowedFloorId;
+      if (allowed) {
+        const orderFloor = order.building_floor_id ?? order.floor_id;
+        if (orderFloor != null && Number(orderFloor) !== Number(allowed)) {
+          return res.status(403).json({ error: 'Нет доступа' });
+        }
+      }
+    }
+    if (req.user.role === 'operator') {
+      return res.status(403).json({ error: 'Нет доступа' });
+    }
+
+    const { parts } = req.body;
+    if (!Array.isArray(parts)) {
+      return res.status(400).json({ error: 'Укажите parts: [{ part_name, floor_id }, ...]' });
+    }
+
+    const validFloors = [1, 2, 3, 4];
+    const toInsert = parts
+      .filter((p) => p && String(p.part_name || '').trim())
+      .map((p, i) => ({
+        part_name: String(p.part_name).trim(),
+        floor_id: Math.max(1, Math.min(4, parseInt(p.floor_id, 10) || 1)),
+        sort_order: i,
+      }))
+      .filter((p) => validFloors.includes(p.floor_id));
+
+    await db.OrderPart.destroy({ where: { order_id: orderId } });
+    if (toInsert.length > 0) {
+      await db.OrderPart.bulkCreate(
+        toInsert.map((p) => ({
+          order_id: orderId,
+          part_name: p.part_name,
+          floor_id: p.floor_id,
+          sort_order: p.sort_order,
+        }))
+      );
+    }
+
+    const saved = await db.OrderPart.findAll({
+      where: { order_id: orderId },
+      include: [{ model: db.BuildingFloor, as: 'BuildingFloor', attributes: ['id', 'name'] }],
+      order: [['sort_order', 'ASC']],
+    });
+    res.json({
+      parts: saved.map((p) => ({
+        id: p.id,
+        part_name: p.part_name,
+        floor_id: p.floor_id,
+        floor_name: p.BuildingFloor?.name,
+        sort_order: p.sort_order,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/orders/:id/comments
+ * Добавить комментарий к заказу (body: { text?, photos?: ["data:image/...;base64,..."] })
+ * text или photos — хотя бы одно должно быть указано
+ */
+router.post('/:id/comments', async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.id);
+    const order = await db.Order.findByPk(orderId);
+    if (!order) return res.status(404).json({ error: 'Заказ не найден' });
+
+    if (req.user.role === 'technologist') {
+      const allowed = req.allowedBuildingFloorId ?? req.allowedFloorId;
+      if (allowed) {
+        const orderFloor = order.building_floor_id ?? order.floor_id;
+        if (orderFloor != null && Number(orderFloor) !== Number(allowed)) {
+          return res.status(403).json({ error: 'Нет доступа' });
+        }
+      }
+    }
+    if (req.user.role === 'operator') {
+      return res.status(403).json({ error: 'Нет доступа' });
+    }
+
+    const { text, photos } = req.body;
+    const textStr = text != null ? String(text).trim() : '';
+    const photosArr = Array.isArray(photos)
+      ? photos
+          .filter((p) => typeof p === 'string' && p.length > 0 && p.length < 4 * 1024 * 1024)
+          .slice(0, 10)
+      : [];
+
+    if (!textStr && photosArr.length === 0) {
+      return res.status(400).json({ error: 'Укажите текст комментария или прикрепите фото' });
+    }
+
+    const comment = await db.OrderComment.create({
+      order_id: orderId,
+      text: textStr || null,
+      author_id: req.user?.id || null,
+      photos: photosArr,
+    });
+
+    const withAuthor = await db.OrderComment.findByPk(comment.id, {
+      include: [{ model: db.User, as: 'Author', attributes: ['id', 'name'] }],
+    });
+    const plain = withAuthor.get({ plain: true });
+    res.status(201).json({
+      id: plain.id,
+      text: plain.text || '',
+      author: plain.Author ? { id: plain.Author.id, name: plain.Author.name } : null,
+      created_at: plain.created_at,
+      photos: plain.photos || [],
     });
   } catch (err) {
     next(err);

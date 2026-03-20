@@ -8,6 +8,7 @@
 const express = require('express');
 const { Op } = require('sequelize');
 const db = require('../models');
+const { computeKitSummary } = require('../utils/kitLogic');
 
 const router = express.Router();
 
@@ -239,6 +240,7 @@ router.get('/batches/pending-qc', async (req, res, next) => {
 
 /**
  * GET /api/warehouse-stock/batches/:id — партия с позициями по размерам (для формы ОТК).
+ * Если заказ — комплект (OrderParts), в ответ добавляется kit_info.
  */
 router.get('/batches/:id', async (req, res, next) => {
   try {
@@ -251,6 +253,7 @@ router.get('/batches/:id', async (req, res, next) => {
           include: [
             { model: db.Client, as: 'Client', attributes: ['name'] },
             { model: db.OrderVariant, as: 'OrderVariants', attributes: ['color', 'size_id'], include: [{ model: db.Size, as: 'Size', attributes: ['id', 'name', 'code'] }], required: false },
+            { model: db.OrderPart, as: 'OrderParts', required: false },
           ],
         },
         { model: db.BuildingFloor, as: 'BuildingFloor', attributes: ['id', 'name'] },
@@ -271,7 +274,30 @@ router.get('/batches/:id', async (req, res, next) => {
       ],
     });
     if (!batch) return res.status(404).json({ error: 'Партия не найдена' });
-    res.json(batch);
+    const json = batch.toJSON();
+    const parts = (batch.Order?.OrderParts || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+    if (parts.length > 0 && batch.order_id) {
+      const orderBatches = await db.SewingBatch.findAll({
+        where: {
+          order_id: batch.order_id,
+          status: { [Op.in]: ['READY_FOR_QC', 'QC_DONE'] },
+        },
+        include: [{ model: db.SewingBatchItem, as: 'SewingBatchItems' }],
+      });
+      const partQtyByFloor = {};
+      for (const b of orderBatches) {
+        const qty = (b.SewingBatchItems || []).reduce((s, i) => s + (parseInt(i.fact_qty, 10) || 0), 0);
+        if (b.floor_id) partQtyByFloor[b.floor_id] = (partQtyByFloor[b.floor_id] || 0) + qty;
+      }
+      const kitSummary = computeKitSummary(parts, partQtyByFloor);
+      json.kit_info = {
+        order_title: batch.Order?.tz_code && batch.Order?.model_name
+          ? `${batch.Order.tz_code} — ${batch.Order.model_name}` : batch.Order?.title || `#${batch.order_id}`,
+        parts: kitSummary.part_quantities,
+        kit_qty: kitSummary.kit_qty,
+      };
+    }
+    res.json(json);
   } catch (err) {
     next(err);
   }
@@ -607,8 +633,8 @@ router.get('/stock', async (req, res, next) => {
       include: [
         { model: db.ModelSize, as: 'ModelSize', required: false, include: [{ model: db.Size, as: 'Size' }] },
         { model: db.Size, as: 'Size', required: false, attributes: ['id', 'name'] },
-        { model: db.Order, as: 'Order', attributes: ['id', 'title', 'model_name', 'tz_code', 'total_quantity', 'quantity', 'photos'], include: [{ model: db.Client, as: 'Client', attributes: ['name'] }] },
-        { model: db.SewingBatch, as: 'SewingBatch', attributes: ['id', 'batch_code'], required: false },
+        { model: db.Order, as: 'Order', attributes: ['id', 'title', 'model_name', 'tz_code', 'total_quantity', 'quantity', 'photos'], include: [{ model: db.Client, as: 'Client', attributes: ['name'] }, { model: db.OrderPart, as: 'OrderParts', required: false }] },
+        { model: db.SewingBatch, as: 'SewingBatch', attributes: ['id', 'batch_code', 'floor_id'], required: false },
       ],
       order: [['order_id'], ['batch_id'], ['model_size_id'], ['size_id'], ['batch']],
     });
@@ -616,9 +642,35 @@ router.get('/stock', async (req, res, next) => {
       const j = row.toJSON();
       j.batch_code = row.SewingBatch?.batch_code ?? row.batch ?? `#${row.batch_id || row.id}`;
       j.size_name = row.ModelSize?.Size?.name ?? row.Size?.name ?? String(row.size_id ?? row.model_size_id ?? '—');
+      j.batch_floor_id = row.SewingBatch?.floor_id;
       return j;
     });
-    res.json(out);
+
+    const orderIdsWithParts = [...new Set(out.filter((r) => (r.Order?.OrderParts || []).length > 0).map((r) => r.order_id))];
+    const kitOrders = [];
+    for (const oid of orderIdsWithParts) {
+      const order = out.find((r) => r.order_id === oid)?.Order;
+      const parts = (order?.OrderParts || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+      if (parts.length === 0) continue;
+      const partQtyByFloor = {};
+      const orderRows = out.filter((r) => r.order_id === oid);
+      parts.forEach((p) => {
+        const floorQty = orderRows
+          .filter((r) => r.batch_floor_id != null && Number(r.batch_floor_id) === Number(p.floor_id))
+          .reduce((s, r) => s + (parseInt(r.qty, 10) || 0), 0);
+        partQtyByFloor[p.floor_id] = floorQty;
+      });
+      const kitSummary = computeKitSummary(parts, partQtyByFloor);
+      const orderTitle = order?.tz_code && order?.model_name
+        ? `${order.tz_code} — ${order.model_name}` : order?.title || `#${oid}`;
+      kitOrders.push({
+        order_id: oid,
+        order_title: orderTitle,
+        parts: kitSummary.part_quantities,
+        kit_qty: kitSummary.kit_qty,
+      });
+    }
+    res.json({ rows: out, kit_orders: kitOrders });
   } catch (err) {
     next(err);
   }

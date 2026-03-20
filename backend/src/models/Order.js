@@ -112,6 +112,12 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       defaultValue: 170,
     },
+    model_type: {
+      type: DataTypes.STRING(20),
+      allowNull: true,
+      defaultValue: 'regular',
+      comment: 'regular | set — Обычная | Комплект (двойка, тройка)',
+    },
   }, {
     tableName: 'orders',
     timestamps: true,

@@ -87,7 +87,11 @@ export default function Sewing() {
         workshop_id: workshopId || undefined,
       })
       .then((res) =>
-        setBoardData({ floors: res.floors || [], period: res.period || {} })
+        setBoardData({
+          floors: res.floors || [],
+          period: res.period || {},
+          kit_orders: res.kit_orders || [],
+        })
       )
       .catch((err) => setError(err.message || 'Ошибка'))
       .finally(() => setLoading(false));
@@ -413,6 +417,61 @@ export default function Sewing() {
               )}
             </div>
           )}
+          {((boardData.kit_orders || []).length > 0) && (
+            <div className="mb-4 rounded-lg border border-blue-500/30 bg-blue-900/20 overflow-hidden">
+              <div className="px-4 py-2 border-b border-blue-500/30 font-medium text-white/90">Сводка по комплектам (готово = MIN по частям)</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm min-w-[400px]">
+                  <thead>
+                    <tr className="border-b border-white/10">
+                      <th className="text-left px-4 py-2 font-medium text-white/80">Модель</th>
+                      {(() => {
+                        const seen = new Set();
+                        return (boardData.kit_orders || []).flatMap((ko) => ko.parts || []).filter((p) => {
+                          if (seen.has(p.part_name)) return false;
+                          seen.add(p.part_name);
+                          return true;
+                        });
+                      })().map((p) => (
+                        <th key={p.part_name} className="text-right px-4 py-2 font-medium text-white/80">{p.part_name}</th>
+                      ))}
+                      <th className="text-right px-4 py-2 font-medium text-white/80">Комплект</th>
+                      <th className="text-right px-4 py-2 font-medium text-white/60 text-xs">Остатки</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      const allPartNames = (() => {
+                        const seen = new Set();
+                        return (boardData.kit_orders || []).flatMap((ko) => ko.parts || []).filter((p) => {
+                          if (seen.has(p.part_name)) return false;
+                          seen.add(p.part_name);
+                          return true;
+                        }).map((p) => p.part_name);
+                      })();
+                      return (boardData.kit_orders || []).map((ko) => {
+                        const partByNames = Object.fromEntries((ko.parts || []).map((p) => [p.part_name, p]));
+                        return (
+                          <tr key={ko.order_id} className="border-b border-white/5 hover:bg-white/5">
+                            <td className="px-4 py-2 text-white">
+                              <Link to={`/orders/${ko.order_id}`} className="text-blue-400 hover:underline">{ko.order_title}</Link>
+                            </td>
+                            {allPartNames.map((pn) => (
+                              <td key={pn} className="px-4 py-2 text-right text-white/90">{partByNames[pn]?.qty ?? 0}</td>
+                            ))}
+                            <td className="px-4 py-2 text-right font-semibold text-green-400">{ko.kit_qty}</td>
+                            <td className="px-4 py-2 text-right text-white/60 text-xs">
+                              {(ko.parts || []).map((p) => `${p.part_name}: ${p.remainder ?? 0}`).join(', ')}
+                            </td>
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
           {allItems.length === 0 ? (
             <div className="p-8 text-center text-white/50">Нет партий для пошива</div>
           ) : (
@@ -608,7 +667,14 @@ export default function Sewing() {
                                     />
                                   </div>
                                 )}
-                                <div className="flex gap-2 flex-wrap">
+                                <div className="flex gap-2 flex-wrap items-center">
+                                  <Link
+                                    to={`/orders/${selectedItem.order_id}`}
+                                    className="text-sm text-blue-400 hover:text-blue-300 hover:underline"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    Информация о заказе (комментарии, фото)
+                                  </Link>
                                   <button
                                     type="button"
                                     onClick={(e) => { e.stopPropagation(); handleSave(); }}

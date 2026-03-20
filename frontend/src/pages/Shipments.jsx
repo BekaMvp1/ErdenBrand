@@ -29,17 +29,20 @@ export default function Shipments() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [completingId, setCompletingId] = useState(null);
+  const [kitOrders, setKitOrders] = useState([]);
 
   const load = useCallback(() => {
     setLoading(true);
     const params = workshopId ? { workshop_id: workshopId } : {};
     Promise.all([api.warehouseStock.stock(params), api.warehouseStock.shipments(params)])
       .then(([s, sh]) => {
-        setStock(s);
+        setStock(Array.isArray(s) ? s : (s?.rows ?? []));
+        setKitOrders(Array.isArray(s) ? [] : (s?.kit_orders ?? []));
         setShipments(sh);
       })
       .catch(() => {
         setStock([]);
+        setKitOrders([]);
         setShipments([]);
       })
       .finally(() => setLoading(false));
@@ -83,7 +86,7 @@ export default function Shipments() {
   // Группировка остатков по партии (batch_id или batch для легаси)
   const stockByBatch = () => {
     const byBatch = new Map();
-    stock.forEach((row) => {
+    stockArray.forEach((row) => {
       const key = row.batch_id != null ? `b-${row.batch_id}` : `legacy-${row.order_id}-${row.batch}`;
       if (!byBatch.has(key)) {
         byBatch.set(key, {
@@ -104,9 +107,11 @@ export default function Shipments() {
   const tzCode = (row) => row.Order?.tz_code || '';
   const plannedQty = (row) => row.Order?.total_quantity ?? row.Order?.quantity ?? 0;
 
+  const stockArray = Array.isArray(stock) ? stock : (stock?.rows ?? []);
+
   const stockByOrder = useMemo(() => {
     const byOrder = new Map();
-    stock.forEach((row) => {
+    stockArray.forEach((row) => {
       const key = row.order_id;
       const label = orderLabel(row);
       const tz = tzCode(row);
@@ -116,7 +121,7 @@ export default function Shipments() {
       byOrder.get(key).rows.push(row);
     });
     return Array.from(byOrder.values());
-  }, [stock]);
+  }, [stockArray]);
 
   const shipmentsByOrder = useMemo(() => {
     const byOrder = new Map();
@@ -186,6 +191,12 @@ export default function Shipments() {
       setError('Укажите количество хотя бы по одному размеру');
       return;
     }
+    const totalQty = items.reduce((s, it) => s + (it.qty || 0), 0);
+    const kitOrder = kitOrders.find((ko) => ko.order_id === modalBatch.order_id);
+    if (kitOrder && totalQty > kitOrder.kit_qty) {
+      setError(`Нельзя отгрузить больше ${kitOrder.kit_qty} комплектов (готово к отгрузке: ${kitOrder.kit_qty})`);
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -215,6 +226,11 @@ export default function Shipments() {
     }
     if (qty > (modalLegacy.qty ?? 0)) {
       setError('Нельзя отгрузить больше, чем есть на складе');
+      return;
+    }
+    const kitOrder = kitOrders.find((ko) => ko.order_id === modalLegacy.order_id);
+    if (kitOrder && qty > kitOrder.kit_qty) {
+      setError(`Нельзя отгрузить больше ${kitOrder.kit_qty} комплектов (готово к отгрузке: ${kitOrder.kit_qty})`);
       return;
     }
     setSaving(true);
@@ -256,8 +272,40 @@ export default function Shipments() {
         </div>
       </div>
       <p className="text-sm text-neon-muted mb-4">
-        Отгрузка по партиям и размерам. Выберите партию и укажите количество по каждому размеру. Нельзя отгрузить больше остатка по партии.
+        Отгрузка по партиям и размерам. Выберите партию и укажите количество по каждому размеру. Для комплектов: доступно к отгрузке = MIN по частям.
       </p>
+
+      {kitOrders.length > 0 && (
+        <NeonCard className="rounded-card overflow-hidden p-0 mb-6 border-blue-500/30">
+          <div className="px-4 py-2 border-b border-blue-500/30 font-medium text-neon-text">Сводка по комплектам (готово к отгрузке)</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[400px]">
+              <thead>
+                <tr className="border-b border-white/10">
+                  <th className="text-left px-4 py-2 font-medium text-neon-muted">Модель</th>
+                  <th className="text-right px-4 py-2 font-medium text-neon-muted">Части</th>
+                  <th className="text-right px-4 py-2 font-medium text-neon-muted">Комплект</th>
+                  <th className="text-right px-4 py-2 font-medium text-neon-muted text-xs">Остатки</th>
+                </tr>
+              </thead>
+              <tbody>
+                {kitOrders.map((ko) => (
+                  <tr key={ko.order_id} className="border-b border-white/5">
+                    <td className="px-4 py-2 text-neon-text">{ko.order_title}</td>
+                    <td className="px-4 py-2 text-right">
+                      {(ko.parts || []).map((p) => `${p.part_name}: ${p.qty}`).join(' | ')}
+                    </td>
+                    <td className="px-4 py-2 text-right font-semibold text-green-400">{ko.kit_qty}</td>
+                    <td className="px-4 py-2 text-right text-neon-muted text-xs">
+                      {(ko.parts || []).map((p) => `${p.part_name}: ${p.remainder ?? 0}`).join(', ')}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </NeonCard>
+      )}
 
       <NeonCard className="rounded-card overflow-hidden p-0 mb-6">
         <div className="px-4 py-3 border-b border-white/20 flex flex-wrap items-center justify-between gap-2">
@@ -280,7 +328,7 @@ export default function Shipments() {
         </div>
         {loading ? (
           <div className="p-8 text-center text-neon-muted">Загрузка...</div>
-        ) : stock.length === 0 ? (
+        ) : stockArray.length === 0 ? (
           <div className="p-8 text-neon-muted">Нет остатков</div>
         ) : (
           <div className="divide-y divide-white/10">

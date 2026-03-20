@@ -40,6 +40,7 @@ export default function CreateOrder() {
     comment: '',
     planned_month: '',
     workshop_id: '',
+    model_type: 'regular',
   });
   const [rostovka, setRostovka] = useState('');
   const [selectedSizes, setSelectedSizes] = useState([]);
@@ -49,6 +50,7 @@ export default function CreateOrder() {
   const [newColorInput, setNewColorInput] = useState('');
   const [editingRowTotal, setEditingRowTotal] = useState(null);
   const [orderPhotos, setOrderPhotos] = useState([]);
+  const [commentPhotos, setCommentPhotos] = useState([]);
 
   const loadRefs = useCallback(async () => {
     const [clientsRes, workshopsRes, floorsRes] = await Promise.all([
@@ -233,6 +235,7 @@ export default function CreateOrder() {
         workshop_id: form.workshop_id.toString().startsWith('floor-')
           ? null
           : parseInt(form.workshop_id, 10),
+        model_type: form.model_type || 'regular',
         floor_id: form.workshop_id.toString().startsWith('floor-')
           ? parseInt(form.workshop_id.replace('floor-', ''), 10)
           : undefined,
@@ -240,6 +243,12 @@ export default function CreateOrder() {
         variants,
         photos: orderPhotos,
       });
+      if ((form.comment || '').trim() || commentPhotos.length > 0) {
+        await api.orders.addComment(order.id, {
+          text: (form.comment || '').trim() || undefined,
+          photos: commentPhotos.length > 0 ? commentPhotos : undefined,
+        });
+      }
       navigate(`/orders/${order.id}`);
     } catch (err) {
       alert(err.message);
@@ -363,11 +372,59 @@ export default function CreateOrder() {
             onChange={(e) => setForm({ ...form, comment: e.target.value })}
             className="w-full px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
             rows={2}
+            placeholder="Текст комментария (опционально)"
           />
+          <div className="mt-2 flex flex-wrap gap-2 items-center">
+            {commentPhotos.map((photo, idx) => (
+              <div key={idx} className="relative group">
+                <img src={photo} alt={`Фото ${idx + 1}`} className="w-16 h-16 object-cover rounded-lg border border-white/25" />
+                <button
+                  type="button"
+                  onClick={() => setCommentPhotos((p) => p.filter((_, i) => i !== idx))}
+                  className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 text-white text-xs hover:bg-red-600 flex items-center justify-center"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            {commentPhotos.length < 10 && (
+              <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border-2 border-dashed border-white/30 hover:border-primary-500 cursor-pointer transition-colors text-sm text-[#ECECEC]/80">
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      setCommentPhotos((p) => [...p, reader.result].slice(0, 10));
+                    };
+                    reader.readAsDataURL(file);
+                    e.target.value = '';
+                  }}
+                />
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Добавить фото
+              </label>
+            )}
+          </div>
         </div>
 
         <div className="border-t border-white/25 dark:border-white/25 pt-6 mt-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm text-[#ECECEC] dark:text-dark-text/90 mb-1">Тип модели</label>
+              <NeonSelect
+                value={form.model_type}
+                onChange={(e) => setForm({ ...form, model_type: e.target.value })}
+              >
+                <option value="regular">Обычная</option>
+                <option value="set">Комплект (двойка, тройка и т.д.)</option>
+              </NeonSelect>
+            </div>
             <div>
               <label className="block text-sm text-[#ECECEC] dark:text-dark-text/90 mb-1">Месяц плана</label>
               <NeonSelect

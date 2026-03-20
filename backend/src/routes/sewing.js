@@ -7,6 +7,7 @@ const express = require('express');
 const { Op } = require('sequelize');
 const db = require('../models');
 const { getWeekStart } = require('../utils/planningUtils');
+const { computeKitSummary } = require('../utils/kitLogic');
 const WORKING_DAYS_PER_WEEK = 6;
 
 const router = express.Router();
@@ -660,8 +661,11 @@ router.get('/board', async (req, res, next) => {
     if (workshopIdFilter) orderWhere.workshop_id = workshopIdFilter;
     const orders = await db.Order.findAll({
       where: orderWhere,
-      attributes: ['id', 'title', 'tz_code', 'model_name', 'deadline', 'workshop_id', 'photos'],
-      include: [{ model: db.Client, as: 'Client', required: false, attributes: ['name'] }],
+      attributes: ['id', 'title', 'tz_code', 'model_name', 'deadline', 'workshop_id', 'photos', 'model_type'],
+      include: [
+        { model: db.Client, as: 'Client', required: false, attributes: ['name'] },
+        { model: db.OrderPart, as: 'OrderParts', required: false },
+      ],
     });
     orderIds = orders.map((o) => o.id);
     if (workshopIdFilter && orderIds.length === 0) {
@@ -705,7 +709,12 @@ router.get('/board', async (req, res, next) => {
       const orderTitle = order.title || '—';
       const tzCode = order.tz_code || '';
       const modelName = order.model_name || order.title || '—';
-      const order_title = tzCode ? `${tzCode} — ${modelName}` : modelName;
+      let order_title = tzCode ? `${tzCode} — ${modelName}` : modelName;
+      const parts = (order.OrderParts || []).filter((p) => Number(p.floor_id) === Number(floor_id));
+      if (parts.length > 0) {
+        const partName = parts[0].part_name;
+        order_title = `${order_title} — ${partName}`;
+      }
       if (q) {
         const term = q.toLowerCase();
         if (
@@ -727,6 +736,16 @@ router.get('/board', async (req, res, next) => {
       const already_in_sewing = totalSewingFactByKey[key] || 0;
       const available_for_sewing = Math.max(0, actual_cut_qty - already_in_sewing);
 
+      const parts = (order.OrderParts || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+      let kit_info = null;
+      if (parts.length > 0) {
+        const partQtyByFloor = {};
+        parts.forEach((p) => {
+          const k = `${order_id}-${p.floor_id}`;
+          partQtyByFloor[p.floor_id] = totalSewingFactByKey[k] || 0;
+        });
+        kit_info = computeKitSummary(parts, partQtyByFloor);
+      }
       if (!itemsByFloor[floor_id]) itemsByFloor[floor_id] = [];
       itemsByFloor[floor_id].push({
         order_id,
@@ -743,6 +762,8 @@ router.get('/board', async (req, res, next) => {
         workshop_id: order.workshop_id,
         actual_cut_qty,
         available_for_sewing,
+        order_parts: parts,
+        kit_info,
       });
     }
 
@@ -779,12 +800,34 @@ router.get('/board', async (req, res, next) => {
       }
     });
 
+    const kitOrders = [];
+    const seenOrderIds = new Set();
+    for (const order of orders) {
+      const parts = (order.OrderParts || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+      if (parts.length === 0 || seenOrderIds.has(order.id)) continue;
+      seenOrderIds.add(order.id);
+      const partQtyByFloor = {};
+      parts.forEach((p) => {
+        const k = `${order.id}-${p.floor_id}`;
+        partQtyByFloor[p.floor_id] = totalSewingFactByKey[k] || 0;
+      });
+      const kitSummary = computeKitSummary(parts, partQtyByFloor);
+      const orderTitle = order.tz_code && order.model_name
+        ? `${order.tz_code} — ${order.model_name}` : order.title || '—';
+      kitOrders.push({
+        order_id: order.id,
+        order_title: orderTitle,
+        parts: kitSummary.part_quantities,
+        kit_qty: kitSummary.kit_qty,
+      });
+    }
+
     const floors = sewingFloorIds.map((floor_id) => ({
       floor_id,
       capacity_per_day: capacityByFloor[floor_id] ?? null,
       items: itemsByFloor[floor_id],
     }));
-    res.json({ floors, period: { date_from, date_to } });
+    res.json({ floors, period: { date_from, date_to }, kit_orders: kitOrders });
   } catch (err) {
     next(err);
   }

@@ -535,9 +535,9 @@ export default function OrderDetails() {
   if (!order) return <div className="text-red-500 dark:text-red-400">Заказ не найден</div>;
 
   return (
-    <div className="pt-2 sm:pt-4">
+    <div className="pt-2 sm:pt-4 min-w-0 overflow-x-hidden">
       <div className="no-print flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 sm:gap-4 mb-4 sm:mb-6">
-        <h1 className="text-lg sm:text-2xl font-bold text-[#ECECEC] dark:text-dark-text truncate">
+        <h1 className="text-xl md:text-2xl lg:text-3xl font-bold text-[#ECECEC] dark:text-dark-text truncate min-w-0">
           {displayOrderName}
         </h1>
         <div className="flex gap-2 flex-wrap">

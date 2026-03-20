@@ -130,7 +130,7 @@ app.use(
   sizesRoutes,
 );
 
-// Защищённые роуты
+// Дашборд: GET /api/dashboard, GET /api/dashboard/production, GET /api/dashboard/summary
 app.use(
   "/api/dashboard",
   authenticate,

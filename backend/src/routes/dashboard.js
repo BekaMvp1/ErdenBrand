@@ -1,7 +1,10 @@
 /**
- * Роуты для дашборда
- * GET /api/dashboard — дашборд производства (KPI, этажи, горящие заказы, счётчики этапов)
- * GET /api/dashboard/summary — сводка по заказам (легаси)
+ * Роуты для дашборда (монтируются в app.js как /api/dashboard + authenticate + requireRole)
+ *
+ * Зарегистрированные маршруты:
+ *   GET  /api/dashboard              — KPI, floor_stats, hot_orders, stage_counts (router.get('/'))
+ *   GET  /api/dashboard/production   — production_stats, daily_capacity, orders_progress, today_tasks, deadlines
+ *   GET  /api/dashboard/summary      — totalOrders, activeOrders, completedOrders, completionPercent
  */
 
 const express = require('express');

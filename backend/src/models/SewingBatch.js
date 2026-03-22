@@ -10,6 +10,11 @@ module.exports = (sequelize, DataTypes) => {
       order_id: { type: DataTypes.INTEGER, allowNull: false },
       model_id: { type: DataTypes.INTEGER, allowNull: true },
       floor_id: { type: DataTypes.INTEGER, allowNull: true },
+      order_part_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        comment: 'Часть комплекта (order_parts); NULL — обычный заказ без разбиения',
+      },
       batch_code: { type: DataTypes.STRING(50), allowNull: false, unique: true },
       date_from: { type: DataTypes.DATEONLY, allowNull: true },
       date_to: { type: DataTypes.DATEONLY, allowNull: true },

@@ -294,6 +294,8 @@ db.Order.hasMany(db.OrderPart, { foreignKey: 'order_id' });
 db.OrderPart.belongsTo(db.Order, { foreignKey: 'order_id' });
 db.BuildingFloor.hasMany(db.OrderPart, { foreignKey: 'floor_id' });
 db.OrderPart.belongsTo(db.BuildingFloor, { foreignKey: 'floor_id' });
+db.OrderPart.hasMany(db.SewingBatch, { foreignKey: 'order_part_id', as: 'SewingBatches' });
+db.SewingBatch.belongsTo(db.OrderPart, { foreignKey: 'order_part_id', as: 'OrderPart' });
 db.BuildingFloor.hasMany(db.SewingOrderFloor, { foreignKey: 'floor_id' });
 db.SewingOrderFloor.belongsTo(db.BuildingFloor, { foreignKey: 'floor_id' });
 db.SewingBatch.hasOne(db.SewingOrderFloor, { foreignKey: 'done_batch_id' });

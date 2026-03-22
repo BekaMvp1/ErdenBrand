@@ -27,6 +27,16 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       defaultValue: 0,
     },
+    planned_quantity: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      comment: 'План по части; для комплекта совпадает с количеством комплектов заказа',
+    },
+    status: {
+      type: DataTypes.STRING(32),
+      allowNull: true,
+      defaultValue: 'planned',
+    },
   }, {
     tableName: 'order_parts',
     timestamps: true,

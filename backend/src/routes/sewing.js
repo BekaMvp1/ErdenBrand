@@ -710,9 +710,9 @@ router.get('/board', async (req, res, next) => {
       const tzCode = order.tz_code || '';
       const modelName = order.model_name || order.title || '—';
       let order_title = tzCode ? `${tzCode} — ${modelName}` : modelName;
-      const parts = (order.OrderParts || []).filter((p) => Number(p.floor_id) === Number(floor_id));
-      if (parts.length > 0) {
-        const partName = parts[0].part_name;
+      const partsForFloor = (order.OrderParts || []).filter((p) => Number(p.floor_id) === Number(floor_id));
+      if (partsForFloor.length > 0) {
+        const partName = partsForFloor[0].part_name;
         order_title = `${order_title} — ${partName}`;
       }
       if (q) {
@@ -1155,11 +1155,18 @@ router.post('/complete', async (req, res, next) => {
       // Читабельный код партии: ПШ-{order_id}-{этаж}-{дата_от}-{дата_до}
       const batchCode = `ПШ-${order_id}-${effectiveFloorId}-${dfStr}-${dtStr}`;
 
+      const orderPartRow = await db.OrderPart.findOne({
+        where: { order_id: Number(order_id), floor_id: effectiveFloorId },
+        attributes: ['id'],
+        transaction: t,
+      });
+
       const batch = await db.SewingBatch.create(
         {
           order_id: Number(order_id),
           model_id: order.model_id || null,
           floor_id: effectiveFloorId,
+          order_part_id: orderPartRow ? orderPartRow.id : null,
           batch_code: batchCode,
           date_from: df || null,
           date_to: dt || null,

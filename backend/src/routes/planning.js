@@ -12,6 +12,8 @@ const { logAudit } = require('../utils/audit');
 const flowCalculatorController = require('../controllers/flowCalculatorController');
 const { WORKING_DAYS_PER_WEEK, getWorkingDaysInRange, getWeekStart, isWorkingDay, getDayShortName } = require('../utils/planningUtils');
 const { syncWeeklyCacheFromDaily, checkWeeklyIntegrity, recalculateCarry } = require('../utils/planningSync');
+const kitPlanningService = require('../services/kitPlanningService');
+const { getOrderIdsForPlanningByOperations } = require('../utils/planningOrderIdsByOperations');
 
 const router = express.Router();
 
@@ -306,19 +308,38 @@ router.get('/table', async (req, res, next) => {
 /**
  * GET /api/planning/calendar?month=YYYY-MM&workshop_id=&floor_id=&q=
  * Опционально date_from=YYYY-MM-DD&date_to=YYYY-MM-DD — диапазон (неделя).
+ * Опционально week=YYYY-MM-DD — понедельник недели (или любая дата недели); диапазон Пн–Вс, в таблице только Пн–Сб.
+ * Список заказов: только те, у которых есть order_operations с выбранным floor_id (JOIN orders + order_operations).
+ * Для цеха с одним этажом в UI — без floor_id в запросе: все заказы с операциями по цеху.
  * Производственный календарь: дни в колонках, inline editing, мощность по дням.
  */
 router.get('/calendar', async (req, res, next) => {
   try {
-    const { month, workshop_id, floor_id, q, date_from, date_to } = req.query;
+    const { month, workshop_id, floor_id, q, date_from, date_to, week } = req.query;
     if (!workshop_id) return res.status(400).json({ error: 'Укажите workshop_id' });
     if (!month) return res.status(400).json({ error: 'Укажите month (YYYY-MM)' });
 
     const [y, m] = month.split('-').map(Number);
     if (!y || !m || m < 1 || m > 12) return res.status(400).json({ error: 'Некорректный месяц' });
 
-    let firstDay, to;
-    if (date_from && date_to) {
+    let firstDay;
+    let to;
+    let periodY = y;
+    let periodM = m;
+
+    if (week && String(week).trim()) {
+      const raw = String(week).trim().slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+        return res.status(400).json({ error: 'week должен быть датой YYYY-MM-DD (понедельник или день недели)' });
+      }
+      const mon = getWeekStart(raw);
+      const end = new Date(`${mon}T12:00:00`);
+      end.setDate(end.getDate() + 6);
+      firstDay = mon;
+      to = end.toISOString().slice(0, 10);
+      periodY = parseInt(mon.slice(0, 4), 10);
+      periodM = parseInt(mon.slice(5, 7), 10);
+    } else if (date_from && date_to) {
       firstDay = String(date_from).slice(0, 10);
       to = String(date_to).slice(0, 10);
       if (firstDay > to) return res.status(400).json({ error: 'date_from не должен быть больше date_to' });
@@ -348,19 +369,27 @@ router.get('/calendar', async (req, res, next) => {
       planWhere.floor_id = null;
     }
 
-    // Заказы цеха для календаря:
-    // показываем **все** заказы выбранного цеха, независимо от назначенного этажа.
-    // Этаж влияет только на план/факт (planWhere), а не на видимость заказов —
-    // иначе новые заказы без этажа не попадают в таблицу и их нельзя запланировать.
-    const ordersWhere = { workshop_id: Number(workshop_id) };
-    let orders = await db.Order.findAll({
-      where: ordersWhere,
-      include: [
-        { model: db.Client, as: 'Client' },
-        { model: db.OrderPart, as: 'OrderParts', required: false },
-      ],
-      order: [[db.Client, 'name', 'ASC'], ['title', 'ASC']],
+    // Заказы для календаря: только order_id, у которых есть хотя бы одна order_operations
+    // с нужным этажом (floor_id = building_floors) и тем же workshop через JOIN orders.
+    const orderIdsFromOps = await getOrderIdsForPlanningByOperations(db.sequelize, {
+      workshop_id: Number(workshop_id),
+      floor_id: effectiveFloorId != null ? effectiveFloorId : null,
     });
+
+    let orders = [];
+    if (orderIdsFromOps.length > 0) {
+      orders = await db.Order.findAll({
+        where: {
+          id: { [Op.in]: orderIdsFromOps },
+          workshop_id: Number(workshop_id),
+        },
+        include: [
+          { model: db.Client, as: 'Client' },
+          { model: db.OrderPart, as: 'OrderParts', required: false },
+        ],
+        order: [[db.Client, 'name', 'ASC'], ['title', 'ASC']],
+      });
+    }
 
     const searchQ = (q || '').trim().toLowerCase();
     if (searchQ) {
@@ -369,16 +398,24 @@ router.get('/calendar', async (req, res, next) => {
         const t = (o.title || '').toLowerCase();
         const model = (o.model_name || '').toLowerCase();
         const tz = (o.tz_code || '').toLowerCase();
-        return c.includes(searchQ) || t.includes(searchQ) || model.includes(searchQ) || tz.includes(searchQ);
+        const idStr = String(o.id);
+        return (
+          c.includes(searchQ) ||
+          t.includes(searchQ) ||
+          model.includes(searchQ) ||
+          tz.includes(searchQ) ||
+          idStr.includes(searchQ)
+        );
       });
     }
 
     const dates = getWorkingDaysInRange(firstDay, to);
     if (dates.length === 0) {
-      const { period } = await getOrCreatePeriodForMonth(db, y, m);
+      const { period } = await getOrCreatePeriodForMonth(db, periodY, periodM);
       return res.json({
         workshop: { id: workshop.id, name: workshop.name },
         month,
+        week_start: week ? getWeekStart(String(week).slice(0, 10)) : null,
         period: { from: firstDay, to, status: period?.status || 'ACTIVE' },
         dates: [],
         rows: [],
@@ -392,7 +429,7 @@ router.get('/calendar', async (req, res, next) => {
       dayNum: d.slice(8, 10),
     }));
 
-    const { period } = await getOrCreatePeriodForMonth(db, y, m);
+    const { period } = await getOrCreatePeriodForMonth(db, periodY, periodM);
 
     const planDays = await db.ProductionPlanDay.findAll({
       where: {
@@ -492,6 +529,7 @@ router.get('/calendar', async (req, res, next) => {
     res.json({
       workshop: { id: workshop.id, name: workshop.name },
       month,
+      week_start: week ? getWeekStart(String(week).trim().slice(0, 10)) : null,
       period: { from: firstDay, to, status: period?.status || 'ACTIVE' },
       dates: dateLabels,
       rows,
@@ -1893,6 +1931,49 @@ router.get('/month', async (req, res, next) => {
     }
 
     res.json({ month, from, to, by_sewer: bySewer });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/planning/kit-rows?workshop_id=&date_from=&date_to=&building_floor_id=
+ * Планирование комплектов: заказы с частями, план/факт по частям, kit = MIN.
+ * Фильтр по неделе — через date_from / date_to (дедлайн заказа).
+ */
+router.get('/kit-rows', async (req, res, next) => {
+  try {
+    const { workshop_id, date_from, date_to, building_floor_id } = req.query;
+    if (!workshop_id) return res.status(400).json({ error: 'Укажите workshop_id' });
+
+    const flat = await kitPlanningService.getKitPlanningRows(db.sequelize, {
+      workshop_id: Number(workshop_id),
+      date_from: date_from ? String(date_from).slice(0, 10) : undefined,
+      date_to: date_to ? String(date_to).slice(0, 10) : undefined,
+      building_floor_id: building_floor_id != null && building_floor_id !== '' ? building_floor_id : null,
+    });
+    const payload = kitPlanningService.groupKitRowsToOrders(flat);
+    res.json({
+      workshop_id: Number(workshop_id),
+      date_from: date_from || null,
+      date_to: date_to || null,
+      ...payload,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/planning/kit-summary/:orderId
+ * Сводка одного комплекта: kit_planned, kit_completed, parts[].
+ */
+router.get('/kit-summary/:orderId', async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.orderId);
+    if (!orderId) return res.status(400).json({ error: 'Некорректный orderId' });
+    const summary = await kitPlanningService.getKitOrderSummary(db.sequelize, db, orderId);
+    res.json(summary);
   } catch (err) {
     next(err);
   }

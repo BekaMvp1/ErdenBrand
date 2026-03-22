@@ -171,6 +171,7 @@ router.post('/', async (req, res, next) => {
       photos,
       start_date,
       model_type,
+      kit_parts,
     } = req.body;
 
     const nameFields = resolveOrderNameFields({ title, tz_code, model_name });
@@ -322,6 +323,40 @@ router.post('/', async (req, res, next) => {
           },
           { transaction: t }
         );
+      }
+
+      // Комплект (model_type = set): части с одинаковым планом = количество комплектов
+      const isSet = (model_type === 'set' || model_type === 'SET');
+      if (isSet && Array.isArray(kit_parts) && kit_parts.length >= 2) {
+        for (let i = 0; i < kit_parts.length; i++) {
+          const kp = kit_parts[i];
+          const bfId = parseInt(kp.building_floor_id ?? kp.floor_id, 10);
+          if (!bfId || Number.isNaN(bfId)) {
+            await t.rollback();
+            return res.status(400).json({ error: `kit_parts[${i}]: укажите building_floor_id` });
+          }
+          const bf = await db.BuildingFloor.findByPk(bfId, { transaction: t });
+          if (!bf) {
+            await t.rollback();
+            return res.status(400).json({ error: `Этаж здания id=${bfId} не найден` });
+          }
+          const pname = String(kp.part_name || kp.type || '').trim();
+          if (!pname) {
+            await t.rollback();
+            return res.status(400).json({ error: `kit_parts[${i}]: укажите part_name` });
+          }
+          await db.OrderPart.create(
+            {
+              order_id: order.id,
+              part_name: pname,
+              floor_id: bfId,
+              sort_order: i,
+              planned_quantity: qty,
+              status: 'planned',
+            },
+            { transaction: t }
+          );
+        }
       }
 
       // Закуп создаётся при сохранении плана (без черновика)
@@ -1945,18 +1980,32 @@ router.put('/:id/parts', async (req, res, next) => {
 
     const { parts } = req.body;
     if (!Array.isArray(parts)) {
-      return res.status(400).json({ error: 'Укажите parts: [{ part_name, floor_id }, ...]' });
+      return res.status(400).json({ error: 'Укажите parts: [{ part_name, floor_id | building_floor_id }, ...]' });
     }
 
-    const validFloors = [1, 2, 3, 4];
+    const batchCount = await db.SewingBatch.count({ where: { order_id: orderId } });
+    if (batchCount > 0) {
+      return res.status(400).json({
+        error: 'Нельзя изменить части комплекта после начала пошива (есть партии sewing_batches)',
+      });
+    }
+
+    const buildingFloors = await db.BuildingFloor.findAll({ attributes: ['id'] });
+    const validIds = new Set(buildingFloors.map((f) => f.id));
+
     const toInsert = parts
       .filter((p) => p && String(p.part_name || '').trim())
-      .map((p, i) => ({
-        part_name: String(p.part_name).trim(),
-        floor_id: Math.max(1, Math.min(4, parseInt(p.floor_id, 10) || 1)),
-        sort_order: i,
-      }))
-      .filter((p) => validFloors.includes(p.floor_id));
+      .map((p, i) => {
+        const fid = parseInt(p.building_floor_id ?? p.floor_id, 10);
+        return {
+          part_name: String(p.part_name).trim(),
+          floor_id: fid,
+          sort_order: i,
+        };
+      })
+      .filter((p) => validIds.has(p.floor_id));
+
+    const planQty = order.total_quantity ?? order.quantity ?? 0;
 
     await db.OrderPart.destroy({ where: { order_id: orderId } });
     if (toInsert.length > 0) {
@@ -1966,6 +2015,8 @@ router.put('/:id/parts', async (req, res, next) => {
           part_name: p.part_name,
           floor_id: p.floor_id,
           sort_order: p.sort_order,
+          planned_quantity: planQty,
+          status: 'planned',
         }))
       );
     }

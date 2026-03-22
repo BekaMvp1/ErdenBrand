@@ -5,16 +5,24 @@
 const { Sequelize } = require('sequelize');
 require('dotenv').config();
 const config = require('../config/database.js');
+const { parsePostgresUrl } = require('../utils/parseDatabaseUrl');
 
 const env = process.env.NODE_ENV || 'development';
 const dbConfig = config[env];
 
 const dbUrl = dbConfig.use_env_variable ? process.env[dbConfig.use_env_variable] : dbConfig;
-if (!dbUrl) {
+if (!dbUrl || (typeof dbUrl === 'string' && !dbUrl.trim())) {
   throw new Error('DATABASE_URL не задан. Создайте файл backend/.env и укажите DATABASE_URL (см. .env.example)');
 }
 
-const sequelize = new Sequelize(dbUrl, {
+const conn = typeof dbUrl === 'string' ? parsePostgresUrl(dbUrl) : null;
+if (!conn) {
+  throw new Error('Ожидалась строка DATABASE_URL');
+}
+
+const sequelize = new Sequelize(conn.database, conn.username, conn.password, {
+  host: conn.host,
+  port: conn.port,
   dialect: 'postgres',
   logging: false,
   ...(env === 'production' && dbConfig.dialectOptions && {

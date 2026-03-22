@@ -266,8 +266,6 @@ export default function PlanningDraft() {
     [debouncedSearch, orders, clients]
   );
 
-  const filledCount = useMemo(() => rows.filter((r) => r.orderIdx !== null).length, [rows]);
-
   const updateWeekCell = (rowId, weekIdx, field, value) => {
     setRows((prev) =>
       prev.map((r) =>
@@ -452,36 +450,6 @@ export default function PlanningDraft() {
           Планирование производства
         </h1>
       </header>
-
-      {/* Stats */}
-      <div
-        className="flex flex-wrap gap-2.5 px-[18px] py-2.5"
-        style={{ gap: '10px', padding: '10px 18px' }}
-      >
-        {[
-          { label: 'Всего', value: ROW_COUNT, color: '#58a6ff' },
-          { label: 'Заполнено', value: filledCount, color: 'var(--accent)' },
-          { label: 'Выполнено', value: 0, color: 'var(--accent)' },
-          { label: '% выполнения', value: '0%', color: 'var(--warn)' },
-        ].map((c) => (
-          <div
-            key={c.label}
-            className="min-w-[120px] flex-1 rounded-[10px] border px-[18px] py-2.5"
-            style={{
-              background: 'var(--bg2)',
-              borderColor: 'var(--border)',
-              padding: '10px 18px',
-            }}
-          >
-            <div className="text-xs" style={{ color: 'var(--muted)' }}>
-              {c.label}
-            </div>
-            <div className="text-xl font-bold" style={{ color: c.color }}>
-              {c.value}
-            </div>
-          </div>
-        ))}
-      </div>
 
       {/* Filters */}
       <div

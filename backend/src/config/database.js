@@ -4,8 +4,17 @@
 
 require('dotenv').config();
 
-if (process.env.NODE_ENV === 'production') {
-  console.log('PRODUCTION DATABASE_URL:', process.env.DATABASE_URL);
+if (process.env.NODE_ENV === 'production' && process.env.DATABASE_URL) {
+  try {
+    const { parsePostgresUrl } = require('../utils/parseDatabaseUrl');
+    const c = parsePostgresUrl(process.env.DATABASE_URL);
+    console.log(
+      'PRODUCTION DB target:',
+      `${c.username}@${c.host}:${c.port}/${c.database}`
+    );
+  } catch {
+    console.log('PRODUCTION: DATABASE_URL задан, но не удалось разобрать (проверьте формат)');
+  }
 }
 
 const dbUrl = process.env.DATABASE_URL || '';

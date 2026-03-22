@@ -13,6 +13,7 @@ import Dashboard from "./pages/Dashboard";
 import CreateOrder from "./pages/CreateOrder";
 import OrderDetails from "./pages/OrderDetails";
 import Planning from "./pages/Planning";
+import PlanningDraft from "./pages/PlanningDraft";
 import Sewing from "./pages/Sewing";
 import Procurement from "./pages/Procurement";
 import PrintProcurement from "./pages/PrintProcurement";
@@ -57,6 +58,7 @@ export default function App() {
                 <Route path="orders/:id" element={<OrderDetails />} />
                 {/* Планирование убрано из меню; роут оставлен для глубоких ссылок из отчётов/карточки заказа */}
                 <Route path="planning" element={<Planning />} />
+                <Route path="planning-draft" element={<PlanningDraft />} />
                 <Route path="sewing" element={<Sewing />} />
                 <Route path="floor-tasks" element={<Navigate to="/sewing" replace />} />
                 <Route path="procurement" element={<Procurement />} />

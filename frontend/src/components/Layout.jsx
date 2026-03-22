@@ -153,6 +153,7 @@ export default function Layout() {
     '/orders/create': 'Создать заказ',
     '/procurement': 'Закуп',
     '/planning': 'Планирование',
+    '/planning-draft': 'Планирование (черновик)',
     '/sewing': 'Пошив',
     '/finance': 'Финансы',
     '/warehouse': 'Склад',
@@ -223,6 +224,7 @@ export default function Layout() {
           { type: 'item', to: '/orders', label: 'Заказы', icon: 'orders', end: true },
           { type: 'item', to: '/orders/create', label: 'Создать заказ', icon: 'create' },
           { type: 'item', to: '/planning', label: 'Планирование', icon: 'planning', end: true },
+          { type: 'item', to: '/planning-draft', label: 'Черновик планирования', icon: 'planning', end: true },
         ];
   // ОТК и производственный блок: admin, manager, technologist (не operator)
   const canSeeProduction = user?.role && ['admin', 'manager', 'technologist'].includes(user.role);

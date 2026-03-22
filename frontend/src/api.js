@@ -138,6 +138,12 @@ export const api = {
       const q = new URLSearchParams(params).toString();
       return request(`/api/planning/model-table?${q}`);
     },
+    /** Комплекты: план/факт по частям, фильтр недели через date_from/date_to */
+    kitRows: (params) => {
+      const q = new URLSearchParams(params).toString();
+      return request(`/api/planning/kit-rows?${q}`);
+    },
+    kitSummary: (orderId) => request(`/api/planning/kit-summary/${orderId}`),
     plan: (params) => {
       const q = new URLSearchParams(params).toString();
       return request(`/api/planning/plan?${q}`);

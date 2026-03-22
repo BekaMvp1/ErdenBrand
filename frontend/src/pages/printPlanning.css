@@ -1,0 +1,135 @@
+/**
+ * Печать планирования: A4, компактная сетка, Пн–Сб, без кнопок (@media print в print.css)
+ */
+
+.print-planning-doc {
+  max-width: 100% !important;
+  width: 100%;
+  padding: 0;
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+.print-planning-doc .print-planning-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  margin: 0 0 6px;
+  padding: 0 4px;
+}
+
+.print-planning-doc .print-planning-meta {
+  font-size: 9px;
+  color: #333;
+  margin-bottom: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  justify-content: center;
+}
+
+.print-planning-table-wrap {
+  width: 100%;
+  overflow: visible;
+}
+
+.print-planning-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 10px;
+  --cell-day: 28px;
+  --cell-text: 72px;
+}
+
+.print-planning-table th,
+.print-planning-table td {
+  border: 1px solid #000;
+  padding: 2px 3px;
+  vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-wrap: break-word;
+}
+
+.print-planning-table thead th {
+  background: #f0f0f0;
+  font-weight: 600;
+  text-align: center;
+  height: 26px;
+}
+
+.print-planning-table .col-order {
+  width: var(--cell-text);
+  text-align: left;
+}
+
+.print-planning-table .col-model {
+  width: var(--cell-text);
+  text-align: left;
+}
+
+.print-planning-table .col-client {
+  width: var(--cell-text);
+  text-align: left;
+}
+
+.print-planning-table .col-day {
+  width: var(--cell-day);
+  min-width: var(--cell-day);
+  max-width: var(--cell-day);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.print-planning-table .col-total {
+  width: 36px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.print-planning-table tbody td {
+  height: 22px;
+}
+
+.print-planning-table .row-summary td {
+  font-weight: 600;
+  background: #f5f5f5;
+}
+
+.print-planning-doc .print-planning-footer {
+  margin-top: 8px;
+  font-size: 9px;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+}
+
+.print-planning-doc .print-planning-sign {
+  border-bottom: 1px solid #000;
+  min-height: 22px;
+  margin-top: 4px;
+}
+
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 8mm;
+  }
+
+  .print-planning-doc {
+    font-size: 10px !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+  }
+
+  .print-planning-table {
+    font-size: 10px !important;
+  }
+
+  .print-planning-table th,
+  .print-planning-table td {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

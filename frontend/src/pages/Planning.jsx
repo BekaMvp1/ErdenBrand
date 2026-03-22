@@ -538,7 +538,15 @@ export default function Planning() {
           </button>
         )}
         <Link
-          to={`/print/planning/${monthKey}${workshopId ? `?workshop_id=${workshopId}` : ''}${floorId ? `&floor_id=${floorId}` : ''}`}
+          to={(() => {
+            const qs = new URLSearchParams();
+            if (workshopId) qs.set('workshop_id', workshopId);
+            if (floorId) qs.set('floor_id', floorId);
+            if (selectedWeek?.dateFrom) qs.set('week', selectedWeek.dateFrom);
+            if (debouncedQ) qs.set('q', debouncedQ);
+            const qstr = qs.toString();
+            return `/print/planning/${monthKey}${qstr ? `?${qstr}` : ''}`;
+          })()}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent-1/40 text-white hover:bg-accent-1/50 font-medium text-sm"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

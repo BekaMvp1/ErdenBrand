@@ -4,7 +4,6 @@
 
 const { execSync } = require('child_process');
 const app = require('./app');
-const config = require('./config');
 const db = require('./models');
 
 async function start() {
@@ -70,18 +69,10 @@ async function start() {
     startSyncWorker();
   }
 
-  const port = process.env.PORT || config.port;
-  const server = app.listen(port, () => {
-    console.log(`Сервер запущен на порту ${port}`);
-  });
-  server.on('error', (err) => {
-    console.error('Ошибка HTTP-сервера (listen):', err.code || err.message);
-    if (err.code === 'EADDRINUSE') {
-      console.error(
-        `Порт ${port} занят. Остановите другой процесс или задайте другой PORT в .env`
-      );
-    }
-    process.exit(1);
+  const PORT = process.env.PORT || 10000;
+
+  app.listen(PORT, () => {
+    console.log(`Сервер запущен на порту ${PORT}`);
   });
 }
 

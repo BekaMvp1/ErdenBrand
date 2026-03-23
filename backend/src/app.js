@@ -39,11 +39,13 @@ const plannerRoutes = require("./modules/planner/planner.routes");
 
 const app = express();
 
+// CORS: фронт на Vercel (erden-brand.vercel.app), локальный Vite — см. corsOptions ниже
 // Render: proxy HTTPS (x-forwarded-proto)
 app.set("trust proxy", 1);
 
-// CORS — первым, до helmet и роутов
+// CORS — первым, до helmet и роутов (Vercel + Netlify + локальная разработка)
 const allowedOrigins = [
+  "https://erden-brand.vercel.app",
   "https://erdenbrand1.netlify.app",
   "https://erdenbrand.netlify.app",
   "http://localhost:5173",
@@ -85,7 +87,7 @@ const corsOptions = {
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
-  credentials: false,
+  credentials: true,
   optionsSuccessStatus: 204,
 };
 

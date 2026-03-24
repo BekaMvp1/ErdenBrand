@@ -6,7 +6,7 @@
  */
 
 const express = require('express');
-const { Op } = require('sequelize');
+const { Op, QueryTypes } = require('sequelize');
 const db = require('../models');
 const { logAudit } = require('../utils/audit');
 const flowCalculatorController = require('../controllers/flowCalculatorController');
@@ -1974,6 +1974,168 @@ router.get('/kit-summary/:orderId', async (req, res, next) => {
     if (!orderId) return res.status(400).json({ error: 'Некорректный orderId' });
     const summary = await kitPlanningService.getKitOrderSummary(db.sequelize, db, orderId);
     res.json(summary);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ========== Матрица «Планирование производства» (сохранение в БД + остатки) ==========
+
+/**
+ * GET /api/planning/matrix-orders-meta?workshop_id=&building_floor_id=
+ * Остаток = total_quantity − SUM(planned_qty) по production_plan_day для цеха/этажа.
+ */
+router.get('/matrix-orders-meta', async (req, res, next) => {
+  try {
+    const { workshop_id, building_floor_id } = req.query;
+    if (!workshop_id) return res.status(400).json({ error: 'Укажите workshop_id' });
+    const wid = Number(workshop_id);
+    if (!wid) return res.status(400).json({ error: 'Некорректный workshop_id' });
+
+    const workshop = await db.Workshop.findByPk(wid);
+    if (!workshop) return res.status(404).json({ error: 'Цех не найден' });
+
+    let effectiveBf = null;
+    if (workshop.floors_count === 4) {
+      if (building_floor_id == null || building_floor_id === '') {
+        return res.status(400).json({ error: 'Для этого цеха укажите building_floor_id' });
+      }
+      effectiveBf = Number(building_floor_id);
+      if (effectiveBf < 1 || effectiveBf > 4) {
+        return res.status(400).json({ error: 'building_floor_id 1–4' });
+      }
+    }
+
+    const sumRows = await db.sequelize.query(
+      `SELECT order_id, COALESCE(SUM(planned_qty), 0)::int AS planned_sum
+       FROM production_plan_day
+       WHERE workshop_id = :wid
+         AND floor_id IS NOT DISTINCT FROM :bf
+       GROUP BY order_id`,
+      { replacements: { wid, bf: effectiveBf }, type: QueryTypes.SELECT }
+    );
+    const plannedByOrder = {};
+    for (const r of sumRows) {
+      plannedByOrder[r.order_id] = parseInt(r.planned_sum, 10) || 0;
+    }
+
+    const orders = await db.Order.findAll({
+      where: { workshop_id: wid },
+      attributes: ['id', 'total_quantity', 'quantity', 'model_type', 'status_id'],
+      include: [{ model: db.OrderStatus, as: 'OrderStatus', attributes: ['name'] }],
+    });
+
+    const meta = orders.map((o) => {
+      const total = o.total_quantity ?? o.quantity ?? 0;
+      const planned = plannedByOrder[o.id] || 0;
+      const statusName = o.OrderStatus?.name || '';
+      const isActive = statusName !== 'Готов';
+      return {
+        order_id: o.id,
+        total_quantity: total,
+        planned_quantity: planned,
+        remainder: Math.max(0, total - planned),
+        model_type: o.model_type || 'regular',
+        status_name: statusName,
+        is_active: isActive,
+      };
+    });
+
+    res.json({ meta });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/planning/matrix-snapshot?month=YYYY-MM&workshop_id=&week_slice_start=&floor_id=
+ * floor_id — building_floor_id (1–4) или не передаётся для цеха без этажей
+ */
+router.get('/matrix-snapshot', async (req, res, next) => {
+  try {
+    const { month, workshop_id, week_slice_start, floor_id } = req.query;
+    if (!month || !/^\d{4}-\d{2}$/.test(String(month))) {
+      return res.status(400).json({ error: 'Укажите month (YYYY-MM)' });
+    }
+    if (!workshop_id) return res.status(400).json({ error: 'Укажите workshop_id' });
+    const wid = Number(workshop_id);
+    const wss = Math.max(0, parseInt(week_slice_start, 10) || 0);
+    const workshop = await db.Workshop.findByPk(wid);
+    if (!workshop) return res.status(404).json({ error: 'Цех не найден' });
+
+    let bf = null;
+    if (workshop.floors_count === 4) {
+      if (floor_id == null || floor_id === '') {
+        return res.status(400).json({ error: 'Укажите floor_id (этаж здания)' });
+      }
+      bf = Number(floor_id);
+    }
+
+    const row = await db.PlanningMatrixSnapshot.findOne({
+      where: {
+        month: String(month).slice(0, 7),
+        workshop_id: wid,
+        week_slice_start: wss,
+        building_floor_id: bf,
+      },
+    });
+    if (!row) {
+      return res.json({ rows: null, updated_at: null });
+    }
+    res.json({ rows: row.rows_json, updated_at: row.updated_at });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PUT /api/planning/matrix-snapshot
+ * body: { month, workshop_id, week_slice_start, floor_id?, rows }
+ */
+router.put('/matrix-snapshot', async (req, res, next) => {
+  try {
+    if (req.user?.role === 'operator') {
+      return res.status(403).json({ error: 'Оператор не может сохранять планирование' });
+    }
+    const { month, workshop_id, week_slice_start, rows } = req.body;
+    if (!month || !/^\d{4}-\d{2}$/.test(String(month))) {
+      return res.status(400).json({ error: 'Укажите month (YYYY-MM)' });
+    }
+    if (!workshop_id) return res.status(400).json({ error: 'Укажите workshop_id' });
+    if (!Array.isArray(rows)) return res.status(400).json({ error: 'rows — массив' });
+    const wid = Number(workshop_id);
+    const wss = Math.max(0, parseInt(week_slice_start, 10) || 0);
+    const workshop = await db.Workshop.findByPk(wid);
+    if (!workshop) return res.status(404).json({ error: 'Цех не найден' });
+
+    let bf = null;
+    if (workshop.floors_count === 4) {
+      const fid = req.body.floor_id;
+      if (fid == null || fid === '') {
+        return res.status(400).json({ error: 'Укажите floor_id (этаж здания)' });
+      }
+      bf = Number(fid);
+    }
+
+    const [snap, created] = await db.PlanningMatrixSnapshot.findOrCreate({
+      where: {
+        month: String(month).slice(0, 7),
+        workshop_id: wid,
+        week_slice_start: wss,
+        building_floor_id: bf,
+      },
+      defaults: {
+        rows_json: rows,
+        updated_by_user_id: req.user?.id || null,
+      },
+    });
+    if (!created) {
+      await snap.update({
+        rows_json: rows,
+        updated_by_user_id: req.user?.id || null,
+      });
+    }
+    res.json({ ok: true, updated_at: snap.updated_at });
   } catch (err) {
     next(err);
   }

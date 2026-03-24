@@ -69,7 +69,8 @@ async function start() {
     startSyncWorker();
   }
 
-  const PORT = process.env.PORT || 10000;
+  // Локально — как в .env.example / vite proxy (3001). На Render/Fly PORT задаётся средой.
+  const PORT = process.env.PORT || 3001;
 
   app.listen(PORT, () => {
     console.log(`Сервер запущен на порту ${PORT}`);

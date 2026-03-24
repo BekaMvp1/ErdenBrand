@@ -18,7 +18,26 @@ if (process.env.NODE_ENV === 'production' && process.env.DATABASE_URL) {
 }
 
 const dbUrl = process.env.DATABASE_URL || '';
-const isLocalhost = dbUrl.includes('localhost') || dbUrl.includes('127.0.0.1');
+const isLocalhost =
+  dbUrl.includes('localhost') ||
+  dbUrl.includes('127.0.0.1') ||
+  /\.local(:\d+)?(\/|$)/i.test(dbUrl);
+
+/** Явно отключить SSL (удобно для удалённого Postgres без TLS) */
+const sslExplicitOff =
+  String(process.env.DATABASE_SSL || process.env.DB_SSL || '')
+    .toLowerCase()
+    .trim() === 'false' ||
+  String(process.env.DATABASE_SSL || process.env.DB_SSL || '')
+    .toLowerCase()
+    .trim() === '0';
+
+const productionSsl =
+  !isLocalhost &&
+  !sslExplicitOff && {
+    require: true,
+    rejectUnauthorized: false,
+  };
 
 module.exports = {
   development: {
@@ -35,11 +54,10 @@ module.exports = {
     use_env_variable: 'DATABASE_URL',
     dialect: 'postgres',
     logging: false,
-    dialectOptions: {
-      ssl: {
-        require: true,
-        rejectUnauthorized: false,
+    ...(productionSsl && {
+      dialectOptions: {
+        ssl: productionSsl,
       },
-    },
+    }),
   },
 };

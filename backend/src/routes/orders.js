@@ -3,8 +3,9 @@
  */
 
 const express = require('express');
-const { Op } = require('sequelize');
+const { Op, QueryTypes } = require('sequelize');
 const db = require('../models');
+const { getOrderIdsForPlanningByOperations } = require('../utils/planningOrderIdsByOperations');
 const { logAudit } = require('../utils/audit');
 const { trySyncOrderToCloud, queueOrderForSync } = require('../services/cloudSync');
 const { STAGES, DEFAULT_STAGE_DAYS } = require('../constants/boardStages');
@@ -453,14 +454,62 @@ router.post('/', async (req, res, next) => {
  */
 router.get('/', async (req, res, next) => {
   try {
-    const ordersCount = await db.Order.count();
-    console.log('Orders count in DB:', ordersCount);
-
-    const { status_id, floor_id, client_id, workshop_id, search, page, limit } = req.query;
+    const { status_id, floor_id, building_floor_id, client_id, workshop_id, search, page, limit } =
+      req.query;
     const andConditions = [];
 
     if (status_id) andConditions.push({ status_id });
-    if (floor_id) andConditions.push({ floor_id });
+    // Этаж здания (building_floors) — как в календаре планирования: заказы с операциями на этаже,
+    // с частями комплекта на этаже или с building_floor_id в шапке (часто NULL при операциях).
+    if (building_floor_id != null && String(building_floor_id).trim() !== '') {
+      const bf = parseInt(building_floor_id, 10);
+      if (Number.isFinite(bf)) {
+        if (workshop_id) {
+          const wid = parseInt(workshop_id, 10);
+          if (Number.isFinite(wid)) {
+            const fromOps = await getOrderIdsForPlanningByOperations(db.sequelize, {
+              workshop_id: wid,
+              floor_id: bf,
+            });
+            const fromParts = await db.sequelize.query(
+              `SELECT DISTINCT op.order_id AS id
+               FROM order_parts op
+               INNER JOIN orders o ON o.id = op.order_id
+               WHERE op.floor_id = :bf AND o.workshop_id = :wid`,
+              { replacements: { bf, wid }, type: QueryTypes.SELECT }
+            );
+            const hdrRows = await db.Order.findAll({
+              where: { workshop_id: wid, building_floor_id: bf },
+              attributes: ['id'],
+              raw: true,
+            });
+            const noOpsRows = await db.sequelize.query(
+              `SELECT o.id FROM orders o
+               WHERE o.workshop_id = :wid
+               AND NOT EXISTS (SELECT 1 FROM order_operations op WHERE op.order_id = o.id)`,
+              { replacements: { wid }, type: QueryTypes.SELECT }
+            );
+            const idSet = new Set([
+              ...fromOps,
+              ...fromParts.map((r) => Number(r.id)),
+              ...hdrRows.map((r) => Number(r.id)),
+              ...noOpsRows.map((r) => Number(r.id)),
+            ]);
+            if (idSet.size === 0) {
+              andConditions.push({ id: { [Op.in]: [-1] } });
+            } else {
+              andConditions.push({ id: { [Op.in]: [...idSet] } });
+            }
+          } else {
+            andConditions.push({ building_floor_id: bf });
+          }
+        } else {
+          andConditions.push({ building_floor_id: bf });
+        }
+      }
+    } else if (floor_id) {
+      andConditions.push({ floor_id: parseInt(floor_id, 10) });
+    }
     if (client_id) andConditions.push({ client_id });
     if (workshop_id) andConditions.push({ workshop_id: parseInt(workshop_id, 10) });
 

@@ -2,10 +2,7 @@
  * API клиент для backend
  */
 
-const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
-if (!import.meta.env.DEV && !import.meta.env.VITE_API_URL) {
-  console.error('VITE_API_URL is not defined');
-}
+import { API_URL } from './apiBaseUrl';
 
 function getToken() {
   return sessionStorage.getItem('token');
@@ -198,6 +195,19 @@ export const api = {
       request('/api/planning/capacity', {
         method: 'PUT',
         body: JSON.stringify(data),
+      }),
+    matrixOrdersMeta: (params) => {
+      const q = new URLSearchParams(params).toString();
+      return request(`/api/planning/matrix-orders-meta?${q}`);
+    },
+    matrixSnapshotGet: (params) => {
+      const q = new URLSearchParams(params).toString();
+      return request(`/api/planning/matrix-snapshot?${q}`);
+    },
+    matrixSnapshotSave: (body) =>
+      request('/api/planning/matrix-snapshot', {
+        method: 'PUT',
+        body: JSON.stringify(body),
       }),
   },
   orderOperations: {

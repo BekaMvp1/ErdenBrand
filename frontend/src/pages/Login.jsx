@@ -6,12 +6,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api';
+import { API_URL } from '../apiBaseUrl';
 import { NeonButton, NeonCard, NeonInput } from '../components/ui';
-
-const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
-if (!import.meta.env.DEV && !import.meta.env.VITE_API_URL) {
-  console.error('VITE_API_URL is not defined');
-}
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -26,6 +22,8 @@ export default function Login() {
     if (API_URL) {
       fetch(`${API_URL}/health`, { mode: 'cors' }).catch(() => {});
       fetch(API_URL.replace(/\/$/, ''), { mode: 'cors' }).catch(() => {});
+    } else {
+      fetch('/health', { cache: 'no-store' }).catch(() => {});
     }
   }, []);
 

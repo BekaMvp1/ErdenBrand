@@ -33,18 +33,23 @@
   overflow: visible;
 }
 
+.print-planning-print-sheet {
+  max-width: 100% !important;
+  width: 100%;
+}
+
 .print-planning-table {
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
-  font-size: 10px;
-  --cell-day: 28px;
-  --cell-text: 72px;
+  font-size: 9px;
+  --cell-day: 26px;
+  --cell-text: 68px;
 }
 
 .print-planning-table th,
 .print-planning-table td {
-  border: 1px solid #000;
+  border: 1px solid #ccc;
   padding: 2px 3px;
   vertical-align: middle;
   overflow: hidden;
@@ -112,24 +117,43 @@
 }
 
 @media print {
-  @page {
+  /* Отдельная страница: альбом A4, не затирает @page других отчётов */
+  @page planning-landscape {
     size: A4 landscape;
-    margin: 8mm;
+    margin: 6mm;
+  }
+
+  .print-planning-print-sheet.print-planning-doc,
+  .print-planning-doc.print-planning-print-sheet {
+    page: planning-landscape;
   }
 
   .print-planning-doc {
-    font-size: 10px !important;
+    font-size: 9px !important;
     max-width: 100% !important;
     padding: 0 !important;
   }
 
+  .print-planning-table-wrap {
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow: visible !important;
+  }
+
   .print-planning-table {
-    font-size: 10px !important;
+    font-size: 9px !important;
+    width: 100% !important;
+    max-width: 100% !important;
   }
 
   .print-planning-table th,
   .print-planning-table td {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
+    border-color: #bfbfbf !important;
+  }
+
+  .print-planning-table thead th {
+    background: #fafafa !important;
   }
 }

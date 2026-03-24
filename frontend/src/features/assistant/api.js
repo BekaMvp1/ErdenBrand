@@ -2,10 +2,7 @@
  * API помощника (Analytics & Assistant)
  */
 
-const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
-if (!import.meta.env.DEV && !import.meta.env.VITE_API_URL) {
-  console.error('VITE_API_URL is not defined');
-}
+import { API_URL } from '../../apiBaseUrl';
 
 function getToken() {
   return sessionStorage.getItem('token');

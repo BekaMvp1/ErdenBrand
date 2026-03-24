@@ -20,12 +20,22 @@ if (!conn) {
   throw new Error('Ожидалась строка DATABASE_URL');
 }
 
+const isLocalPostgres =
+  conn.host === 'localhost' ||
+  conn.host === '127.0.0.1' ||
+  (typeof conn.host === 'string' && conn.host.endsWith('.local'));
+
+const useProductionSsl =
+  env === 'production' &&
+  dbConfig.dialectOptions &&
+  !isLocalPostgres;
+
 const sequelize = new Sequelize(conn.database, conn.username, conn.password, {
   host: conn.host,
   port: conn.port,
   dialect: 'postgres',
   logging: false,
-  ...(env === 'production' && dbConfig.dialectOptions && {
+  ...(useProductionSsl && {
     dialectOptions: dbConfig.dialectOptions,
   }),
   define: {
@@ -94,6 +104,7 @@ const db = {
   ShipmentItem: require('./ShipmentItem')(sequelize, Sequelize.DataTypes),
   OrderComment: require('./OrderComment')(sequelize, Sequelize.DataTypes),
   OrderPart: require('./OrderPart')(sequelize, Sequelize.DataTypes),
+  PlanningMatrixSnapshot: require('./PlanningMatrixSnapshot')(sequelize, Sequelize.DataTypes),
 };
 
 // Связи
@@ -302,6 +313,13 @@ db.Order.hasMany(db.OrderPart, { foreignKey: 'order_id' });
 db.OrderPart.belongsTo(db.Order, { foreignKey: 'order_id' });
 db.BuildingFloor.hasMany(db.OrderPart, { foreignKey: 'floor_id' });
 db.OrderPart.belongsTo(db.BuildingFloor, { foreignKey: 'floor_id' });
+
+db.Workshop.hasMany(db.PlanningMatrixSnapshot, { foreignKey: 'workshop_id' });
+db.PlanningMatrixSnapshot.belongsTo(db.Workshop, { foreignKey: 'workshop_id' });
+db.BuildingFloor.hasMany(db.PlanningMatrixSnapshot, { foreignKey: 'building_floor_id' });
+db.PlanningMatrixSnapshot.belongsTo(db.BuildingFloor, { foreignKey: 'building_floor_id' });
+db.User.hasMany(db.PlanningMatrixSnapshot, { foreignKey: 'updated_by_user_id' });
+db.PlanningMatrixSnapshot.belongsTo(db.User, { foreignKey: 'updated_by_user_id' });
 db.OrderPart.hasMany(db.SewingBatch, { foreignKey: 'order_part_id', as: 'SewingBatches' });
 db.SewingBatch.belongsTo(db.OrderPart, { foreignKey: 'order_part_id', as: 'OrderPart' });
 db.BuildingFloor.hasMany(db.SewingOrderFloor, { foreignKey: 'floor_id' });

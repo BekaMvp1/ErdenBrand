@@ -23,8 +23,12 @@ async function getOrderIdsForPlanningByOperations(sequelize, { workshop_id, floo
       SELECT DISTINCT op.order_id AS id
       FROM order_operations op
       INNER JOIN orders o ON o.id = op.order_id
+      LEFT JOIN operations oper ON oper.id = op.operation_id
       WHERE o.workshop_id = :workshop_id
-        AND op.floor_id = :floor_id
+        AND (
+          op.floor_id = :floor_id
+          OR (op.floor_id IS NULL AND oper.default_floor_id = :floor_id)
+        )
       `,
       {
         replacements: { workshop_id: wid, floor_id: fid },

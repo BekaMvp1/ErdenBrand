@@ -1,5 +1,5 @@
 /**
- * Черновик / превью планирования производства (только UI + локальное состояние).
+ * Планирование производства (таблица недель, заказы и клиенты из API).
  */
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
@@ -23,51 +23,33 @@ const MONTH_NAMES_RU = [
   'Декабрь',
 ];
 
-function getMonday(dateStr) {
-  const d = new Date(dateStr + 'T12:00:00');
-  const day = d.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  d.setDate(d.getDate() + diff);
-  return d.toISOString().slice(0, 10);
-}
-
-function getWeekDates(weekStart) {
-  const dates = [];
-  const d = new Date(weekStart + 'T12:00:00');
-  for (let i = 0; i < 6; i++) {
-    dates.push(d.toISOString().slice(0, 10));
-    d.setDate(d.getDate() + 1);
-  }
-  return dates;
-}
-
+/**
+ * Недели месяца как на backend (getWeeksOfMonth): понедельник..воскресенье,
+ * все недели с week_start <= последний день месяца (в т.ч. начинающиеся до 1-го числа).
+ */
 function getWeeksInMonth(monthKey) {
   const [y, m] = monthKey.split('-').map(Number);
-  const first = `${y}-${String(m).padStart(2, '0')}-01`;
-  const lastDay = new Date(y, m, 0).getDate();
-  const last = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
-
+  const firstDay = new Date(y, m - 1, 1);
+  const lastDay = new Date(y, m, 0);
+  const d = new Date(firstDay);
+  const dayOfWeek = d.getDay();
+  const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  d.setDate(d.getDate() + diffToMonday);
   const weeks = [];
-  let mon = getMonday(first);
   let weekNum = 1;
-  while (mon <= last) {
-    const sun = new Date(mon + 'T12:00:00');
-    sun.setDate(sun.getDate() + 6);
-    const dateTo = sun.toISOString().slice(0, 10);
-    const dates = getWeekDates(mon);
-    const inMonth = dates.some((d) => d >= first && d <= last);
-    if (inMonth) {
-      weeks.push({
-        weekNum,
-        label: `${weekNum} неделя`,
-        dateFrom: mon,
-        dateTo,
-      });
-      weekNum++;
-    }
-    mon = new Date(mon + 'T12:00:00');
-    mon.setDate(mon.getDate() + 7);
-    mon = mon.toISOString().slice(0, 10);
+  while (d <= lastDay) {
+    const weekEnd = new Date(d);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+    const dateFrom = d.toISOString().slice(0, 10);
+    const dateTo = weekEnd.toISOString().slice(0, 10);
+    weeks.push({
+      weekNum,
+      label: `${weekNum} неделя`,
+      dateFrom,
+      dateTo,
+    });
+    weekNum += 1;
+    d.setDate(d.getDate() + 7);
   }
   return weeks;
 }
@@ -102,39 +84,138 @@ function normalizeList(data) {
   return data?.rows ?? data?.data ?? data?.orders ?? data?.clients ?? [];
 }
 
+/** Индекс клиента в списке references по заказу (client_id / Client.id) */
+function clientIdxForOrder(order, clients) {
+  if (!order || !clients?.length) return null;
+  const id = order.client_id ?? order.Client?.id;
+  if (id == null) return null;
+  const idx = clients.findIndex((c) => String(c.id) === String(id));
+  return idx >= 0 ? idx : null;
+}
+
+const emptyWeekCell = () => ({ wk: '', pp: '', pf: '', mp: '', mf: '' });
+
 const initialRows = () =>
   Array.from({ length: ROW_COUNT }, (_, i) => ({
     id: `r${i}`,
     num: i + 1,
-    orderIdx: null,
+    orderId: null,
     custIdx: null,
-    weeks: [
-      { pp: '', pf: '', mp: '', mf: '' },
-      { pp: '', pf: '', mp: '', mf: '' },
-      { pp: '', pf: '', mp: '', mf: '' },
-      { pp: '', pf: '', mp: '', mf: '' },
-    ],
+    weeks: [emptyWeekCell(), emptyWeekCell(), emptyWeekCell(), emptyWeekCell()],
   }));
 
+/** Независимые недели: ячейки сопоставляются по понедельнику wk, а не по индексу колонки */
+function alignRowsToDisplayWeeks(prevRows, displayWeeks) {
+  const slots = displayWeeks.length >= 4 ? displayWeeks.slice(0, 4) : displayWeeks;
+  return prevRows.map((r) => {
+    const outWeeks = [0, 1, 2, 3].map((i) => {
+      const dw = slots[i];
+      const mon = dw?.dateFrom ? String(dw.dateFrom).slice(0, 10) : '';
+      if (!mon) return emptyWeekCell();
+      const arr = Array.isArray(r.weeks) ? r.weeks : [];
+      const byKey = arr.find((w) => w && String(w.wk) === mon);
+      const legacy = !byKey && arr[i] && (!arr[i].wk || arr[i].wk === '') ? arr[i] : null;
+      const src = byKey || legacy;
+      return {
+        wk: mon,
+        pp: src?.pp ?? '',
+        pf: src?.pf ?? '',
+        mp: src?.mp ?? '',
+        mf: src?.mf ?? '',
+      };
+    });
+    return { ...r, weeks: outWeeks };
+  });
+}
+
+function mergeSnapshotWithTemplate(serverRows, displayWeeks) {
+  const base = initialRows();
+  const src = Array.isArray(serverRows) ? serverRows : [];
+  for (let i = 0; i < ROW_COUNT; i++) {
+    if (src[i]) {
+      base[i] = {
+        ...base[i],
+        id: base[i].id,
+        num: base[i].num,
+        orderId: src[i].orderId ?? null,
+        custIdx: src[i].custIdx ?? null,
+        weeks: Array.isArray(src[i].weeks) ? src[i].weeks : base[i].weeks,
+      };
+    }
+  }
+  return alignRowsToDisplayWeeks(base, displayWeeks);
+}
+
+function draftStorageKey(monthKey, weekSliceStart, workshopId, floorId) {
+  return `planning_draft_v1_${monthKey}_${weekSliceStart}_${workshopId || 'all'}_${floorId || 'all'}`;
+}
+
+const PLANNING_UI_KEY = 'planning_ui_v1';
+
+function defaultMonthKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function readSavedPlanningUi() {
+  try {
+    const raw = localStorage.getItem(PLANNING_UI_KEY);
+    if (!raw) return null;
+    const o = JSON.parse(raw);
+    return o && typeof o === 'object' ? o : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function PlanningDraft() {
+  const savedUiOnceRef = useRef(undefined);
+  if (savedUiOnceRef.current === undefined) {
+    savedUiOnceRef.current =
+      typeof window !== 'undefined' ? readSavedPlanningUi() : null;
+  }
+  const savedUi = savedUiOnceRef.current;
+
   const [rows, setRows] = useState(initialRows);
   const [orders, setOrders] = useState([]);
   const [clients, setClients] = useState([]);
   const [workshops, setWorkshops] = useState([]);
   const [floors, setFloors] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [ordersLoading, setOrdersLoading] = useState(false);
   const [error, setError] = useState('');
+  const [planningMsg, setPlanningMsg] = useState('');
+  const [capacitySaving, setCapacitySaving] = useState(false);
 
   const [monthKey, setMonthKey] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const def = defaultMonthKey();
+    const m = savedUi?.monthKey;
+    return m && /^\d{4}-\d{2}$/.test(String(m)) ? String(m) : def;
   });
-  const [weekSliceStart, setWeekSliceStart] = useState(0);
-  const [workshopId, setWorkshopId] = useState('');
-  const [floorId, setFloorId] = useState('');
-  const [searchQ, setSearchQ] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [weekSliceStart, setWeekSliceStart] = useState(() => {
+    const n = Number(savedUi?.weekSliceStart);
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  });
+  /** Индекс колонки недели 0–3 в текущем окне: для мощности и печати */
+  const [primaryWeekIndex, setPrimaryWeekIndex] = useState(() => {
+    const n = Number(savedUi?.primaryWeekIndex);
+    if (!Number.isFinite(n)) return 0;
+    return Math.min(3, Math.max(0, n));
+  });
+  const [workshopId, setWorkshopId] = useState(() =>
+    savedUi?.workshopId != null && savedUi.workshopId !== '' ? String(savedUi.workshopId) : ''
+  );
+  const [floorId, setFloorId] = useState(() =>
+    savedUi?.floorId != null && savedUi.floorId !== '' ? String(savedUi.floorId) : ''
+  );
+  const [searchQ, setSearchQ] = useState(() =>
+    typeof savedUi?.searchQ === 'string' ? savedUi.searchQ : ''
+  );
+  const [debouncedSearch, setDebouncedSearch] = useState(() =>
+    typeof savedUi?.searchQ === 'string' ? savedUi.searchQ.trim() : ''
+  );
   const [capacityInput, setCapacityInput] = useState('');
+  const [orderMeta, setOrderMeta] = useState({});
 
   const [openDropdown, setOpenDropdown] = useState(null);
   const [ddSearch, setDdSearch] = useState('');
@@ -144,9 +225,28 @@ export default function PlanningDraft() {
   const ddSearchInputRef = useRef(null);
 
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(searchQ.trim().toLowerCase()), 300);
+    const t = setTimeout(() => setDebouncedSearch(searchQ.trim()), 120);
     return () => clearTimeout(t);
   }, [searchQ]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem(
+        PLANNING_UI_KEY,
+        JSON.stringify({
+          monthKey,
+          weekSliceStart,
+          workshopId,
+          floorId,
+          searchQ,
+          primaryWeekIndex,
+        })
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [monthKey, weekSliceStart, workshopId, floorId, searchQ, primaryWeekIndex]);
 
   useEffect(() => {
     let cancelled = false;
@@ -154,13 +254,11 @@ export default function PlanningDraft() {
       setLoading(true);
       setError('');
       try {
-        const [o, c, w] = await Promise.all([
-          api.orders.list({ limit: 500 }),
+        const [c, w] = await Promise.all([
           api.references.clients(),
           api.workshops.list(true),
         ]);
         if (cancelled) return;
-        setOrders(normalizeList(o));
         setClients(normalizeList(c));
         setWorkshops(Array.isArray(w) ? w : normalizeList(w));
       } catch (e) {
@@ -174,6 +272,90 @@ export default function PlanningDraft() {
       cancelled = true;
     };
   }, []);
+
+  const selectedWorkshop = useMemo(
+    () =>
+      workshopId
+        ? workshops.find((w) => String(w.id) === String(workshopId)) ?? null
+        : null,
+    [workshops, workshopId]
+  );
+  /** Цех с 4 этажами — заказы и план только после выбора этажа */
+  const needsWorkshopFloor = Number(selectedWorkshop?.floors_count) === 4;
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (loading) {
+        return;
+      }
+      if (!workshopId || (needsWorkshopFloor && !floorId)) {
+        setOrders([]);
+        setOrdersLoading(false);
+        return;
+      }
+      setOrdersLoading(true);
+      try {
+        const params = {
+          limit: 500,
+          workshop_id: workshopId,
+        };
+        if (floorId) params.building_floor_id = floorId;
+        if (debouncedSearch) params.search = debouncedSearch.trim();
+        const o = await api.orders.list(params);
+        if (cancelled) return;
+        const list = normalizeList(o).filter(
+          (x) =>
+            String(x.workshop_id ?? x.Workshop?.id ?? '') === String(workshopId)
+        );
+        setOrders(list);
+      } catch (e) {
+        console.error(e);
+        if (!cancelled) setOrders([]);
+      } finally {
+        if (!cancelled) setOrdersLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, workshopId, floorId, debouncedSearch, needsWorkshopFloor]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!workshopId || (needsWorkshopFloor && !floorId)) {
+      setOrderMeta({});
+      return undefined;
+    }
+    const params = { workshop_id: workshopId };
+    if (needsWorkshopFloor) params.building_floor_id = floorId;
+    api.planning
+      .matrixOrdersMeta(params)
+      .then((data) => {
+        if (cancelled) return;
+        const m = {};
+        for (const x of data.meta || []) {
+          m[x.order_id] = x;
+        }
+        setOrderMeta(m);
+      })
+      .catch(() => {
+        if (!cancelled) setOrderMeta({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workshopId, floorId, needsWorkshopFloor]);
+
+  useEffect(() => {
+    setRows((prev) =>
+      prev.map((r) => {
+        if (!r.orderId) return r;
+        if (orders.some((o) => o.id === r.orderId)) return r;
+        return { ...r, orderId: null, custIdx: null };
+      })
+    );
+  }, [orders]);
 
   useEffect(() => {
     if (!workshopId) {
@@ -208,6 +390,10 @@ export default function PlanningDraft() {
     setWeekSliceStart((s) => Math.min(s, maxStart));
   }, [monthKey, allWeeks.length]);
 
+  useEffect(() => {
+    setPrimaryWeekIndex(0);
+  }, [monthKey]);
+
   const displayWeeks = useMemo(() => {
     const slice = allWeeks.slice(weekSliceStart, weekSliceStart + 4);
     const out = [...slice];
@@ -221,6 +407,134 @@ export default function PlanningDraft() {
     }
     return out;
   }, [allWeeks, weekSliceStart]);
+
+  const displayWeekKeys = useMemo(
+    () => displayWeeks.map((w) => w.dateFrom || '').join('|'),
+    [displayWeeks]
+  );
+
+  const primaryWeekMonday = useMemo(() => {
+    const w = displayWeeks[primaryWeekIndex];
+    return w?.dateFrom ? String(w.dateFrom).slice(0, 10) : '';
+  }, [displayWeeks, primaryWeekIndex]);
+
+  useEffect(() => {
+    if (!displayWeeks[primaryWeekIndex]?.dateFrom) {
+      const fi = displayWeeks.findIndex((w) => w.dateFrom);
+      if (fi >= 0) setPrimaryWeekIndex(fi);
+    }
+  }, [displayWeeks, primaryWeekIndex]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!workshopId || !primaryWeekMonday) {
+      setCapacityInput('');
+      return undefined;
+    }
+    if (needsWorkshopFloor && !floorId) {
+      setCapacityInput('');
+      return undefined;
+    }
+    (async () => {
+      try {
+        const params = { month: monthKey, workshop_id: workshopId };
+        if (needsWorkshopFloor) params.floor_id = floorId;
+        const data = await api.planning.weekly(params);
+        if (cancelled) return;
+        const totals = data.week_totals || data.weekTotals || [];
+        const wt = totals.find(
+          (t) => String(t.week_start).slice(0, 10) === primaryWeekMonday
+        );
+        setCapacityInput(
+          wt != null && wt.capacity_week != null ? String(wt.capacity_week) : ''
+        );
+      } catch {
+        if (!cancelled) setCapacityInput('');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [monthKey, workshopId, floorId, needsWorkshopFloor, primaryWeekMonday]);
+
+  const draftKey = useMemo(
+    () => draftStorageKey(monthKey, weekSliceStart, workshopId, floorId),
+    [monthKey, weekSliceStart, workshopId, floorId]
+  );
+
+  useEffect(() => {
+    if (!workshopId) {
+      setRows(mergeSnapshotWithTemplate(null, displayWeeks));
+      return;
+    }
+    if (needsWorkshopFloor && !floorId) {
+      setRows(mergeSnapshotWithTemplate(null, displayWeeks));
+    }
+  }, [workshopId, floorId, needsWorkshopFloor, displayWeekKeys, displayWeeks]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!workshopId || (needsWorkshopFloor && !floorId) || loading) {
+      return undefined;
+    }
+    (async () => {
+      try {
+        const params = {
+          month: monthKey,
+          workshop_id: workshopId,
+          week_slice_start: String(weekSliceStart),
+        };
+        if (floorId) params.floor_id = floorId;
+        const snap = await api.planning.matrixSnapshotGet(params);
+        if (cancelled) return;
+        if (snap.rows && Array.isArray(snap.rows)) {
+          setRows(mergeSnapshotWithTemplate(snap.rows, displayWeeks));
+          return;
+        }
+      } catch (e) {
+        console.warn(e);
+      }
+      if (cancelled) return;
+      try {
+        const raw = localStorage.getItem(draftKey);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length === ROW_COUNT) {
+            setRows(mergeSnapshotWithTemplate(parsed, displayWeeks));
+            return;
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+      if (!cancelled) setRows(mergeSnapshotWithTemplate(null, displayWeeks));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    draftKey,
+    displayWeekKeys,
+    workshopId,
+    floorId,
+    needsWorkshopFloor,
+    loading,
+    monthKey,
+    weekSliceStart,
+    displayWeeks,
+  ]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(draftKey, JSON.stringify(rows));
+      } catch {
+        /* ignore */
+      }
+    }, 500);
+    return () => clearTimeout(t);
+  }, [rows, draftKey]);
 
   const monthNameRu = MONTH_NAMES_RU[parseInt(monthKey.split('-')[1], 10) - 1] || '';
 
@@ -237,36 +551,60 @@ export default function PlanningDraft() {
     }
   }, [weekSliceStart, allWeeks.length]);
 
+  const eligiblePickerOrders = useMemo(() => {
+    const metaReady = Object.keys(orderMeta).length > 0;
+    return orders.filter((o) => {
+      const m = orderMeta[o.id];
+      if (metaReady) {
+        if (!m) return false;
+        if (!m.is_active) return false;
+        if (m.remainder <= 0) return false;
+      }
+      return true;
+    });
+  }, [orders, orderMeta]);
+
   const filteredOrders = useMemo(() => {
     const q = ddSearch.trim().toLowerCase();
-    if (!q) return orders;
-    return orders.filter((o) => {
+    let base = eligiblePickerOrders;
+    if (openDropdown) {
+      base = base.filter((o) => {
+        const isSet = (o.model_type || 'regular') === 'set';
+        if (isSet) return true;
+        return !rows.some((rr) => rr.id !== openDropdown && rr.orderId === o.id);
+      });
+    }
+    if (!q) return base;
+    return base.filter((o) => {
       const name = orderDisplayName(o).toLowerCase();
       const art = String(o.article || o.tz_code || '').toLowerCase();
       const cl = (o.Client?.name || '').toLowerCase();
-      return name.includes(q) || art.includes(q) || cl.includes(q);
+      const idStr = String(o.id);
+      return (
+        name.includes(q) || art.includes(q) || cl.includes(q) || idStr.includes(q)
+      );
     });
-  }, [orders, ddSearch]);
+  }, [eligiblePickerOrders, ddSearch, openDropdown, rows]);
 
   const rowMatchesFilter = useCallback(
     (r) => {
-      if (!debouncedSearch) return true;
-      const o = r.orderIdx !== null ? orders[r.orderIdx] : null;
+      const q = debouncedSearch.trim().toLowerCase();
+      if (!q) return true;
+      const o = r.orderId != null ? orders.find((x) => x.id === r.orderId) : null;
       const cust = r.custIdx !== null ? clients[r.custIdx] : null;
       const hay = [
         o ? orderDisplayName(o) : '',
         o?.article || '',
         o?.tz_code || '',
+        o?.id != null ? String(o.id) : '',
         cust?.name || '',
       ]
         .join(' ')
         .toLowerCase();
-      return hay.includes(debouncedSearch);
+      return hay.includes(q);
     },
     [debouncedSearch, orders, clients]
   );
-
-  const filledCount = useMemo(() => rows.filter((r) => r.orderIdx !== null).length, [rows]);
 
   const updateWeekCell = (rowId, weekIdx, field, value) => {
     setRows((prev) =>
@@ -290,6 +628,16 @@ export default function PlanningDraft() {
   };
 
   const openOrderDropdown = (rowId, el) => {
+    if (!workshopId) {
+      setPlanningMsg('Сначала выберите цех — в списке будут только заказы этого цеха');
+      setTimeout(() => setPlanningMsg(''), 4500);
+      return;
+    }
+    if (needsWorkshopFloor && !floorId) {
+      setPlanningMsg('Выберите этаж — список заказов будет только для этого этажа');
+      setTimeout(() => setPlanningMsg(''), 4500);
+      return;
+    }
     if (openDropdown === rowId) {
       setOpenDropdown(null);
       setDdSearch('');
@@ -352,9 +700,21 @@ export default function PlanningDraft() {
     }
   }, [openDropdown]);
 
-  const selectOrder = (rowId, idx) => {
+  useEffect(() => {
+    if (!workshopId || (needsWorkshopFloor && !floorId)) {
+      setOpenDropdown(null);
+      setDdSearch('');
+    }
+  }, [workshopId, floorId, needsWorkshopFloor]);
+
+  const selectOrder = (rowId, order) => {
+    const custIdx = clientIdxForOrder(order, clients);
     setRows((prev) =>
-      prev.map((r) => (r.id === rowId ? { ...r, orderIdx: idx } : r))
+      prev.map((r) =>
+        r.id === rowId
+          ? { ...r, orderId: order.id, custIdx: custIdx !== null ? custIdx : null }
+          : r
+      )
     );
     setOpenDropdown(null);
     setDdSearch('');
@@ -362,10 +722,116 @@ export default function PlanningDraft() {
 
   const clearOrder = (rowId) => {
     setRows((prev) =>
-      prev.map((r) => (r.id === rowId ? { ...r, orderIdx: null } : r))
+      prev.map((r) => (r.id === rowId ? { ...r, orderId: null, custIdx: null } : r))
     );
     setOpenDropdown(null);
     setDdSearch('');
+  };
+
+  const handleSaveCapacity = async () => {
+    if (!workshopId || !primaryWeekMonday) {
+      setPlanningMsg('Выберите цех и неделю для мощности');
+      setTimeout(() => setPlanningMsg(''), 4000);
+      return;
+    }
+    if (needsWorkshopFloor && !floorId) {
+      setPlanningMsg('Для этого цеха выберите этаж');
+      setTimeout(() => setPlanningMsg(''), 4000);
+      return;
+    }
+    setCapacitySaving(true);
+    try {
+      const body = {
+        workshop_id: Number(workshopId),
+        week_start: primaryWeekMonday,
+        capacity_week: parseFloat(String(capacityInput).replace(',', '.')) || 0,
+      };
+      if (needsWorkshopFloor) body.floor_id = Number(floorId);
+      await api.planning.saveCapacity(body);
+      const capW = parseFloat(String(capacityInput).replace(',', '.')) || 0;
+      const perD = capW > 0 ? Math.round(capW / 6) : 0;
+      setPlanningMsg(
+        perD > 0
+          ? `Мощность сохранена (~${perD} шт/день на 6 р.д., календарь/печать)`
+          : 'Мощность сохранена'
+      );
+      setTimeout(() => setPlanningMsg(''), 4000);
+    } catch (e) {
+      setPlanningMsg(e?.message || 'Ошибка сохранения мощности');
+      setTimeout(() => setPlanningMsg(''), 5000);
+    } finally {
+      setCapacitySaving(false);
+    }
+  };
+
+  const handleSaveDraft = async () => {
+    if (!workshopId || (needsWorkshopFloor && !floorId)) {
+      setPlanningMsg('Выберите цех и этаж для сохранения');
+      setTimeout(() => setPlanningMsg(''), 4000);
+      return;
+    }
+    const payloadRows = rows.map((r) => ({
+      id: r.id,
+      num: r.num,
+      orderId: r.orderId,
+      custIdx: r.custIdx,
+      weeks: r.weeks,
+    }));
+    try {
+      await api.planning.matrixSnapshotSave({
+        month: monthKey,
+        workshop_id: Number(workshopId),
+        week_slice_start: weekSliceStart,
+        ...(needsWorkshopFloor ? { floor_id: Number(floorId) } : {}),
+        rows: payloadRows,
+      });
+      try {
+        localStorage.setItem(draftKey, JSON.stringify(rows));
+      } catch {
+        /* ignore */
+      }
+      setPlanningMsg('Сохранено в базе данных');
+      setTimeout(() => setPlanningMsg(''), 3500);
+    } catch (e) {
+      setPlanningMsg(e?.message || 'Ошибка сохранения на сервер');
+      setTimeout(() => setPlanningMsg(''), 5000);
+    }
+  };
+
+  const handlePrint = (e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (!workshopId) {
+      setPlanningMsg('Выберите цех для печати');
+      setTimeout(() => setPlanningMsg(''), 4000);
+      return;
+    }
+    if (needsWorkshopFloor && !floorId) {
+      setPlanningMsg('Для этого цеха выберите этаж');
+      setTimeout(() => setPlanningMsg(''), 4000);
+      return;
+    }
+    if (!primaryWeekMonday) {
+      setPlanningMsg('Выберите неделю для печати (поле «Неделя для мощности и печати»)');
+      setTimeout(() => setPlanningMsg(''), 5000);
+      return;
+    }
+    const qs = new URLSearchParams({ workshop_id: String(workshopId), week: primaryWeekMonday });
+    if (floorId) qs.set('floor_id', String(floorId));
+    const qq = debouncedSearch.trim();
+    if (qq) qs.set('q', qq);
+    const relPath = `print/planning/${monthKey}?${qs.toString()}`;
+    const base = import.meta.env.BASE_URL || '/';
+    const href = new URL(relPath, `${window.location.origin}${base}`).href;
+    const a = document.createElement('a');
+    a.href = href;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   };
 
   const onCustChange = (rowId, idxStr) => {
@@ -442,46 +908,23 @@ export default function PlanningDraft() {
           borderColor: 'var(--border)',
         }}
       >
-        <span
-          className="rounded px-2 py-0.5 text-xs font-bold text-white"
-          style={{ background: 'var(--accent)' }}
-        >
-          ЧЕРНОВИК
-        </span>
         <h1 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>
           Планирование производства
         </h1>
       </header>
 
-      {/* Stats */}
-      <div
-        className="flex flex-wrap gap-2.5 px-[18px] py-2.5"
-        style={{ gap: '10px', padding: '10px 18px' }}
-      >
-        {[
-          { label: 'Всего', value: ROW_COUNT, color: '#58a6ff' },
-          { label: 'Заполнено', value: filledCount, color: 'var(--accent)' },
-          { label: 'Выполнено', value: 0, color: 'var(--accent)' },
-          { label: '% выполнения', value: '0%', color: 'var(--warn)' },
-        ].map((c) => (
-          <div
-            key={c.label}
-            className="min-w-[120px] flex-1 rounded-[10px] border px-[18px] py-2.5"
-            style={{
-              background: 'var(--bg2)',
-              borderColor: 'var(--border)',
-              padding: '10px 18px',
-            }}
-          >
-            <div className="text-xs" style={{ color: 'var(--muted)' }}>
-              {c.label}
-            </div>
-            <div className="text-xl font-bold" style={{ color: c.color }}>
-              {c.value}
-            </div>
-          </div>
-        ))}
-      </div>
+      {planningMsg ? (
+        <div
+          className="border-b px-4 py-2 text-sm"
+          style={{
+            background: 'rgba(107,175,0,0.12)',
+            borderColor: 'var(--border)',
+            color: 'var(--text)',
+          }}
+        >
+          {planningMsg}
+        </div>
+      ) : null}
 
       {/* Filters */}
       <div
@@ -543,24 +986,26 @@ export default function PlanningDraft() {
           ))}
         </select>
 
-        <select
-          className="rounded border px-2 py-1.5 text-sm outline-none"
-          style={{
-            background: 'var(--surface)',
-            borderColor: 'var(--border)',
-            color: 'var(--text)',
-          }}
-          value={floorId}
-          onChange={(e) => setFloorId(e.target.value)}
-          disabled={!workshopId}
-        >
-          <option value="">Этаж</option>
-          {floors.map((f) => (
-            <option key={f.id} value={f.id}>
-              {f.name}
-            </option>
-          ))}
-        </select>
+        {needsWorkshopFloor ? (
+          <select
+            className="rounded border px-2 py-1.5 text-sm outline-none"
+            style={{
+              background: 'var(--surface)',
+              borderColor: 'var(--border)',
+              color: 'var(--text)',
+            }}
+            value={floorId}
+            onChange={(e) => setFloorId(e.target.value)}
+            disabled={!workshopId}
+          >
+            <option value="">Этаж</option>
+            {floors.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
+            ))}
+          </select>
+        ) : null}
 
         <input
           type="search"
@@ -575,6 +1020,34 @@ export default function PlanningDraft() {
           value={searchQ}
           onChange={(e) => setSearchQ(e.target.value)}
         />
+
+        {ordersLoading ? (
+          <span className="text-xs" style={{ color: 'var(--muted)' }}>
+            Заказы…
+          </span>
+        ) : null}
+
+        <select
+          className="rounded border px-2 py-1.5 text-sm outline-none"
+          style={{
+            background: 'var(--surface)',
+            borderColor: 'var(--border)',
+            color: 'var(--text)',
+            maxWidth: 220,
+          }}
+          value={String(primaryWeekIndex)}
+          onChange={(e) => setPrimaryWeekIndex(parseInt(e.target.value, 10) || 0)}
+          disabled={!workshopId || (needsWorkshopFloor && !floorId)}
+          title="Неделя для загрузки/сохранения мощности и для печати"
+        >
+          {displayWeeks.map((w, i) => (
+            <option key={i} value={String(i)} disabled={!w.dateFrom}>
+              {w.dateFrom
+                ? `Неделя ${w.weekNum} (${formatDdMm(w.dateFrom)}–${formatDdMm(w.dateTo)}) — мощность и печать`
+                : '—'}
+            </option>
+          ))}
+        </select>
 
         <div className="h-6 w-px shrink-0" style={{ background: 'var(--border)' }} />
 
@@ -620,6 +1093,7 @@ export default function PlanningDraft() {
         <input
           type="number"
           placeholder="Мощность"
+          title="Мощность за неделю; в календаре и печати делится на 6 рабочих дней"
           className="rounded border px-1 py-1.5 text-sm outline-none"
           style={{
             width: '60px',
@@ -630,18 +1104,31 @@ export default function PlanningDraft() {
           value={capacityInput}
           onChange={(e) => setCapacityInput(e.target.value)}
         />
+        {(() => {
+          const capN = parseFloat(String(capacityInput).replace(',', '.'));
+          if (!Number.isFinite(capN) || capN <= 0) return null;
+          const perDay = Math.round(capN / 6);
+          return (
+            <span className="text-xs whitespace-nowrap" style={{ color: 'var(--muted)' }}>
+              → {perDay} шт/день (6 р.д.)
+            </span>
+          );
+        })()}
 
         <button
           type="button"
-          className="rounded px-3 py-1.5 text-sm font-semibold text-white"
+          className="rounded px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
           style={{ background: 'var(--accent)' }}
+          disabled={capacitySaving || !workshopId || !primaryWeekMonday || (needsWorkshopFloor && !floorId)}
+          onClick={handleSaveCapacity}
         >
-          Сохранить мощность
+          {capacitySaving ? 'Сохранение…' : 'Сохранить мощность'}
         </button>
         <button
           type="button"
           className="rounded px-3 py-1.5 text-sm font-semibold text-white"
           style={{ background: 'var(--accent)' }}
+          onClick={handleSaveDraft}
         >
           Сохранить
         </button>
@@ -659,7 +1146,7 @@ export default function PlanningDraft() {
           onMouseLeave={(e) => {
             e.currentTarget.style.borderColor = 'var(--border)';
           }}
-          onClick={() => window.print()}
+          onClick={handlePrint}
         >
           🖨 Печать
         </button>
@@ -669,23 +1156,27 @@ export default function PlanningDraft() {
       <div
         ref={tableScrollRef}
         className="planning-draft-scroll overflow-auto"
-        style={{ maxHeight: 'calc(100vh - 195px)' }}
+        style={{ maxHeight: 'calc(100vh - 120px)' }}
       >
         <table
           className="border-collapse"
-          style={{ width: 'max-content', borderColor: 'var(--border)' }}
+          style={{
+            width: 'max-content',
+            border: '1px solid var(--border)',
+            borderColor: 'var(--border)',
+          }}
         >
           <thead>
             <tr>
               <th
                 rowSpan={3}
-                className="sticky left-0 z-[150] border px-1 text-xs font-medium"
+                className="sticky left-0 z-[150] px-1 text-xs font-medium"
                 style={{
                   top: 0,
                   width: 36,
                   minWidth: 36,
                   background: 'var(--bg2)',
-                  borderColor: 'var(--border)',
+                  border: '1px solid var(--border)',
                   zIndex: 150,
                 }}
               >
@@ -693,14 +1184,14 @@ export default function PlanningDraft() {
               </th>
               <th
                 rowSpan={3}
-                className="sticky z-[150] border px-1 text-xs font-medium"
+                className="sticky z-[150] px-1 text-xs font-medium"
                 style={{
                   left: 36,
                   top: 0,
                   width: 60,
                   minWidth: 60,
                   background: 'var(--bg2)',
-                  borderColor: 'var(--border)',
+                  border: '1px solid var(--border)',
                   zIndex: 150,
                 }}
               >
@@ -708,14 +1199,14 @@ export default function PlanningDraft() {
               </th>
               <th
                 rowSpan={3}
-                className="sticky z-[150] border px-1 text-left text-xs font-medium"
+                className="sticky z-[150] px-1 text-left text-xs font-medium"
                 style={{
                   left: 96,
                   top: 0,
                   width: 220,
                   minWidth: 220,
                   background: 'var(--bg2)',
-                  borderColor: 'var(--border)',
+                  border: '1px solid var(--border)',
                   zIndex: 150,
                 }}
               >
@@ -723,14 +1214,14 @@ export default function PlanningDraft() {
               </th>
               <th
                 rowSpan={3}
-                className="sticky z-[150] border px-1 text-xs font-medium"
+                className="sticky z-[150] px-1 text-xs font-medium"
                 style={{
                   left: 316,
                   top: 0,
                   width: 100,
                   minWidth: 100,
                   background: 'var(--bg2)',
-                  borderColor: 'var(--border)',
+                  border: '1px solid var(--border)',
                   boxShadow: '6px 0 12px rgba(0,0,0,0.6)',
                   zIndex: 150,
                 }}
@@ -741,11 +1232,18 @@ export default function PlanningDraft() {
                 <th
                   key={wi}
                   colSpan={4}
-                  className="border border-l-2 px-1 text-center text-xs font-medium"
+                  className="px-1 text-center text-xs font-medium"
                   style={{
-                    borderLeftColor: 'var(--accent)',
-                    borderColor: 'var(--border)',
-                    background: 'var(--bg2)',
+                    border: '1px solid var(--border)',
+                    borderLeft: '2px solid var(--accent)',
+                    background:
+                      wi === primaryWeekIndex && w.dateFrom
+                        ? 'rgba(107,175,0,0.12)'
+                        : 'var(--bg2)',
+                    boxShadow:
+                      wi === primaryWeekIndex && w.dateFrom
+                        ? 'inset 0 -3px 0 0 var(--accent)'
+                        : undefined,
                     top: 0,
                     zIndex: 100,
                   }}
@@ -764,12 +1262,12 @@ export default function PlanningDraft() {
               ))}
               <th
                 rowSpan={3}
-                className="border px-1 text-xs font-medium"
+                className="px-1 text-xs font-medium"
                 style={{
                   width: 65,
                   minWidth: 65,
                   background: 'var(--bg2)',
-                  borderColor: 'var(--border)',
+                  border: '1px solid var(--border)',
                   top: 0,
                   zIndex: 100,
                 }}
@@ -782,10 +1280,10 @@ export default function PlanningDraft() {
                 <React.Fragment key={wi}>
                   <th
                     colSpan={2}
-                    className="border border-l-2 px-1 text-center text-[10px] font-medium"
+                    className="px-1 text-center text-[10px] font-medium"
                     style={{
-                      borderLeftColor: '#e3b341',
-                      borderColor: 'var(--border)',
+                      border: '1px solid var(--border)',
+                      borderLeft: '2px solid #e3b341',
                       background: 'rgba(227,179,65,0.1)',
                       color: '#e3b341',
                       top: 28,
@@ -796,10 +1294,10 @@ export default function PlanningDraft() {
                   </th>
                   <th
                     colSpan={2}
-                    className="border border-l-2 px-1 text-center text-[10px] font-medium"
+                    className="px-1 text-center text-[10px] font-medium"
                     style={{
-                      borderLeftColor: 'var(--accent)',
-                      borderColor: 'var(--border)',
+                      border: '1px solid var(--border)',
+                      borderLeft: '2px solid var(--accent)',
                       background: 'var(--bg2)',
                       top: 28,
                       zIndex: 100,
@@ -814,9 +1312,10 @@ export default function PlanningDraft() {
               {displayWeeks.map((w, wi) => (
                 <React.Fragment key={wi}>
                   <th
-                    className="border border-l-2 px-0.5 text-[10px] font-normal"
+                    className="px-0.5 text-[10px] font-normal"
                     style={{
-                      borderLeftColor: '#e3b341',
+                      border: '1px solid var(--border)',
+                      borderLeft: '2px solid #e3b341',
                       background: 'rgba(227,179,65,0.06)',
                       color: '#e3b341',
                       width: 52,
@@ -828,8 +1327,9 @@ export default function PlanningDraft() {
                     План
                   </th>
                   <th
-                    className="border px-0.5 text-[10px] font-normal"
+                    className="px-0.5 text-[10px] font-normal"
                     style={{
+                      border: '1px solid var(--border)',
                       background: 'rgba(227,179,65,0.06)',
                       color: '#e3b341',
                       width: 52,
@@ -841,9 +1341,10 @@ export default function PlanningDraft() {
                     Факт
                   </th>
                   <th
-                    className="border border-l-2 px-0.5 text-[10px] font-normal"
+                    className="px-0.5 text-[10px] font-normal"
                     style={{
-                      borderLeftColor: 'var(--accent)',
+                      border: '1px solid var(--border)',
+                      borderLeft: '2px solid var(--accent)',
                       background: 'var(--bg2)',
                       color: 'var(--text)',
                       width: 52,
@@ -855,8 +1356,9 @@ export default function PlanningDraft() {
                     План
                   </th>
                   <th
-                    className="border px-0.5 text-[10px] font-normal"
+                    className="px-0.5 text-[10px] font-normal"
                     style={{
+                      border: '1px solid var(--border)',
                       background: 'var(--bg2)',
                       color: 'var(--text)',
                       width: 52,
@@ -873,36 +1375,39 @@ export default function PlanningDraft() {
           </thead>
           <tbody>
             {rows.map((r) => {
-              const order = r.orderIdx !== null ? orders[r.orderIdx] : null;
+              const order = r.orderId != null ? orders.find((o) => o.id === r.orderId) : null;
               const art = order?.article || order?.tz_code || '';
               const total = rowSum(r);
+              const meta = order ? orderMeta[order.id] : null;
+              const overRemainder =
+                meta != null && total > (meta.remainder ?? 0) + 1e-6;
               const dim =
-                debouncedSearch && !rowMatchesFilter(r) ? 0.35 : 1;
+                debouncedSearch.trim() && !rowMatchesFilter(r) ? 0.35 : 1;
               return (
                 <tr
                   key={r.id}
-                  className="group/row border-b transition-colors"
-                  style={{ borderColor: 'var(--border)', opacity: dim }}
+                  className="group/row transition-colors"
+                  style={{ borderBottom: '1px solid var(--border)', opacity: dim }}
                 >
                   <td
-                    className="group-hover/row:bg-[var(--surface2)] sticky left-0 z-40 border px-1 text-center text-xs transition-colors group-hover/row:!bg-[#1d2229]"
+                    className="group-hover/row:bg-[var(--surface2)] sticky left-0 z-40 px-1 text-center text-xs transition-colors group-hover/row:!bg-[#1d2229]"
                     style={{
                       width: 36,
                       minWidth: 36,
                       background: 'var(--bg)',
-                      borderColor: 'var(--border)',
+                      border: '1px solid var(--border)',
                     }}
                   >
                     {r.num}
                   </td>
                   <td
-                    className="group-hover/row:bg-[var(--surface2)] sticky z-40 border px-1 text-xs transition-colors group-hover/row:!bg-[#1d2229]"
+                    className="group-hover/row:bg-[var(--surface2)] sticky z-40 px-1 text-xs transition-colors group-hover/row:!bg-[#1d2229]"
                     style={{
                       left: 36,
                       width: 60,
                       minWidth: 60,
                       background: 'var(--bg)',
-                      borderColor: 'var(--border)',
+                      border: '1px solid var(--border)',
                     }}
                   >
                     {art ? (
@@ -918,13 +1423,13 @@ export default function PlanningDraft() {
                     ) : null}
                   </td>
                   <td
-                    className="group-hover/row:bg-[var(--surface2)] sticky z-40 border p-0 transition-colors group-hover/row:!bg-[#1d2229]"
+                    className="group-hover/row:bg-[var(--surface2)] sticky z-40 p-0 transition-colors group-hover/row:!bg-[#1d2229]"
                     style={{
                       left: 96,
                       width: 220,
                       minWidth: 220,
                       background: 'var(--bg)',
-                      borderColor: 'var(--border)',
+                      border: '1px solid var(--border)',
                     }}
                   >
                     <div
@@ -933,7 +1438,7 @@ export default function PlanningDraft() {
                       }}
                       role="button"
                       tabIndex={0}
-                      className="flex cursor-pointer items-center gap-1 px-1 py-1"
+                      className="flex cursor-pointer items-start gap-1 px-1 py-1"
                       onClick={(e) => openOrderDropdown(r.id, e.currentTarget)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
@@ -942,18 +1447,41 @@ export default function PlanningDraft() {
                         }
                       }}
                     >
-                      <span
-                        className="min-w-0 flex-1 truncate text-xs"
-                        style={{ color: order ? 'var(--text)' : 'var(--muted)' }}
-                      >
-                        {order ? orderDisplayName(order) : (
-                          <span className="italic">— выберите заказ —</span>
-                        )}
-                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div
+                          className="truncate text-xs"
+                          style={{ color: order ? 'var(--text)' : 'var(--muted)' }}
+                        >
+                          {order ? (
+                            orderDisplayName(order)
+                          ) : (
+                            <span className="italic">
+                              {!workshopId
+                                ? '— сначала выберите цех —'
+                                : needsWorkshopFloor && !floorId
+                                  ? '— выберите этаж —'
+                                  : '— выберите заказ —'}
+                            </span>
+                          )}
+                        </div>
+                        {order && meta ? (
+                          <div
+                            className="mt-0.5 text-[9px] leading-tight"
+                            style={{ color: 'var(--muted)' }}
+                          >
+                            Всего {meta.total_quantity} · запл. {meta.planned_quantity} · ост.{' '}
+                            {meta.remainder}
+                            {(order.model_type || 'regular') === 'set'
+                              ? ' · комплект'
+                              : ' · обычный'}
+                          </div>
+                        ) : null}
+                      </div>
                       <span
                         className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded border text-[10px] leading-none transition-all"
                         style={{
-                          borderColor: openDropdown === r.id ? 'var(--accent)' : 'var(--border)',
+                          borderColor:
+                            openDropdown === r.id ? 'var(--accent)' : 'var(--border)',
                           background:
                             openDropdown === r.id ? 'var(--accent)' : 'var(--surface2)',
                           color: openDropdown === r.id ? '#fff' : 'var(--text)',
@@ -965,13 +1493,13 @@ export default function PlanningDraft() {
                     </div>
                   </td>
                   <td
-                    className="group-hover/row:bg-[var(--surface2)] sticky z-40 border p-0 transition-colors group-hover/row:!bg-[#1d2229]"
+                    className="group-hover/row:bg-[var(--surface2)] sticky z-40 p-0 transition-colors group-hover/row:!bg-[#1d2229]"
                     style={{
                       left: 316,
                       width: 100,
                       minWidth: 100,
                       background: 'var(--bg)',
-                      borderColor: 'var(--border)',
+                      border: '1px solid var(--border)',
                       boxShadow: '6px 0 12px rgba(0,0,0,0.6)',
                     }}
                   >
@@ -997,10 +1525,10 @@ export default function PlanningDraft() {
                   {r.weeks.map((w, wi) => (
                     <React.Fragment key={wi}>
                       <td
-                        className="group-hover/row:bg-[var(--surface2)] border border-l-2 p-0 transition-colors"
+                        className="group-hover/row:bg-[var(--surface2)] p-0 transition-colors"
                         style={{
-                          borderLeftColor: '#e3b341',
-                          borderColor: 'var(--border)',
+                          border: '1px solid var(--border)',
+                          borderLeft: '2px solid #e3b341',
                           background: 'rgba(227,179,65,0.06)',
                         }}
                       >
@@ -1015,9 +1543,9 @@ export default function PlanningDraft() {
                         />
                       </td>
                       <td
-                        className="group-hover/row:bg-[var(--surface2)] border p-0 text-center text-xs transition-colors"
+                        className="group-hover/row:bg-[var(--surface2)] p-0 text-center text-xs transition-colors"
                         style={{
-                          borderColor: 'var(--border)',
+                          border: '1px solid var(--border)',
                           background: 'rgba(227,179,65,0.06)',
                           color: 'var(--muted)',
                         }}
@@ -1025,10 +1553,11 @@ export default function PlanningDraft() {
                         <div className="py-1.5">{w.pf || ''}</div>
                       </td>
                       <td
-                        className="group-hover/row:bg-[var(--surface2)] border border-l-2 p-0 transition-colors"
+                        className="group-hover/row:bg-[var(--surface2)] p-0 transition-colors"
                         style={{
-                          borderLeftColor: 'var(--accent)',
-                          borderColor: 'var(--border)',
+                          border: '1px solid var(--border)',
+                          borderLeft: '2px solid var(--accent)',
+                          background: 'var(--bg)',
                         }}
                       >
                         <input
@@ -1042,20 +1571,32 @@ export default function PlanningDraft() {
                         />
                       </td>
                       <td
-                        className="group-hover/row:bg-[var(--surface2)] border p-0 text-center text-xs transition-colors"
-                        style={{ borderColor: 'var(--border)', color: 'var(--muted)' }}
+                        className="group-hover/row:bg-[var(--surface2)] p-0 text-center text-xs transition-colors"
+                        style={{
+                          border: '1px solid var(--border)',
+                          background: 'var(--bg)',
+                          color: 'var(--muted)',
+                        }}
                       >
                         <div className="py-1.5">{w.mf || ''}</div>
                       </td>
                     </React.Fragment>
                   ))}
                   <td
-                    className="group-hover/row:bg-[var(--surface2)] border px-1 text-center text-xs font-bold transition-colors"
+                    className="group-hover/row:bg-[var(--surface2)] px-1 text-center text-xs font-bold transition-colors"
                     style={{
-                      borderColor: 'var(--border)',
+                      border: overRemainder
+                        ? '2px solid #ef4444'
+                        : '1px solid var(--border)',
                       color:
-                        total === 0 ? 'var(--surface2)' : 'var(--accent)',
+                        total === 0 ? 'var(--surface2)' : overRemainder ? '#f87171' : 'var(--accent)',
+                      boxShadow: overRemainder ? 'inset 0 0 0 1px rgba(239,68,68,0.35)' : undefined,
                     }}
+                    title={
+                      overRemainder
+                        ? 'Сумма по строке больше остатка заказа (мягкое предупреждение)'
+                        : undefined
+                    }
                   >
                     {total === 0 ? '' : total}
                   </td>
@@ -1122,9 +1663,18 @@ export default function PlanningDraft() {
               >
                 ✕ Очистить
               </button>
+              {ordersLoading ? (
+                <p className="px-2 py-3 text-center text-xs" style={{ color: 'var(--muted)' }}>
+                  Загрузка заказов…
+                </p>
+              ) : filteredOrders.length === 0 ? (
+                <p className="px-2 py-3 text-center text-xs" style={{ color: 'var(--muted)' }}>
+                  Нет заказов для этого цеха
+                  {needsWorkshopFloor ? ' и этажа' : ''}. Измените поиск или фильтры.
+                </p>
+              ) : null}
               {filteredOrders.map((o) => {
-                const idx = orders.findIndex((x) => x.id === o.id);
-                const sel = rows.find((x) => x.id === openDropdown)?.orderIdx === idx;
+                const sel = rows.find((x) => x.id === openDropdown)?.orderId === o.id;
                 return (
                   <button
                     key={o.id}
@@ -1140,7 +1690,7 @@ export default function PlanningDraft() {
                     onMouseLeave={(e) => {
                       if (!sel) e.currentTarget.style.background = 'transparent';
                     }}
-                    onClick={() => selectOrder(openDropdown, idx)}
+                    onClick={() => selectOrder(openDropdown, o)}
                   >
                     <span
                       className="shrink-0 rounded px-1 py-px text-[10px]"
@@ -1151,7 +1701,18 @@ export default function PlanningDraft() {
                     >
                       {o.tz_code || o.article || '—'}
                     </span>
-                    <span className="min-w-0 flex-1">{orderDisplayName(o)}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block">{orderDisplayName(o)}</span>
+                      {orderMeta[o.id] ? (
+                        <span
+                          className="mt-0.5 block text-[10px]"
+                          style={{ color: 'var(--muted)' }}
+                        >
+                          №{o.id} · ост. {orderMeta[o.id].remainder}
+                          {(o.model_type || 'regular') === 'set' ? ' · комплект' : ''}
+                        </span>
+                      ) : null}
+                    </span>
                     {sel ? <span className="text-[#a8d870]">✓</span> : null}
                   </button>
                 );

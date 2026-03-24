@@ -74,14 +74,14 @@ export default function PrintPlanning() {
 
   if (loading) {
     return (
-      <PrintLayout backTo="/planning" contentClassName="max-w-3xl mx-auto">
+      <PrintLayout backTo="/planning" contentClassName="print-area max-w-3xl mx-auto">
         <p className="text-center text-gray-500">Загрузка...</p>
       </PrintLayout>
     );
   }
   if (error || !data) {
     return (
-      <PrintLayout backTo="/planning" contentClassName="max-w-3xl mx-auto">
+      <PrintLayout backTo="/planning" contentClassName="print-area max-w-3xl mx-auto">
         <p className="text-red-500">{error || 'Нет данных'}</p>
       </PrintLayout>
     );
@@ -99,7 +99,10 @@ export default function PrintPlanning() {
   }, 0);
 
   return (
-    <PrintLayout backTo="/planning" contentClassName="print-planning-doc mx-auto px-1">
+    <PrintLayout
+      backTo="/planning"
+      contentClassName="print-planning-doc print-planning-print-sheet mx-auto px-1 w-full max-w-none"
+    >
       <div className="print-planning-title">{titleText}</div>
       <div className="print-planning-meta">
         <span>Цех: {workshop?.name || '—'}</span>

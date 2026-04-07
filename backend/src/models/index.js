@@ -35,6 +35,7 @@ const sequelize = new Sequelize(conn.database, conn.username, conn.password, {
   port: conn.port,
   dialect: 'postgres',
   logging: false,
+  ...(dbConfig.pool && { pool: dbConfig.pool }),
   ...(useProductionSsl && {
     dialectOptions: dbConfig.dialectOptions,
   }),

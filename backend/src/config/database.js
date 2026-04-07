@@ -4,6 +4,21 @@
 
 require('dotenv').config();
 
+/** Собрать DATABASE_URL из DB_* (Railway/Neon без одной строки в UI) */
+function ensureDatabaseUrlFromParts() {
+  const existing = String(process.env.DATABASE_URL || '').trim();
+  if (existing) return;
+  const host = process.env.DB_HOST;
+  const name = process.env.DB_NAME;
+  const user = process.env.DB_USER;
+  if (!host || !name || user == null || user === '') return;
+  const pass = process.env.DB_PASS || '';
+  const port = process.env.DB_PORT || 5432;
+  process.env.DATABASE_URL = `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}:${port}/${name}`;
+}
+
+ensureDatabaseUrlFromParts();
+
 if (process.env.NODE_ENV === 'production' && process.env.DATABASE_URL) {
   try {
     const { parsePostgresUrl } = require('../utils/parseDatabaseUrl');
@@ -39,21 +54,31 @@ const productionSsl =
     rejectUnauthorized: false,
   };
 
+const poolDefaults = {
+  max: parseInt(process.env.DB_POOL_MAX || '5', 10) || 5,
+  min: parseInt(process.env.DB_POOL_MIN || '0', 10) || 0,
+  acquire: parseInt(process.env.DB_POOL_ACQUIRE || '30000', 10) || 30000,
+  idle: parseInt(process.env.DB_POOL_IDLE || '10000', 10) || 10000,
+};
+
 module.exports = {
   development: {
     use_env_variable: 'DATABASE_URL',
     dialect: 'postgres',
     logging: false,
+    pool: poolDefaults,
   },
   test: {
     use_env_variable: 'DATABASE_URL',
     dialect: 'postgres',
     logging: false,
+    pool: poolDefaults,
   },
   production: {
     use_env_variable: 'DATABASE_URL',
     dialect: 'postgres',
     logging: false,
+    pool: poolDefaults,
     ...(productionSsl && {
       dialectOptions: {
         ssl: productionSsl,

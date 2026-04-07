@@ -18,7 +18,10 @@ function devShouldUseProxy() {
   }
 }
 
-export const API_URL = devShouldUseProxy() ? '' : raw;
+/** В dev при proxy — ''; иначе VITE_API_URL; в production без переменной — пусто (ошибка в консоли). */
+export const API_URL = devShouldUseProxy()
+  ? ''
+  : raw || (import.meta.env.DEV ? 'http://localhost:3001' : '');
 
 if (!import.meta.env.DEV && !API_URL) {
   console.error('VITE_API_URL is not defined');

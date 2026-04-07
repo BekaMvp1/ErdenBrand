@@ -43,20 +43,23 @@ const plannerRoutes = require("./modules/planner/planner.routes");
 
 const app = express();
 
-// CORS: фронт на Vercel (erden-brand.vercel.app), локальный Vite — см. corsOptions ниже
-// Render: proxy HTTPS (x-forwarded-proto)
+// CORS: Vercel (erden-brand + preview *.vercel.app), Netlify, Railway/Render фронт через FRONTEND_URL, локальная сеть
+// Render / Railway: proxy HTTPS (x-forwarded-proto)
 app.set("trust proxy", 1);
 
-// CORS — первым, до helmet и роутов (Vercel + Netlify + локальная разработка)
+const frontendUrl = process.env.FRONTEND_URL
+  ? String(process.env.FRONTEND_URL).trim().replace(/\/$/, "")
+  : "";
+
 const allowedOrigins = [
   "https://erden-brand.vercel.app",
-  "https://erdenbrand1.netlify.app",
-  "https://erdenbrand.netlify.app",
+  "https://erden-brand-git-main.vercel.app",
+  /\.vercel\.app$/,
   "http://localhost:5173",
   "http://localhost:3000",
-];
+  frontendUrl,
+].filter(Boolean);
 
-// Разрешить все Netlify-деплои (*.netlify.app)
 const isNetlify = (origin) => {
   if (!origin || typeof origin !== "string") return false;
   try {
@@ -66,48 +69,55 @@ const isNetlify = (origin) => {
   }
 };
 
-// Разрешить локальную сеть (телефон/планшет с того же Wi‑Fi)
 const isLocalNetwork = (origin) => {
   if (!origin || typeof origin !== "string") return false;
   try {
     const u = new URL(origin);
     const host = u.hostname;
-    return host === "localhost" || host === "127.0.0.1" ||
+    return (
+      host === "localhost" ||
+      host === "127.0.0.1" ||
       /^192\.168\.\d{1,3}\.\d{1,3}$/.test(host) ||
       /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host) ||
-      /^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(host);
+      /^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(host)
+    );
   } catch {
     return false;
   }
 };
 
 const corsOptions = {
-  origin: (origin, cb) => {
-    if (!origin) return cb(null, true);
-    if (allowedOrigins.includes(origin)) return cb(null, true);
-    if (isNetlify(origin)) return cb(null, true);
-    if (isLocalNetwork(origin)) return cb(null, true);
-    cb(null, false);
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    const fromList = allowedOrigins.some((o) =>
+      typeof o === "string" ? o === origin : o.test(origin)
+    );
+    if (fromList) return callback(null, true);
+    if (isNetlify(origin)) return callback(null, true);
+    if (isLocalNetwork(origin)) return callback(null, true);
+    console.warn("[CORS] заблокирован origin:", origin);
+    callback(null, false);
   },
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
   optionsSuccessStatus: 204,
 };
 
-// Preflight для всех путей (в т.ч. /api/auth/login)
 app.options("*", cors(corsOptions));
-app.options("/*", cors(corsOptions));
 app.use(cors(corsOptions));
 
 // Health check — первым, до всех роутов
 app.get("/", (req, res) => res.json({ ok: true }));
 app.get("/health", (req, res) => res.json({ ok: true }));
 app.get("/api/health", (req, res) => {
+  const time = new Date().toISOString();
   res.json({
     status: "ok",
+    env: process.env.NODE_ENV,
+    time,
+    timestamp: time,
     uptime: process.uptime(),
-    timestamp: new Date().toISOString(),
     port: Number(process.env.PORT) || 3001,
   });
 });

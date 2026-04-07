@@ -1,0 +1,8 @@
+# Railway: в настройках сервиса укажите Root Directory = backend (если репозиторий монорепо).
+# Переменные среды — в Dashboard → Variables (см. backend/.env.example).
+
+[deploy]
+startCommand = "npm start"
+healthcheckPath = "/api/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"

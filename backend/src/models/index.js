@@ -105,6 +105,18 @@ const db = {
   OrderComment: require('./OrderComment')(sequelize, Sequelize.DataTypes),
   OrderPart: require('./OrderPart')(sequelize, Sequelize.DataTypes),
   PlanningMatrixSnapshot: require('./PlanningMatrixSnapshot')(sequelize, Sequelize.DataTypes),
+  PlanningProductionDraft: require('./PlanningProductionDraft')(sequelize, Sequelize.DataTypes),
+  PlanningDraftCell: require('./PlanningDraftCell')(sequelize, Sequelize.DataTypes),
+  ProductionCycleSettings: require('./ProductionCycleSettings')(sequelize, Sequelize.DataTypes),
+  PlanningChain: require('./PlanningChain')(sequelize, Sequelize.DataTypes),
+  PurchaseDocument: require('./PurchaseDocument')(sequelize, Sequelize.DataTypes),
+  CuttingDocument: require('./CuttingDocument')(sequelize, Sequelize.DataTypes),
+  CuttingFactDetail: require('./CuttingFactDetail')(sequelize, Sequelize.DataTypes),
+  SewingDocument: require('./SewingDocument')(sequelize, Sequelize.DataTypes),
+  SewingFactDetail: require('./SewingFactDetail')(sequelize, Sequelize.DataTypes),
+  OtkDocument: require('./OtkDocument')(sequelize, Sequelize.DataTypes),
+  OtkFactDetail: require('./OtkFactDetail')(sequelize, Sequelize.DataTypes),
+  OtkWarehouseItem: require('./OtkWarehouseItem')(sequelize, Sequelize.DataTypes),
 };
 
 // Связи
@@ -122,6 +134,70 @@ db.Technologist.hasMany(db.Sewer, { foreignKey: 'technologist_id' });
 db.Sewer.belongsTo(db.Technologist, { foreignKey: 'technologist_id' });
 db.User.hasOne(db.Sewer, { foreignKey: 'user_id' });
 db.Sewer.belongsTo(db.User, { foreignKey: 'user_id' });
+
+db.User.hasMany(db.PlanningProductionDraft, { foreignKey: 'user_id' });
+db.PlanningProductionDraft.belongsTo(db.User, { foreignKey: 'user_id' });
+
+db.User.hasMany(db.PlanningDraftCell, { foreignKey: 'user_id' });
+db.PlanningDraftCell.belongsTo(db.User, { foreignKey: 'user_id' });
+
+db.ProductionCycleSettings.belongsTo(db.User, { foreignKey: 'updated_by', as: 'UpdatedBy' });
+
+db.Order.hasMany(db.PlanningChain, { foreignKey: 'order_id' });
+db.PlanningChain.belongsTo(db.Order, { foreignKey: 'order_id' });
+
+db.PlanningChain.hasOne(db.PurchaseDocument, { foreignKey: 'chain_id', as: 'purchase_doc' });
+db.PurchaseDocument.belongsTo(db.PlanningChain, { foreignKey: 'chain_id' });
+db.Order.hasMany(db.PurchaseDocument, { foreignKey: 'order_id' });
+db.PurchaseDocument.belongsTo(db.Order, { foreignKey: 'order_id' });
+
+db.PlanningChain.hasOne(db.CuttingDocument, { foreignKey: 'chain_id', as: 'cutting_doc' });
+db.CuttingDocument.belongsTo(db.PlanningChain, { foreignKey: 'chain_id' });
+db.Order.hasMany(db.CuttingDocument, { foreignKey: 'order_id' });
+db.CuttingDocument.belongsTo(db.Order, { foreignKey: 'order_id' });
+
+db.CuttingDocument.hasMany(db.CuttingFactDetail, {
+  foreignKey: 'cutting_document_id',
+  as: 'cutting_facts',
+});
+db.CuttingFactDetail.belongsTo(db.CuttingDocument, { foreignKey: 'cutting_document_id' });
+
+db.CuttingDocument.hasOne(db.SewingDocument, {
+  foreignKey: 'cutting_document_id',
+  as: 'sewing_doc',
+});
+db.SewingDocument.belongsTo(db.CuttingDocument, { foreignKey: 'cutting_document_id' });
+db.SewingDocument.belongsTo(db.PlanningChain, { foreignKey: 'chain_id' });
+db.PlanningChain.hasMany(db.SewingDocument, { foreignKey: 'chain_id' });
+db.Order.hasMany(db.SewingDocument, { foreignKey: 'order_id' });
+db.SewingDocument.belongsTo(db.Order, { foreignKey: 'order_id' });
+db.SewingDocument.hasMany(db.SewingFactDetail, {
+  foreignKey: 'sewing_document_id',
+  as: 'sewing_facts',
+});
+db.SewingFactDetail.belongsTo(db.SewingDocument, { foreignKey: 'sewing_document_id' });
+
+db.SewingDocument.hasOne(db.OtkDocument, {
+  foreignKey: 'sewing_document_id',
+  as: 'otk_doc',
+});
+db.OtkDocument.belongsTo(db.SewingDocument, { foreignKey: 'sewing_document_id' });
+db.OtkDocument.belongsTo(db.CuttingDocument, { foreignKey: 'cutting_document_id' });
+db.Order.hasMany(db.OtkDocument, { foreignKey: 'order_id' });
+db.OtkDocument.belongsTo(db.Order, { foreignKey: 'order_id' });
+db.OtkDocument.hasMany(db.OtkFactDetail, {
+  foreignKey: 'otk_document_id',
+  as: 'otk_facts',
+});
+db.OtkFactDetail.belongsTo(db.OtkDocument, { foreignKey: 'otk_document_id' });
+
+db.OtkDocument.hasMany(db.OtkWarehouseItem, {
+  foreignKey: 'otk_document_id',
+  as: 'otk_warehouse_items',
+});
+db.OtkWarehouseItem.belongsTo(db.OtkDocument, { foreignKey: 'otk_document_id' });
+db.Order.hasMany(db.OtkWarehouseItem, { foreignKey: 'order_id' });
+db.OtkWarehouseItem.belongsTo(db.Order, { foreignKey: 'order_id' });
 
 db.Client.hasMany(db.Order, { foreignKey: 'client_id' });
 db.Order.belongsTo(db.Client, { foreignKey: 'client_id' });

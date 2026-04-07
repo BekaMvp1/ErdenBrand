@@ -44,10 +44,22 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  health: () => request('/api/health'),
   dashboard: {
     summary: () => request('/api/dashboard/summary'),
     get: () => request('/api/dashboard'),
     production: () => request('/api/dashboard/production'),
+    productionStats: () => request('/api/dashboard/production-stats'),
+    productionOrdersProgress: () => request('/api/dashboard/production-orders-progress'),
+    productionDeadlines: () => request('/api/dashboard/production-deadlines'),
+  },
+  progress: {
+    ordersProgress: (opts = {}) => request('/api/progress/orders-progress', opts),
+    dashboardStats: (opts = {}) => request('/api/progress/dashboard-stats', opts),
+  },
+  productionPanel: {
+    dailyLoad: () => request('/api/production/daily-load'),
+    tasksToday: () => request('/api/production/tasks-today'),
   },
   auth: {
     login: (email, password) =>
@@ -57,6 +69,7 @@ export const api = {
       }),
   },
   orders: {
+    stats: () => request('/api/orders/stats'),
     byWorkshop: (workshopId) =>
       request(`/api/orders/by-workshop?workshop_id=${workshopId}`),
     list: (params) => {
@@ -209,6 +222,33 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(body),
       }),
+    productionDraftGet: (params) => {
+      const q = new URLSearchParams();
+      q.set('month_key', params.month_key);
+      if (params.workshop_id != null && String(params.workshop_id).trim() !== '') {
+        q.set('workshop_id', String(params.workshop_id));
+      }
+      if (params.building_floor_id != null && String(params.building_floor_id).trim() !== '') {
+        q.set('building_floor_id', String(params.building_floor_id));
+      }
+      return request(`/api/planning/production-draft?${q}`);
+    },
+    productionDraftPut: (body) =>
+      request('/api/planning/production-draft', {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
+    chainList: () => request('/api/planning/chain'),
+    chainPost: (body) =>
+      request('/api/planning/chain', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    chainPatch: (id, body) =>
+      request(`/api/planning/chain/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
   },
   orderOperations: {
     floorTasks: (floorId) =>
@@ -290,11 +330,52 @@ export const api = {
       request('/api/sewing/fact/bulk', { method: 'POST', body: JSON.stringify(body) }),
     complete: (body) =>
       request('/api/sewing/complete', { method: 'POST', body: JSON.stringify(body) }),
+    factsByOrder: () => request('/api/sewing/facts-by-order'),
+    documentsList: () => request('/api/sewing/documents'),
+    documentFactsList: (docId) => request(`/api/sewing/documents/${docId}/facts`),
+    documentPatch: (id, body) =>
+      request(`/api/sewing/documents/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    chainFactPatch: (factId, body) =>
+      request(`/api/sewing/facts/${factId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    syncToOtk: () =>
+      request('/api/sewing/sync-to-otk', {
+        method: 'POST',
+      }),
     // ensure-batch удалён: партия создаётся только через complete (Завершить пошив → ОТК)
+  },
+  otk: {
+    documentsList: () => request('/api/otk/documents'),
+    documentFactsList: (docId) => request(`/api/otk/documents/${docId}/facts`),
+    documentPatch: (id, body) =>
+      request(`/api/otk/documents/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    chainFactPatch: (factId, body) =>
+      request(`/api/otk/facts/${factId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    syncToWarehouse: () =>
+      request('/api/otk/sync-to-warehouse', {
+        method: 'POST',
+      }),
   },
   settings: {
     deleteAllOrders: () =>
       request('/api/settings/delete-all-orders', { method: 'POST' }),
+    productionCycleGet: () => request('/api/settings/production-cycle'),
+    productionCycleSave: (body) =>
+      request('/api/settings/production-cycle', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
   },
   ai: {
     query: (query) =>
@@ -347,6 +428,19 @@ export const api = {
         body: JSON.stringify({ status }),
       }),
   },
+  purchase: {
+    documentsList: () => request('/api/purchase/documents'),
+    documentsFromChain: (chain_ids) =>
+      request('/api/purchase/documents/from-chain', {
+        method: 'POST',
+        body: JSON.stringify({ chain_ids }),
+      }),
+    documentPatch: (id, body) =>
+      request(`/api/purchase/documents/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+  },
   cutting: {
     getTaskById: (id) => request(`/api/cutting/tasks/${id}`),
     tasks: (cuttingType) =>
@@ -367,6 +461,34 @@ export const api = {
       request('/api/cutting/complete', { method: 'POST', body: JSON.stringify(data) }),
     sendToSewing: (data) =>
       request('/api/cutting/send-to-sewing', { method: 'POST', body: JSON.stringify(data) }),
+    factsByOrder: () => request('/api/cutting/facts-by-order'),
+    documentsList: () => request('/api/cutting/documents'),
+    documentsFromChain: (chain_ids) =>
+      request('/api/cutting/documents/from-chain', {
+        method: 'POST',
+        body: JSON.stringify({ chain_ids }),
+      }),
+    documentPatch: (id, body) =>
+      request(`/api/cutting/documents/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    documentFactsList: (docId) => request(`/api/cutting/documents/${docId}/facts`),
+    documentFactCreate: (docId, body) =>
+      request(`/api/cutting/documents/${docId}/facts`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    factPatch: (factId, body) =>
+      request(`/api/cutting/facts/${factId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    factDelete: (factId) => request(`/api/cutting/facts/${factId}`, { method: 'DELETE' }),
+    syncToSewing: () =>
+      request('/api/cutting/sync-to-sewing', {
+        method: 'POST',
+      }),
   },
   warehouse: {
     items: () => request('/api/warehouse/items'),
@@ -424,6 +546,13 @@ export const api = {
       }),
     completeShipment: (id) =>
       request(`/api/warehouse-stock/shipments/${id}/complete`, { method: 'POST' }),
+    otkChainItems: () => request('/api/warehouse-stock/otk-chain/items'),
+    otkChainSummary: () => request('/api/warehouse-stock/otk-chain/summary'),
+    patchOtkChainItem: (id, body) =>
+      request(`/api/warehouse-stock/otk-chain/items/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
   },
   // sewing-plans отключён; партии создаются только через Пошив → «Завершить пошив → ОТК»
   sewingPlans: {

@@ -80,6 +80,30 @@ async function getSewingFloorIds() {
 }
 
 /**
+ * GET /api/sewing/facts-by-order
+ * Сумма fact_qty из sewing_fact по заказу (этажи пошива), ключ — order_id — для черновика планирования.
+ */
+router.get('/facts-by-order', async (req, res, next) => {
+  try {
+    const sewingFloorIds = await getSewingFloorIds();
+    const rows = await db.SewingFact.findAll({
+      where: { floor_id: { [Op.in]: sewingFloorIds } },
+      attributes: ['order_id', 'fact_qty'],
+      raw: true,
+    });
+    const byOrder = {};
+    for (const r of rows || []) {
+      const oid = Number(r.order_id);
+      if (!Number.isFinite(oid)) continue;
+      byOrder[oid] = (byOrder[oid] || 0) + (Number(r.fact_qty) || 0);
+    }
+    res.json(byOrder);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * PUT /api/sewing/fact-add
  * Добавить факт пошива: sewn_qty += add_qty.
  * available = cut_fact_qty - sewn_qty. Валидация: add_qty <= available.

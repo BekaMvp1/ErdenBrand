@@ -1,32 +1,738 @@
 /**
- * Страница раскроя
- * Вкладки по типу: Аксы, Аутсорс + динамические из справочника cutting_types
+ * Страница раскроя — документы из плана цеха
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { Fragment, useState, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api';
-import PrintButton from '../components/PrintButton';
-import ModelPhoto from '../components/ModelPhoto';
+import { useAuth } from '../context/AuthContext';
+import { formatWeekRangeLabel } from '../components/planChain/PlanChainDocumentCard';
 import { useGridNavigation } from '../hooks/useGridNavigation';
 import { numInputValue } from '../utils/numInput';
+import { getMonday } from '../utils/cycleWeekLabels';
+import {
+  CHAIN_WORKSHOPS_FALLBACK,
+  LEGACY_SECTION_LABELS,
+  docMatchesChainSectionFilter,
+  effectiveChainSectionKey,
+} from '../utils/planChainWorkshops';
 
-const DEFAULT_TYPES = ['Аксы', 'Аутсорс', 'Наш цех'];
+function chainDateIsoCut(v) {
+  if (v == null || v === '') return '';
+  if (typeof v === 'string') return v.slice(0, 10);
+  if (v instanceof Date && !Number.isNaN(v.getTime())) return v.toISOString().slice(0, 10);
+  const s = String(v);
+  return s.length >= 10 ? s.slice(0, 10) : '';
+}
 
-// Этажи: 1 = ФИНИШ, 2–4 = ПОШИВ
-const FLOOR_OPTIONS = [
-  { value: 1, label: '1 этаж (Финиш)' },
-  { value: 2, label: '2 этаж (Пошив)' },
-  { value: 3, label: '3 этаж (Пошив)' },
-  { value: 4, label: '4 этаж (Пошив)' },
+const CHAIN_COLS = 12;
+
+const CHAIN_TABLE_HEADERS = [
+  { label: 'Фото' },
+  { label: 'TZ — MODEL' },
+  { label: 'План кол-во', thStyle: { textAlign: 'right' } },
+  { label: 'Факт кол-во', thStyle: { textAlign: 'right', minWidth: 120 } },
+  { label: 'Клиент' },
+  { label: 'Неделя план' },
+  { label: 'Дата план' },
+  { label: 'Дата факт' },
+  { label: 'Статус' },
+  { label: 'Цех' },
+  { label: 'Комментарий' },
+  { label: 'Печать', thStyle: { textAlign: 'center' } },
 ];
 
-const formatFloor = (floor) => {
-  if (floor == null) return '—';
-  const opt = FLOOR_OPTIONS.find((o) => o.value === floor);
-  return opt ? opt.label : `${floor} этаж`;
+function getTotalFact(doc) {
+  return (doc?.cutting_facts || []).reduce((s, f) => s + (parseInt(f.quantity, 10) || 0), 0);
+}
+
+function findCuttingFactForSpec(facts, color, size) {
+  const c = String(color ?? '').trim();
+  const s = String(size ?? '').trim();
+  return (facts || []).find(
+    (f) => String(f.color ?? '').trim() === c && String(f.size ?? '').trim() === s
+  );
+}
+
+function formatWeekForPrint(dateStr) {
+  if (!dateStr) return '—';
+  const iso = chainDateIsoCut(dateStr);
+  if (!iso) return '—';
+  const start = new Date(`${iso}T12:00:00`);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  const months = [
+    'янв',
+    'фев',
+    'мар',
+    'апр',
+    'май',
+    'июн',
+    'июл',
+    'авг',
+    'сен',
+    'окт',
+    'ноя',
+    'дек',
+  ];
+  if (start.getMonth() === end.getMonth()) {
+    return `${start.getDate()}–${end.getDate()} ${months[start.getMonth()]}`;
+  }
+  return `${start.getDate()} ${months[start.getMonth()]}–${end.getDate()} ${months[end.getMonth()]}`;
+}
+
+function escapeHtmlPrint(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function absPhotoUrlForPrint(url) {
+  if (!url || typeof url !== 'string') return '';
+  const t = url.trim();
+  if (!t) return '';
+  if (t.startsWith('http://') || t.startsWith('https://')) return t;
+  if (t.startsWith('//')) return `${window.location.protocol}${t}`;
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  return `${origin}${t.startsWith('/') ? '' : '/'}${t}`;
+}
+
+/** Печать документа раскроя из плана цеха (отдельное окно + window.print) */
+function printCuttingDoc(doc) {
+  const specification = doc.specification || [];
+  const facts = doc.cutting_facts || [];
+  const colors = [
+    ...new Set(specification.map((s) => String(s.color ?? '').trim()).filter(Boolean)),
+  ].sort((a, b) => a.localeCompare(b, 'ru'));
+  const sizes = [
+    ...new Set(specification.map((s) => String(s.size ?? '').trim()).filter(Boolean)),
+  ].sort((a, b) => a.localeCompare(b, 'ru'));
+
+  const getPlanQty = (color, size) => {
+    const row = specification.find(
+      (s) =>
+        String(s.color ?? '').trim() === String(color ?? '').trim() &&
+        String(s.size ?? '').trim() === String(size ?? '').trim()
+    );
+    return row ? Math.max(0, parseInt(row.quantity, 10) || 0) : 0;
+  };
+  const getFactQty = (color, size) => {
+    const f = findCuttingFactForSpec(facts, color, size);
+    return parseInt(f?.quantity, 10) || 0;
+  };
+
+  const planTotal = specification.reduce((s, r) => s + (parseInt(r.quantity, 10) || 0), 0) || 0;
+  const factTotal = facts.reduce((s, f) => s + (parseInt(f.quantity, 10) || 0), 0) || 0;
+
+  const O = doc.Order || {};
+  const article = String(O.article || O.tz_code || '').trim();
+  const titleSafe = escapeHtmlPrint(article || 'заказ');
+  const productLine = escapeHtmlPrint(orderTzModelLineCutting(O));
+  const clientName = escapeHtmlPrint(O.Client?.name || O.client_name || '—');
+  const photoRaw = firstPhotoSrcCutting(O);
+  const photoAbs = absPhotoUrlForPrint(photoRaw);
+  const photoBlock = photoAbs
+    ? `<img class="product-photo" src="${escapeHtmlPrint(photoAbs)}" alt="" onerror="this.style.display='none'">`
+    : `<div class="product-photo-placeholder">Фото</div>`;
+
+  const weekIso = chainDateIsoCut(doc.week_start);
+  const planDateStr = weekIso
+    ? new Date(`${weekIso}T12:00:00`).toLocaleDateString('ru-RU')
+    : '—';
+  const factIso = chainDateIsoCut(doc.actual_week_start || doc.actual_date);
+  const factDateStr = factIso
+    ? new Date(`${factIso}T12:00:00`).toLocaleDateString('ru-RU')
+    : '—';
+
+  const workshopLabel = escapeHtmlPrint(
+    doc.print_workshop_name || doc.workshop_name || doc.section_id || doc.workshop || '—'
+  );
+
+  const st = doc.status || 'pending';
+  const statusLabel = escapeHtmlPrint(
+    st === 'done' ? 'Раскроено' : st === 'in_progress' ? 'В процессе' : 'Не начато'
+  );
+
+  const sizeThs = sizes.map((s) => `<th>${escapeHtmlPrint(s)}</th>`).join('');
+
+  let matrixTableHtml;
+  if (!colors.length || !sizes.length) {
+    matrixTableHtml =
+      '<p style="margin:12px 0;font-size:12px;color:#666">Нет матрицы цвет × размер в спецификации заказа.</p>';
+  } else {
+    const tbodyRows = colors
+      .map((color) => {
+        const rowFactTotal = sizes.reduce((sum, size) => sum + getFactQty(color, size), 0);
+        const rowPlanTotal = sizes.reduce((sum, size) => sum + getPlanQty(color, size), 0);
+        const cells = sizes
+          .map((size) => {
+            const plan = getPlanQty(color, size);
+            const fact = getFactQty(color, size);
+            if (plan === 0) return '<td style="color:#ddd">—</td>';
+            const cls = fact >= plan ? 'done' : fact > 0 ? 'partial' : 'zero';
+            return `<td><div class="cell-pf"><span class="cell-plan">${plan}</span><span class="cell-fact ${cls}">${fact}</span></div></td>`;
+          })
+          .join('');
+        const rowCls =
+          rowFactTotal >= rowPlanTotal ? 'done' : rowFactTotal > 0 ? 'partial' : 'zero';
+        return `<tr><td>${escapeHtmlPrint(color)}</td>${cells}<td><div class="cell-pf"><span class="cell-plan">${rowPlanTotal}</span><span class="cell-fact ${rowCls}">${rowFactTotal}</span></div></td></tr>`;
+      })
+      .join('');
+
+    const tfootCells = sizes
+      .map((size) => {
+        const colFact = colors.reduce((sum, color) => sum + getFactQty(color, size), 0);
+        const colPlan = colors.reduce((sum, color) => sum + getPlanQty(color, size), 0);
+        const colCls = colFact >= colPlan ? 'done' : colFact > 0 ? 'partial' : 'zero';
+        return `<td><div class="cell-pf"><span class="cell-plan">${colPlan}</span><span class="cell-fact ${colCls}">${colFact}</span></div></td>`;
+      })
+      .join('');
+
+    const grandCls = factTotal >= planTotal ? 'done' : factTotal > 0 ? 'partial' : 'zero';
+    matrixTableHtml = `
+  <table class="matrix-table">
+    <thead>
+      <tr>
+        <th>Цвет</th>
+        ${sizeThs}
+        <th>Итого</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${tbodyRows}
+    </tbody>
+    <tfoot>
+      <tr>
+        <td>Итого</td>
+        ${tfootCells}
+        <td><div class="cell-pf"><span class="cell-plan">${planTotal}</span><span class="cell-fact ${grandCls}">${factTotal}</span></div></td>
+      </tr>
+    </tfoot>
+  </table>`;
+  }
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Раскрой — ${titleSafe}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: Arial, sans-serif;
+      font-size: 12px;
+      color: #000;
+      padding: 16px;
+    }
+    .doc-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid #000;
+    }
+    .doc-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .doc-subtitle { font-size: 12px; color: #555; }
+    .doc-info {
+      display: grid;
+      grid-template-columns: auto auto auto;
+      gap: 8px 32px;
+      margin-bottom: 16px;
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background: #f9f9f9;
+    }
+    .info-item { display: flex; flex-direction: column; gap: 2px; }
+    .info-label {
+      font-size: 10px;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .info-value { font-size: 13px; font-weight: 600; }
+    .product-block {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      margin-bottom: 16px;
+    }
+    .product-photo {
+      width: 80px;
+      height: 80px;
+      object-fit: cover;
+      border-radius: 4px;
+      border: 1px solid #ddd;
+    }
+    .product-photo-placeholder {
+      width: 80px;
+      height: 80px;
+      background: #eee;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      color: #999;
+    }
+    .product-info { flex: 1; }
+    .product-name {
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .product-article { font-size: 12px; color: #666; }
+    .matrix-title {
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+    }
+    .matrix-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 16px;
+      font-size: 12px;
+    }
+    .matrix-table th {
+      background: #1a237e;
+      color: #fff;
+      padding: 6px 10px;
+      text-align: center;
+      font-weight: 600;
+      border: 1px solid #0d1564;
+    }
+    .matrix-table th:first-child { text-align: left; }
+    .matrix-table td {
+      padding: 6px 10px;
+      border: 1px solid #ddd;
+      text-align: center;
+    }
+    .matrix-table td:first-child {
+      text-align: left;
+      font-weight: 500;
+      background: #f5f5f5;
+    }
+    .matrix-table tfoot td {
+      font-weight: 700;
+      background: #eee;
+    }
+    .cell-pf {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1px;
+      line-height: 1.3;
+    }
+    .cell-plan { font-size: 10px; color: #888; }
+    .cell-fact {
+      font-size: 13px;
+      font-weight: 700;
+      color: #000;
+    }
+    .cell-fact.done { color: #1a7e2e; }
+    .cell-fact.partial { color: #b36800; }
+    .cell-fact.zero { color: #bbb; }
+    .totals-block {
+      display: flex;
+      gap: 24px;
+      margin-bottom: 16px;
+      padding: 10px 14px;
+      border: 2px solid #1a237e;
+      border-radius: 4px;
+    }
+    .total-item { display: flex; flex-direction: column; gap: 2px; }
+    .total-label { font-size: 10px; color: #888; }
+    .total-value { font-size: 18px; font-weight: 700; }
+    .signatures {
+      display: flex;
+      gap: 48px;
+      margin-top: 24px;
+      padding-top: 16px;
+      border-top: 1px solid #ccc;
+    }
+    .sig-item { flex: 1; }
+    .sig-line {
+      border-bottom: 1px solid #000;
+      margin-bottom: 4px;
+      height: 24px;
+    }
+    .sig-label { font-size: 10px; color: #666; }
+    @media print {
+      body { padding: 8px; }
+      @page { margin: 10mm; size: A4; }
+    }
+  </style>
+</head>
+<body>
+  <div class="doc-header">
+    <div>
+      <div class="doc-title">ДОКУМЕНТ РАСКРОЯ</div>
+      <div class="doc-subtitle">Сформирован: ${escapeHtmlPrint(new Date().toLocaleDateString('ru-RU'))}</div>
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:18px;font-weight:700;color:#1a237e">ERDEN</div>
+      <div style="font-size:11px;color:#888">Производство одежды</div>
+    </div>
+  </div>
+  <div class="product-block">
+    ${photoBlock}
+    <div class="product-info">
+      <div class="product-name">${productLine}</div>
+      <div class="product-article">Заказ #${escapeHtmlPrint(String(doc.order_id ?? ''))} · Документ #${escapeHtmlPrint(String(doc.id ?? ''))}</div>
+    </div>
+  </div>
+  <div class="doc-info">
+    <div class="info-item">
+      <span class="info-label">Клиент</span>
+      <span class="info-value">${clientName}</span>
+    </div>
+    <div class="info-item">
+      <span class="info-label">Неделя план</span>
+      <span class="info-value">${escapeHtmlPrint(formatWeekForPrint(doc.week_start))}</span>
+    </div>
+    <div class="info-item">
+      <span class="info-label">Дата план</span>
+      <span class="info-value">${escapeHtmlPrint(planDateStr)}</span>
+    </div>
+    <div class="info-item">
+      <span class="info-label">Дата факт</span>
+      <span class="info-value">${escapeHtmlPrint(factDateStr)}</span>
+    </div>
+    <div class="info-item">
+      <span class="info-label">Статус</span>
+      <span class="info-value">${statusLabel}</span>
+    </div>
+    <div class="info-item">
+      <span class="info-label">Цех</span>
+      <span class="info-value">${workshopLabel}</span>
+    </div>
+  </div>
+  <div class="totals-block">
+    <div class="total-item">
+      <span class="total-label">ПЛАН</span>
+      <span class="total-value">${planTotal} шт</span>
+    </div>
+    <div class="total-item">
+      <span class="total-label">ФАКТ</span>
+      <span class="total-value" style="color:${
+        factTotal >= planTotal ? '#1a7e2e' : factTotal > 0 ? '#b36800' : '#000'
+      }">${factTotal} шт</span>
+    </div>
+    <div class="total-item">
+      <span class="total-label">ОСТАТОК</span>
+      <span class="total-value" style="color:${
+        planTotal - factTotal < 0 ? '#c00' : planTotal - factTotal === 0 ? '#1a7e2e' : '#000'
+      }">${planTotal - factTotal} шт</span>
+    </div>
+    <div class="total-item">
+      <span class="total-label">ВЫПОЛНЕНО</span>
+      <span class="total-value">${planTotal > 0 ? Math.round((factTotal / planTotal) * 100) : 0}%</span>
+    </div>
+  </div>
+  <div class="matrix-title">
+    <span>Детализация по цветам и размерам</span>
+    <span style="font-size:11px;color:#888;font-weight:400">план / факт</span>
+  </div>
+  ${matrixTableHtml}
+  <div class="signatures">
+    <div class="sig-item">
+      <div class="sig-line"></div>
+      <div class="sig-label">Раскройщик</div>
+    </div>
+    <div class="sig-item">
+      <div class="sig-line"></div>
+      <div class="sig-label">Технолог</div>
+    </div>
+    <div class="sig-item">
+      <div class="sig-line"></div>
+      <div class="sig-label">Дата</div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+  const win = window.open('', '_blank');
+  if (!win) return false;
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  window.setTimeout(() => win.print(), 500);
+  return true;
+}
+
+/** Несколько документов раскроя в одном HTML для печати (текущий отфильтрованный список) */
+function buildPrintAllCuttingHtml(fullDocs) {
+  const style = `
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family: Arial, sans-serif; font-size:12px; color:#000; }
+    .page-break { page-break-after: always; }
+    .doc-wrap { padding-bottom: 8px; }
+    .doc-header {
+      display:flex; justify-content:space-between; align-items:flex-start;
+      margin-bottom:12px; padding-bottom:8px; border-bottom:2px solid #000;
+    }
+    .doc-title { font-size:14px; font-weight:700; }
+    .doc-date { font-size:11px; color:#666; margin-top:2px; }
+    .product-block { display:flex; gap:12px; align-items:flex-start; margin-bottom:12px; }
+    .product-photo { width:70px; height:70px; object-fit:cover; border-radius:4px; border:1px solid #ddd; }
+    .product-name { font-size:14px; font-weight:700; }
+    .product-meta { font-size:11px; color:#666; margin-top:2px; }
+    .info-row {
+      display:flex; gap:24px; margin-bottom:12px; padding:8px 12px;
+      background:#f5f5f5; border-radius:4px; flex-wrap:wrap;
+    }
+    .info-item { display:flex; flex-direction:column; gap:1px; }
+    .info-label { font-size:9px; color:#999; text-transform:uppercase; }
+    .info-value { font-size:12px; font-weight:600; }
+    .totals {
+      display:flex; gap:24px; margin-bottom:12px; padding:8px 12px;
+      border:2px solid #1a237e; border-radius:4px;
+    }
+    .total-label { font-size:9px; color:#999; text-transform:uppercase; }
+    .total-value { font-size:16px; font-weight:700; }
+    .matrix-label { font-size:12px; font-weight:700; margin-bottom:6px; }
+    table { width:100%; border-collapse:collapse; margin-bottom:12px; font-size:11px; }
+    th {
+      background:#1a237e; color:#fff; padding:5px 8px; text-align:center;
+      border:1px solid #0d1564;
+    }
+    th:first-child { text-align:left; }
+    td { padding:5px 8px; border:1px solid #ddd; text-align:center; }
+    td:first-child { text-align:left; font-weight:500; background:#f9f9f9; }
+    tfoot td { font-weight:700; background:#eee; }
+    .cell-plan { font-size:9px; color:#888; }
+    .cell-fact { font-size:12px; font-weight:700; }
+    .fact-done { color:#1a7e2e; }
+    .fact-partial { color:#b36800; }
+    .fact-zero { color:#ccc; }
+    .signatures { display:flex; gap:32px; margin-top:16px; padding-top:12px; border-top:1px solid #ccc; }
+    .sig-line { border-bottom:1px solid #000; height:20px; margin-bottom:3px; }
+    .sig-label { font-size:9px; color:#666; }
+    @media print { @page { margin:10mm; size:A4; } }
+  `;
+
+  const sections = fullDocs.map((doc, docIdx) => {
+    const spec = doc.specification || [];
+    const facts = doc.cutting_facts || [];
+    const colors = [
+      ...new Set(spec.map((s) => String(s.color ?? '').trim()).filter(Boolean)),
+    ].sort((a, b) => a.localeCompare(b, 'ru'));
+    const sizes = [
+      ...new Set(spec.map((s) => String(s.size ?? '').trim()).filter(Boolean)),
+    ].sort((a, b) => a.localeCompare(b, 'ru'));
+
+    const getPlan = (c, sz) => {
+      const row = spec.find(
+        (s) =>
+          String(s.color ?? '').trim() === String(c ?? '').trim() &&
+          String(s.size ?? '').trim() === String(sz ?? '').trim()
+      );
+      return row ? Math.max(0, parseInt(row.quantity, 10) || 0) : 0;
+    };
+    const getFact = (c, sz) => {
+      const f = findCuttingFactForSpec(facts, c, sz);
+      return parseInt(f?.quantity, 10) || 0;
+    };
+
+    const planTotal = spec.reduce((sum, r) => sum + (parseInt(r.quantity, 10) || 0), 0) || 0;
+    const factTotal = facts.reduce((sum, f) => sum + (parseInt(f.quantity, 10) || 0), 0) || 0;
+
+    const O = doc.Order || {};
+    const photoUrl = absPhotoUrlForPrint(firstPhotoSrcCutting(O));
+    const productName = escapeHtmlPrint(orderTzModelLineCutting(O));
+    const client = escapeHtmlPrint(O.Client?.name || O.client_name || '—');
+    const weekIso = chainDateIsoCut(doc.week_start);
+    const planDate =
+      weekIso && new Date(`${weekIso}T12:00:00`).toLocaleDateString('ru-RU');
+    const factIso = chainDateIsoCut(doc.actual_week_start || doc.actual_date);
+    const factDate =
+      factIso && new Date(`${factIso}T12:00:00`).toLocaleDateString('ru-RU');
+    const st = doc.status || 'pending';
+    const statusText = escapeHtmlPrint(
+      st === 'done' ? 'Раскроено' : st === 'in_progress' ? 'В процессе' : 'Не начато'
+    );
+    const workshop = escapeHtmlPrint(
+      doc.print_workshop_name || doc.workshop_name || doc.section_id || doc.workshop || '—'
+    );
+
+    const photoHtml = photoUrl
+      ? `<img class="product-photo" src="${escapeHtmlPrint(photoUrl)}" alt="" onerror="this.style.display='none'">`
+      : `<div style="width:70px;height:70px;background:#eee;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:10px;color:#999">Фото</div>`;
+
+    let matrixHtml;
+    if (!colors.length || !sizes.length) {
+      matrixHtml = `<p style="margin:8px 0;font-size:11px;color:#666">Нет матрицы цвет × размер.</p>`;
+    } else {
+      const sizeThs = sizes.map((s) => `<th>${escapeHtmlPrint(s)}</th>`).join('');
+      const tbody = colors
+        .map((color) => {
+          const rowFact = sizes.reduce((s, sz) => s + getFact(color, sz), 0);
+          const rowPlan = sizes.reduce((s, sz) => s + getPlan(color, sz), 0);
+          const cells = sizes
+            .map((sz) => {
+              const p = getPlan(color, sz);
+              const f = getFact(color, sz);
+              if (!p) return '<td style="color:#ddd">—</td>';
+              const cls = f >= p ? 'fact-done' : f > 0 ? 'fact-partial' : 'fact-zero';
+              return `<td><div class="cell-plan">${p}</div><div class="cell-fact ${cls}">${f}</div></td>`;
+            })
+            .join('');
+          const rowCls = rowFact >= rowPlan ? 'fact-done' : rowFact > 0 ? 'fact-partial' : 'fact-zero';
+          return `<tr><td>${escapeHtmlPrint(color)}</td>${cells}<td><div class="cell-plan">${rowPlan}</div><div class="cell-fact ${rowCls}">${rowFact}</div></td></tr>`;
+        })
+        .join('');
+      const tfootCells = sizes
+        .map((sz) => {
+          const cp = colors.reduce((s, c) => s + getPlan(c, sz), 0);
+          const cf = colors.reduce((s, c) => s + getFact(c, sz), 0);
+          const colCls = cf >= cp ? 'fact-done' : cf > 0 ? 'fact-partial' : 'fact-zero';
+          return `<td><div class="cell-plan">${cp}</div><div class="cell-fact ${colCls}">${cf}</div></td>`;
+        })
+        .join('');
+      const grandCls = factTotal >= planTotal ? 'fact-done' : factTotal > 0 ? 'fact-partial' : 'fact-zero';
+      matrixHtml = `
+        <table>
+          <thead><tr><th>Цвет</th>${sizeThs}<th>Итого</th></tr></thead>
+          <tbody>${tbody}</tbody>
+          <tfoot><tr><td>Итого</td>${tfootCells}<td><div class="cell-plan">${planTotal}</div><div class="cell-fact ${grandCls}">${factTotal}</div></td></tr></tfoot>
+        </table>`;
+    }
+
+    const breakAttr = docIdx < fullDocs.length - 1 ? ' class="page-break doc-wrap"' : ' class="doc-wrap"';
+    return `
+<div${breakAttr}>
+  <div class="doc-header">
+    <div>
+      <div class="doc-title">ДОКУМЕНТ РАСКРОЯ #${escapeHtmlPrint(String(doc.id ?? ''))}</div>
+      <div class="doc-date">Печать: ${escapeHtmlPrint(new Date().toLocaleDateString('ru-RU'))}</div>
+    </div>
+    <div style="font-size:16px;font-weight:700;color:#1a237e">ERDEN</div>
+  </div>
+  <div class="product-block">
+    ${photoHtml}
+    <div>
+      <div class="product-name">${productName}</div>
+      <div class="product-meta">Заказ #${escapeHtmlPrint(String(doc.order_id ?? ''))}</div>
+    </div>
+  </div>
+  <div class="info-row">
+    <div class="info-item"><span class="info-label">Клиент</span><span class="info-value">${client}</span></div>
+    <div class="info-item"><span class="info-label">Неделя план</span><span class="info-value">${escapeHtmlPrint(formatWeekForPrint(doc.week_start))}</span></div>
+    <div class="info-item"><span class="info-label">Дата план</span><span class="info-value">${escapeHtmlPrint(planDate || '—')}</span></div>
+    <div class="info-item"><span class="info-label">Дата факт</span><span class="info-value">${escapeHtmlPrint(factDate || '—')}</span></div>
+    <div class="info-item"><span class="info-label">Статус</span><span class="info-value">${statusText}</span></div>
+    <div class="info-item"><span class="info-label">Цех</span><span class="info-value">${workshop}</span></div>
+  </div>
+  <div class="totals">
+    <div><div class="total-label">ПЛАН</div><div class="total-value">${planTotal} шт</div></div>
+    <div><div class="total-label">ФАКТ</div><div class="total-value" style="color:${factTotal >= planTotal ? '#1a7e2e' : factTotal > 0 ? '#b36800' : '#000'}">${factTotal} шт</div></div>
+    <div><div class="total-label">ОСТАТОК</div><div class="total-value" style="color:${planTotal - factTotal < 0 ? '#c00' : planTotal - factTotal === 0 ? '#1a7e2e' : '#000'}">${planTotal - factTotal} шт</div></div>
+  </div>
+  <div class="matrix-label">Детализация (план / факт)</div>
+  ${matrixHtml}
+  <div class="signatures">
+    <div style="flex:1"><div class="sig-line"></div><div class="sig-label">Раскройщик</div></div>
+    <div style="flex:1"><div class="sig-line"></div><div class="sig-label">Технолог</div></div>
+    <div style="flex:1"><div class="sig-line"></div><div class="sig-label">Дата</div></div>
+  </div>
+</div>`;
+  });
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Раскрой — все документы</title><style>${style}</style></head><body>${sections.join('')}</body></html>`;
+}
+
+function planQtyCuttingOrder(o) {
+  if (!o) return '—';
+  const q = o.qty_order ?? o.quantity ?? o.total_quantity ?? o.amount;
+  if (q == null || q === '') return '—';
+  return String(q);
+}
+
+function planQtyCuttingNumber(o) {
+  const q = o?.qty_order ?? o?.quantity ?? o?.total_quantity ?? o?.amount;
+  const n = parseInt(q, 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
+const CHAIN_FILTER_INPUT = {
+  background: '#1a1a1a',
+  border: '0.5px solid #444',
+  color: '#fff',
+  padding: '6px 10px',
+  borderRadius: 6,
+  fontSize: 13,
 };
+
+function initialChainDateFrom() {
+  const d = new Date();
+  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
+}
+
+function initialChainDateTo() {
+  const d = new Date();
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
+}
+
+function escapeRegExpChain(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function orderTzModelLineCutting(order) {
+  if (!order) return '—';
+  const article = String(order.article || order.tz_code || '').trim();
+  let rawName = String(order.model_name || '').trim();
+  const title = String(order.title || '').trim();
+  if (!rawName) rawName = title;
+  if (article && rawName) {
+    rawName = rawName.replace(new RegExp(`^${escapeRegExpChain(article)}\\s*[—\\-·]\\s*`, 'i'), '').trim();
+  }
+  const name = rawName || title || order.model_name || '—';
+  if (article) return `${article} — ${name}`;
+  return name || `Заказ #${order.id}`;
+}
+
+function firstPhotoSrcCutting(order) {
+  const p = order?.photos;
+  if (!Array.isArray(p) || !p.length) return null;
+  const x = p[0];
+  return typeof x === 'string' && x.trim() ? x.trim() : null;
+}
+
+function statusColorCutting(status) {
+  return (
+    {
+      pending: '#ff6b6b',
+      in_progress: '#F59E0B',
+      done: '#c8ff00',
+    }[status] || '#666'
+  );
+}
+
+function formatDateChain(iso) {
+  if (!iso) return '—';
+  const d = iso.slice(0, 10).split('-');
+  return d[2] && d[1] ? `${d[2]}.${d[1]}.${d[0]}` : iso;
+}
+
+/** Просрочка: фактическая неделя (понедельник) позже конца плановой недели */
+function isOverdueCuttingFactWeek(weekStartIso, factWeekStartIso) {
+  if (!weekStartIso || !factWeekStartIso) return false;
+  const ws = new Date(`${chainDateIsoCut(weekStartIso)}T12:00:00`);
+  const limit = new Date(ws);
+  limit.setDate(limit.getDate() + 7);
+  const fw = new Date(`${chainDateIsoCut(factWeekStartIso)}T12:00:00`);
+  return fw > limit;
+}
 
 /** Pivot actual_variants to { sizes, rows: [{ color, bySize }] } — Table 1: раскрой по партиям (export for OrderDetails) */
 export function buildBatchPivot(actualVariants) {
@@ -203,709 +909,1221 @@ export function CompleteByFactModal({ task, onClose, onSave, isEditMode }) {
   return createPortal(modalContent, document.body);
 }
 
-const isOurWorkshopType = (t) => t === 'Наш цех';
-
 export default function Cutting() {
-  const { type } = useParams();
-  const navigate = useNavigate();
-  const [cuttingTypes, setCuttingTypes] = useState([]);
+  const { user } = useAuth();
+  const canEditChainDocs = ['admin', 'manager', 'technologist'].includes(user?.role);
   const [workshops, setWorkshops] = useState([]);
-  const [tasks, setTasks] = useState([]);
-  const [orders, setOrders] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [ordersLoading, setOrdersLoading] = useState(false);
-  const [activeType, setActiveType] = useState(type || 'Аксы');
-  const [addTaskModalOrder, setAddTaskModalOrder] = useState(null);
-  const [completeModalTask, setCompleteModalTask] = useState(null);
-  const isOurWorkshop = isOurWorkshopType(activeType);
-  const CUTTING_EXPANDED_KEY = 'cutting_expanded';
-  const loadExpandedFor = (t) => {
-    try {
-      const s = sessionStorage.getItem(`${CUTTING_EXPANDED_KEY}_${t}`);
-      if (!s) return new Set();
-      const arr = JSON.parse(s);
-      return new Set(Array.isArray(arr) ? arr : []);
-    } catch { return new Set(); }
+  const [chainDocs, setChainDocs] = useState([]);
+  const [chainLoading, setChainLoading] = useState(false);
+  const [chainBanner, setChainBanner] = useState(null);
+  const [factModal, setFactModal] = useState(null);
+  const [chainDateFrom, setChainDateFrom] = useState(initialChainDateFrom);
+  const [chainDateTo, setChainDateTo] = useState(initialChainDateTo);
+  const [chainFilterStatus, setChainFilterStatus] = useState('all');
+  const [chainFilterSection, setChainFilterSection] = useState('all');
+
+  const setChainQuickRange = (range) => {
+    const today = new Date();
+    if (range === 'week') {
+      const day = today.getDay();
+      const diff = day === 0 ? -6 : 1 - day;
+      const mon = new Date(today);
+      mon.setDate(today.getDate() + diff);
+      const sun = new Date(mon);
+      sun.setDate(mon.getDate() + 6);
+      setChainDateFrom(mon.toISOString().split('T')[0]);
+      setChainDateTo(sun.toISOString().split('T')[0]);
+    }
+    if (range === 'month') {
+      const first = new Date(today.getFullYear(), today.getMonth(), 1);
+      const last = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      setChainDateFrom(first.toISOString().split('T')[0]);
+      setChainDateTo(last.toISOString().split('T')[0]);
+    }
+    if (range === 'next_month') {
+      const first = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+      const last = new Date(today.getFullYear(), today.getMonth() + 2, 0);
+      setChainDateFrom(first.toISOString().split('T')[0]);
+      setChainDateTo(last.toISOString().split('T')[0]);
+    }
   };
-  const [expandedTaskIds, setExpandedTaskIds] = useState(() => loadExpandedFor(type || 'Аксы'));
-  const [newTask, setNewTask] = useState({
-    order_id: '',
-    floor: '',
-    operation: '',
-    status: 'Ожидает',
-    responsible: '',
-    start_date: '',
-    height_type: 'PRESET',
-    height_value: 170,
-  });
 
-  // Аксы и Аутсорс — по умолчанию; остальные — из справочника (без дублей)
-  const dynamicTypes = cuttingTypes
-    .filter((t) => !DEFAULT_TYPES.includes(t.name))
-    .map((t) => t.name);
-  const allTypes = [...DEFAULT_TYPES, ...dynamicTypes];
-
-  useEffect(() => {
-    api.references.cuttingTypes().then(setCuttingTypes).catch(() => setCuttingTypes([]));
-    api.workshops.list().then(setWorkshops).catch(() => setWorkshops([]));
+  const loadChainDocs = useCallback(() => {
+    setChainLoading(true);
+    api.cutting
+      .documentsList()
+      .then((data) => setChainDocs(Array.isArray(data) ? data : []))
+      .catch(() => setChainDocs([]))
+      .finally(() => setChainLoading(false));
   }, []);
 
   useEffect(() => {
-    if (activeType) {
-      setLoading(true);
-      api.cutting
-        .tasks(activeType)
-        .then(setTasks)
-        .catch(() => setTasks([]))
-        .finally(() => setLoading(false));
-    }
-  }, [activeType]);
-
-  // Заказы только выбранного цеха (тип раскроя = название цеха). Сопоставление без учёта регистра и пробелов.
-  const activeTypeNorm = String(activeType || '').trim().toLowerCase();
-  const workshopIdForType =
-    workshops.find((w) => String(w.name || '').trim().toLowerCase() === activeTypeNorm)?.id ?? null;
+    api.workshops.list().then(setWorkshops).catch(() => setWorkshops(CHAIN_WORKSHOPS_FALLBACK));
+  }, []);
 
   useEffect(() => {
-    setOrdersLoading(true);
-    if (workshopIdForType != null) {
-      api.orders
-        .list({ workshop_id: workshopIdForType, limit: 500 })
-        .then((list) => setOrders(Array.isArray(list) ? list : []))
-        .catch(() => setOrders([]))
-        .finally(() => setOrdersLoading(false));
-    } else if (workshops.length > 0) {
-      // Цеха загружены, но тип не совпал с цехом — показываем пустой список (не все заказы)
-      setOrders([]);
-      setOrdersLoading(false);
-    } else {
-      // Цеха ещё не загружены — не грузим заказы, чтобы не показать все по ошибке
-      setOrders([]);
-      setOrdersLoading(false);
+    loadChainDocs();
+  }, [loadChainDocs]);
+
+  const filteredChainDocs = useMemo(() => {
+    return chainDocs.filter((doc) => {
+      const ws = chainDateIsoCut(doc.week_start);
+      if (chainDateFrom) {
+        if (!ws) return false;
+        if (ws < chainDateFrom) return false;
+      }
+      if (chainDateTo) {
+        if (!ws) return false;
+        if (ws > chainDateTo) return false;
+      }
+      const st = doc.status || 'pending';
+      if (chainFilterStatus !== 'all' && st !== chainFilterStatus) return false;
+      if (!docMatchesChainSectionFilter(doc, chainFilterSection, workshops)) return false;
+      return true;
+    });
+  }, [chainDocs, chainDateFrom, chainDateTo, chainFilterStatus, chainFilterSection, workshops]);
+
+  const cuttingDocsByPlanWeek = useMemo(() => {
+    const map = new Map();
+    for (const d of filteredChainDocs) {
+      const k = chainDateIsoCut(d.week_start) || '__none';
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(d);
     }
-  }, [workshopIdForType, workshops.length]);
+    const keys = [...map.keys()].sort((a, b) => {
+      if (a === '__none') return 1;
+      if (b === '__none') return -1;
+      return a.localeCompare(b);
+    });
+    return keys.map((k) => [k, map.get(k)]);
+  }, [filteredChainDocs]);
 
-  // При выборе заказа подставляем рост из заказа (для раскроя)
-  useEffect(() => {
-    if (!newTask.order_id) return;
-    api.orders
-      .get(newTask.order_id)
-      .then((o) => {
-        const type = o.order_height_type === 'CUSTOM' ? 'CUSTOM' : 'PRESET';
-        const value = o.order_height_value ?? 170;
-        setNewTask((prev) => ({ ...prev, height_type: type, height_value: value }));
-      })
-      .catch(() => {});
-  }, [newTask.order_id]);
+  const patchCuttingChainDoc = useCallback(
+    async (docId, body, { successMessage } = {}) => {
+      if (!canEditChainDocs) return;
+      try {
+        const updated = await api.cutting.documentPatch(docId, body);
+        setChainDocs((prev) => prev.map((x) => (Number(x.id) === Number(docId) ? { ...x, ...updated } : x)));
+        if (successMessage) {
+          setChainBanner({ type: 'ok', text: successMessage });
+          window.setTimeout(() => setChainBanner(null), 3500);
+        }
+      } catch (e) {
+        setChainBanner({ type: 'err', text: e?.message || 'Ошибка сохранения' });
+        window.setTimeout(() => setChainBanner(null), 4000);
+      }
+    },
+    [canEditChainDocs]
+  );
 
-  const openAddTaskModal = (order) => {
-    setAddTaskModalOrder(order);
-    setNewTask({
-      order_id: String(order.id),
-      floor: isOurWorkshop ? '' : '1',
-      operation: '',
-      status: 'Ожидает',
-      responsible: '',
-      start_date: '',
-      height_type: 'PRESET',
-      height_value: 170,
+  const saveCuttingFactWeek = (docId, dateStr) => {
+    if (!dateStr) {
+      patchCuttingChainDoc(docId, { actual_week_start: null });
+      return;
+    }
+    patchCuttingChainDoc(docId, { actual_week_start: getMonday(dateStr) });
+  };
+
+  const updateCuttingStatus = (docId, value) => {
+    patchCuttingChainDoc(docId, { status: value });
+  };
+
+  const changeCuttingPlanWeek = (docId, dateStr) => {
+    if (!dateStr || !canEditChainDocs) return;
+    const monday = getMonday(dateStr);
+    patchCuttingChainDoc(
+      docId,
+      { week_start: monday, actual_week_start: monday },
+      { successMessage: `Неделя изменена на ${formatWeekRangeLabel(monday)}` }
+    );
+  };
+
+  const updateCuttingSection = (docId, sectionId) => {
+    patchCuttingChainDoc(docId, {
+      section_id: sectionId === '' ? null : sectionId,
     });
   };
 
-  const closeAddTaskModal = () => {
-    setAddTaskModalOrder(null);
-    setNewTask({ order_id: '', floor: '', operation: '', status: 'Ожидает', responsible: '', start_date: '', height_type: 'PRESET', height_value: 170 });
+  const effectiveCuttingSectionId = (doc) => effectiveChainSectionKey(doc);
+
+  const saveCuttingComment = (docId, value) => {
+    patchCuttingChainDoc(docId, { comment: value || null });
   };
 
-  useEffect(() => {
-    if (type && allTypes.includes(type)) {
-      setActiveType(type);
-    } else if (!type && allTypes.length > 0) {
-      navigate(`/cutting/${encodeURIComponent(allTypes[0])}`, { replace: true });
-    }
-  }, [type, allTypes, navigate]);
-
-  useEffect(() => {
-    setExpandedTaskIds(loadExpandedFor(activeType));
-  }, [activeType]);
-
-  const saveExpanded = (ids) => {
-    try {
-      sessionStorage.setItem(`${CUTTING_EXPANDED_KEY}_${activeType}`, JSON.stringify([...ids]));
-    } catch (_) {}
-  };
-
-  const handleAddTask = async (e) => {
-    e.preventDefault();
-    if (!newTask.order_id) {
-      alert('Выберите заказ');
+  const openFactModal = async (doc) => {
+    const orderId = doc.order_id ?? doc.Order?.id;
+    if (!orderId) {
+      setChainBanner({ type: 'err', text: 'У документа нет привязки к заказу' });
+      window.setTimeout(() => setChainBanner(null), 4000);
       return;
     }
-    const floorNum = isOurWorkshop ? (newTask.floor ? parseInt(newTask.floor, 10) : null) : 1;
-    if (isOurWorkshop && !floorNum) {
-      alert('Выберите этаж');
-      return;
-    }
+    setFactModal({
+      ...doc,
+      specification: [],
+      cutting_facts: [...(doc.cutting_facts || [])].map((f) => ({ ...f })),
+      _orderSpecLoading: true,
+    });
     try {
-      const heightVal = newTask.height_type === 'CUSTOM' ? Math.min(220, Math.max(120, parseInt(newTask.height_value, 10) || 170)) : (newTask.height_value === 165 ? 165 : 170);
-      await api.cutting.addTask({
-        order_id: parseInt(newTask.order_id, 10),
-        cutting_type: activeType,
-        floor: floorNum ?? 1,
-        operation: newTask.operation?.trim() || undefined,
-        status: newTask.status,
-        responsible: newTask.responsible?.trim() || undefined,
-        start_date: newTask.start_date || undefined,
-        height_type: newTask.height_type,
-        height_value: heightVal,
-      });
-      setNewTask({ order_id: '', floor: '', operation: '', status: 'Ожидает', responsible: '', start_date: '', height_type: 'PRESET', height_value: 170 });
-      setAddTaskModalOrder(null);
-      const updated = await api.cutting.tasks(activeType);
-      setTasks(updated);
-    } catch (err) {
-      alert(err.message);
+      const [orderRes, factsRes] = await Promise.all([
+        api.orders.get(orderId),
+        api.cutting.documentFactsList(doc.id),
+      ]);
+      const specification = (orderRes.variants || []).map((v) => ({
+        color: v.color != null ? String(v.color).trim() : '',
+        size: v.size != null ? String(v.size).trim() : '',
+        quantity: Math.max(0, parseInt(v.quantity, 10) || 0),
+      }));
+      setFactModal((prev) =>
+        prev && Number(prev.id) === Number(doc.id)
+          ? {
+              ...prev,
+              Order: orderRes,
+              specification,
+              cutting_facts: factsRes.map((f) => ({ ...f })),
+              _orderSpecLoading: false,
+            }
+          : prev
+      );
+    } catch (e) {
+      setChainBanner({ type: 'err', text: e?.message || 'Не удалось загрузить заказ или факты раскроя' });
+      window.setTimeout(() => setChainBanner(null), 4000);
+      setFactModal(null);
     }
   };
 
-  const handleDeleteTask = async (task) => {
-    if (!confirm('Удалить задачу?')) return;
-    try {
-      await api.cutting.deleteTask(task.id);
-      setTasks((t) => t.filter((x) => x.id !== task.id));
-    } catch (err) {
-      alert(err.message);
-    }
-  };
-
-  const handleStatusChange = async (task, newStatus) => {
-    try {
-      await api.cutting.updateTask(task.id, { status: newStatus });
-      setTasks((t) => t.map((x) => (x.id === task.id ? { ...x, status: newStatus } : x)));
-    } catch (err) {
-      alert(err.message);
-    }
-  };
-
-  const handleFloorChange = async (task, newFloor) => {
-    try {
-      await api.cutting.updateTask(task.id, { floor: parseInt(newFloor, 10) });
-      setTasks((t) => t.map((x) => (x.id === task.id ? { ...x, floor: parseInt(newFloor, 10) } : x)));
-    } catch (err) {
-      alert(err.message);
-    }
-  };
-
-  const handleCompleteByFact = async (task, actualVariants, endDate) => {
-    try {
-      await api.cutting.updateTask(task.id, {
-        status: 'Готово',
-        actual_variants: actualVariants,
-        end_date: endDate || undefined,
-      });
-      await api.cutting.complete({ order_id: task.order_id });
-      const updated = await api.cutting.tasks(activeType);
-      setTasks(updated);
-      setCompleteModalTask(null);
-    } catch (err) {
-      alert(err.message);
-    }
-  };
-
-  const handleEditActualVariants = async (task, actualVariants, endDate) => {
-    try {
-      await api.cutting.updateTask(task.id, {
-        actual_variants: actualVariants,
-        end_date: endDate || undefined,
-      });
-      const updated = await api.cutting.tasks(activeType);
-      setTasks(updated);
-      setCompleteModalTask(null);
-    } catch (err) {
-      alert(err.message);
-    }
-  };
-
-  const toggleTaskExpand = (taskId) => {
-    setExpandedTaskIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(taskId)) next.delete(taskId);
-      else next.add(taskId);
-      saveExpanded(next);
-      return next;
+  const updateFactQty = (color, size, quantity) => {
+    const q = Math.max(0, parseInt(quantity, 10) || 0);
+    setFactModal((prev) => {
+      if (!prev) return prev;
+      const facts = [...(prev.cutting_facts || [])];
+      const idx = facts.findIndex(
+        (f) => String(f.color ?? '').trim() === String(color ?? '').trim() && String(f.size ?? '').trim() === String(size ?? '').trim()
+      );
+      if (idx >= 0) {
+        facts[idx] = { ...facts[idx], quantity: q };
+      } else {
+        facts.push({
+          color: String(color ?? '').trim(),
+          size: String(size ?? '').trim(),
+          quantity: q,
+          isNew: true,
+        });
+      }
+      return { ...prev, cutting_facts: facts };
     });
   };
+
+  const saveFacts = async () => {
+    if (!factModal || factModal._orderSpecLoading) return;
+    const docId = factModal.id;
+    const rows = factModal.cutting_facts || [];
+    try {
+      const tasks = [];
+      for (const f of rows) {
+        const q = Math.max(0, parseInt(f.quantity, 10) || 0);
+        if (f.isNew && q > 0) {
+          tasks.push(
+            api.cutting.documentFactCreate(docId, {
+              color: String(f.color ?? '').trim(),
+              size: String(f.size ?? '').trim(),
+              quantity: q,
+            })
+          );
+        } else if (f.id != null && !f.isNew) {
+          tasks.push(api.cutting.factPatch(f.id, { quantity: q }));
+        }
+      }
+      await Promise.all(tasks);
+      const refreshed = await api.cutting.documentFactsList(docId);
+      setChainDocs((prev) =>
+        prev.map((d) => (Number(d.id) === Number(docId) ? { ...d, cutting_facts: refreshed } : d))
+      );
+      setChainBanner({ type: 'ok', text: 'Данные раскроя сохранены' });
+      window.setTimeout(() => setChainBanner(null), 3500);
+      setFactModal(null);
+    } catch (e) {
+      setChainBanner({ type: 'err', text: e?.message || 'Ошибка сохранения' });
+      window.setTimeout(() => setChainBanner(null), 4000);
+    }
+  };
+
+  const printCuttingDocWithData = useCallback(
+    async (doc) => {
+      const orderId = doc.order_id ?? doc.Order?.id;
+      if (!orderId) {
+        setChainBanner({ type: 'err', text: 'Нет заказа для печати' });
+        window.setTimeout(() => setChainBanner(null), 4000);
+        return;
+      }
+      try {
+        const [orderRes, factsRes] = await Promise.all([
+          api.orders.get(orderId),
+          api.cutting.documentFactsList(doc.id),
+        ]);
+        const specification = (orderRes.variants || []).map((v) => ({
+          color: v.color != null ? String(v.color).trim() : '',
+          size: v.size != null ? String(v.size).trim() : '',
+          quantity: Math.max(0, parseInt(v.quantity, 10) || 0),
+        }));
+        const sectionKey = effectiveChainSectionKey(doc);
+        const workshopLabel =
+          workshops.find((w) => String(w.id) === String(sectionKey))?.name ||
+          LEGACY_SECTION_LABELS[sectionKey] ||
+          doc.workshop ||
+          String(sectionKey || '') ||
+          '—';
+        const ok = printCuttingDoc({
+          ...doc,
+          Order: { ...(doc.Order || {}), ...orderRes, Client: orderRes.Client || doc.Order?.Client },
+          specification,
+          cutting_facts: Array.isArray(factsRes) ? factsRes : [],
+          print_workshop_name: workshopLabel,
+        });
+        if (!ok) {
+          setChainBanner({ type: 'err', text: 'Браузер заблокировал окно печати' });
+          window.setTimeout(() => setChainBanner(null), 4000);
+        }
+      } catch (e) {
+        setChainBanner({ type: 'err', text: e?.message || 'Не удалось подготовить печать' });
+        window.setTimeout(() => setChainBanner(null), 4000);
+      }
+    },
+    [workshops]
+  );
+
+  const printAllCuttingDocs = useCallback(async () => {
+    const docs = filteredChainDocs;
+    if (!docs.length) {
+      setChainBanner({ type: 'err', text: 'Нет документов для печати по фильтрам' });
+      window.setTimeout(() => setChainBanner(null), 3500);
+      return;
+    }
+    try {
+      const fullDocs = (
+        await Promise.all(
+          docs.map(async (doc) => {
+            const orderId = doc.order_id ?? doc.Order?.id;
+            if (!orderId) return null;
+            const [orderRes, factsRes] = await Promise.all([
+              api.orders.get(orderId),
+              api.cutting.documentFactsList(doc.id),
+            ]);
+            const specification = (orderRes.variants || []).map((v) => ({
+              color: v.color != null ? String(v.color).trim() : '',
+              size: v.size != null ? String(v.size).trim() : '',
+              quantity: Math.max(0, parseInt(v.quantity, 10) || 0),
+            }));
+            const sectionKey = effectiveChainSectionKey(doc);
+            const workshopLabel =
+              workshops.find((w) => String(w.id) === String(sectionKey))?.name ||
+              LEGACY_SECTION_LABELS[sectionKey] ||
+              doc.workshop ||
+              String(sectionKey || '') ||
+              '—';
+            return {
+              ...doc,
+              Order: { ...(doc.Order || {}), ...orderRes, Client: orderRes.Client || doc.Order?.Client },
+              specification,
+              cutting_facts: Array.isArray(factsRes) ? factsRes : [],
+              print_workshop_name: workshopLabel,
+            };
+          })
+        )
+      ).filter(Boolean);
+      const html = buildPrintAllCuttingHtml(fullDocs);
+      const win = window.open('', '_blank');
+      if (!win) {
+        setChainBanner({ type: 'err', text: 'Браузер заблокировал окно печати' });
+        window.setTimeout(() => setChainBanner(null), 4000);
+        return;
+      }
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      window.setTimeout(() => win.print(), 800);
+    } catch (e) {
+      setChainBanner({ type: 'err', text: e?.message || 'Не удалось подготовить печать списка' });
+      window.setTimeout(() => setChainBanner(null), 4000);
+    }
+  }, [filteredChainDocs, workshops]);
 
   return (
     <div>
-      <div className="no-print flex flex-wrap items-center justify-between gap-4 mb-4 sm:mb-6">
+      <div className="no-print relative flex flex-wrap items-center justify-between gap-4 mb-4 sm:mb-6 pr-0">
         <h1 className="text-xl md:text-2xl lg:text-3xl font-bold text-[#ECECEC] dark:text-dark-text">Раскрой</h1>
-        <PrintButton />
+        <button
+          type="button"
+          onClick={() => printAllCuttingDocs()}
+          className="no-print inline-flex items-center gap-1.5 sm:absolute sm:top-0 sm:right-0 px-[18px] py-2 rounded-md text-[13px] font-semibold text-white border-0 cursor-pointer shrink-0"
+          style={{ background: '#1a237e' }}
+        >
+          🖨 Печать
+        </button>
       </div>
 
-      <p className="no-print text-[#ECECEC]/80 dark:text-dark-text/80 mb-4">
-        Тип: <span className="font-medium text-[#ECECEC] dark:text-dark-text">{activeType}</span>
-      </p>
-
-      {/* Заказы цеха — только те, что ещё не добавлены в раскрой; после добавления строка исчезает */}
-      <div className="no-print mb-6 rounded-xl border border-white/25 dark:border-white/25 overflow-hidden overflow-x-auto">
-        <h2 className="text-sm font-medium text-[#ECECEC]/80 dark:text-dark-text/80 mb-2 px-1">Заказы цеха «{activeType}»</h2>
-        {ordersLoading ? (
-          <div className="p-6 text-[#ECECEC]/60 dark:text-dark-text/60">Загрузка заказов...</div>
-        ) : (() => {
-          const orderIdsInCutting = new Set((tasks || []).map((t) => t.order_id));
-          const ordersNotInCutting = orders.filter((o) => !orderIdsInCutting.has(o.id));
-          if (orders.length === 0) {
-            return null;
-          }
-          if (ordersNotInCutting.length === 0) {
-            return null;
-          }
-          return (
-          <table className="w-full min-w-[720px]">
-            <thead>
-              <tr className="bg-accent-3/80 dark:bg-dark-900 border-b border-white/25 dark:border-white/25">
-                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">ТЗ</th>
-                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Название</th>
-                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Клиент</th>
-                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Кол-во</th>
-                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Дата поступления</th>
-                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Дедлайн</th>
-                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Статус</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ordersNotInCutting.map((o) => (
-                <tr
-                  key={o.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => openAddTaskModal(o)}
-                  onKeyDown={(e) => e.key === 'Enter' && openAddTaskModal(o)}
-                  className="border-b border-white/10 dark:border-white/10 hover:bg-white/5 dark:hover:bg-white/5 cursor-pointer transition-colors"
-                >
-                  <td className="px-4 py-3 text-primary-400 dark:text-primary-400 font-medium">
-                    {o.tz_code || o.id || '—'}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <ModelPhoto photo={o.photos?.[0]} modelName={o.title} size={48} className="shrink-0" />
-                      <span className="text-[#ECECEC] dark:text-dark-text">{o.title || o.model_name || '—'}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80">{o.Client?.name ?? '—'}</td>
-                  <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80">{o.total_quantity ?? o.quantity ?? '—'}</td>
-                  <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80 whitespace-nowrap">
-                    {o.receipt_date ? String(o.receipt_date).slice(0, 10) : (o.created_at ? String(o.created_at).slice(0, 10) : '—')}
-                  </td>
-                  <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80 whitespace-nowrap">{o.deadline ?? '—'}</td>
-                  <td className="px-4 py-3">
-                    <span className="inline-block px-2 py-1 rounded text-xs font-medium bg-accent-1/30 text-[#ECECEC]/90 dark:text-dark-text/90">
-                      {o.OrderStatus?.name ?? '—'}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          );
-        })()}
-      </div>
-
-      {/* Модалка: подготовка к раскрою (заказ выбран, заполняем этаж, рост, дату и т.д.) */}
-      {addTaskModalOrder && createPortal(
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto" onClick={closeAddTaskModal}>
-          <div
-            className="bg-accent-3 dark:bg-dark-900 rounded-xl border border-white/25 max-w-2xl w-full my-4 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="p-4 sm:p-6 border-b border-white/15">
-              <h3 className="text-lg font-semibold text-[#ECECEC] dark:text-dark-text">Подготовить к раскрою</h3>
-              <p className="mt-1 text-sm text-[#ECECEC]/80 dark:text-dark-text/80">
-                Заказ: #{addTaskModalOrder.id} {addTaskModalOrder.Client?.name} — {addTaskModalOrder.title}
-              </p>
+      <>
+          {chainBanner ? (
+            <div
+              className={`no-print mb-3 px-4 py-2 rounded-lg text-sm ${
+                chainBanner.type === 'ok'
+                  ? 'bg-green-500/15 text-green-400 border border-green-500/30'
+                  : 'bg-red-500/15 text-red-300 border border-red-500/30'
+              }`}
+            >
+              {chainBanner.text}
             </div>
-            <form onSubmit={handleAddTask} className="p-4 sm:p-6 flex flex-wrap gap-3 sm:gap-4 items-end">
-              {isOurWorkshop && (
-                <div>
-                  <label className="block text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-1">Этаж</label>
-                  <select
-                    value={newTask.floor}
-                    onChange={(e) => setNewTask({ ...newTask, floor: e.target.value })}
-                    className="px-3 sm:px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text min-w-[160px]"
-                    required
-                  >
-                    <option value="">— Выберите этаж —</option>
-                    {FLOOR_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-              <div>
-                <label className="block text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-1">Рост</label>
-                <select
-                  value={newTask.height_type === 'CUSTOM' ? 'CUSTOM' : String(newTask.height_value)}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    if (v === 'CUSTOM') setNewTask({ ...newTask, height_type: 'CUSTOM', height_value: 170 });
-                    else setNewTask({ ...newTask, height_type: 'PRESET', height_value: v === '165' ? 165 : 170 });
-                  }}
-                  className="px-3 sm:px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
-                >
-                  <option value="170">170</option>
-                  <option value="165">165</option>
-                  <option value="CUSTOM">Другое (ручной ввод)</option>
-                </select>
-                {newTask.height_type === 'CUSTOM' && (
-                  <input
-                    type="number"
-                    min={120}
-                    max={220}
-                    value={newTask.height_value}
-                    onChange={(e) => setNewTask({ ...newTask, height_value: e.target.value })}
-                    className="mt-1 w-24 px-2 py-1 rounded bg-accent-2/80 dark:bg-dark-800 border border-white/25 text-[#ECECEC]"
-                    placeholder="120–220"
-                  />
-                )}
-              </div>
-              <div>
-                <label className="block text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-1">Начало раскроя</label>
+          ) : null}
+          {!chainLoading ? (
+            <div
+              className="no-print"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 16,
+                marginBottom: 16,
+                flexWrap: 'wrap',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 13, color: '#888' }}>От:</span>
                 <input
                   type="date"
-                  value={newTask.start_date}
-                  onChange={(e) => setNewTask({ ...newTask, start_date: e.target.value })}
-                  className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
+                  value={chainDateFrom}
+                  onChange={(e) => setChainDateFrom(e.target.value)}
+                  style={CHAIN_FILTER_INPUT}
                 />
               </div>
-              <div>
-                <label className="block text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-1">Операция</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 13, color: '#888' }}>До:</span>
                 <input
-                  type="text"
-                  value={newTask.operation}
-                  onChange={(e) => setNewTask({ ...newTask, operation: e.target.value })}
-                  placeholder="Операция"
-                  className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
+                  type="date"
+                  value={chainDateTo}
+                  onChange={(e) => setChainDateTo(e.target.value)}
+                  style={CHAIN_FILTER_INPUT}
                 />
               </div>
-              <div>
-                <label className="block text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-1">Статус</label>
-                <select
-                  value={newTask.status}
-                  onChange={(e) => setNewTask({ ...newTask, status: e.target.value })}
-                  className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
-                >
-                  <option value="Ожидает">Ожидает</option>
-                  <option value="В работе">В работе</option>
-                  <option value="Готово">Готово</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-1">Ответственный</label>
-                <input
-                  type="text"
-                  value={newTask.responsible}
-                  onChange={(e) => setNewTask({ ...newTask, responsible: e.target.value })}
-                  placeholder="ФИО"
-                  className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
-                />
-              </div>
-              <div className="flex gap-2 w-full sm:w-auto">
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <button
-                  type="submit"
-                  disabled={isOurWorkshop ? !newTask.floor : false}
-                  className="px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  type="button"
+                  onClick={() => setChainQuickRange('week')}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 6,
+                    fontSize: 12,
+                    border: '0.5px solid #444',
+                    background: 'transparent',
+                    color: '#888',
+                    cursor: 'pointer',
+                  }}
                 >
-                  Добавить
+                  Эта неделя
                 </button>
-                <button type="button" onClick={closeAddTaskModal} className="px-4 py-2 rounded-lg bg-accent-1/30 dark:bg-dark-2 text-[#ECECEC] dark:text-dark-text">
-                  Отмена
+                <button
+                  type="button"
+                  onClick={() => setChainQuickRange('month')}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 6,
+                    fontSize: 12,
+                    border: '0.5px solid #444',
+                    background: 'transparent',
+                    color: '#888',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Этот месяц
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setChainQuickRange('next_month')}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 6,
+                    fontSize: 12,
+                    border: '0.5px solid #444',
+                    background: 'transparent',
+                    color: '#888',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Следующий месяц
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setChainDateFrom('');
+                    setChainDateTo('');
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 6,
+                    fontSize: 12,
+                    border: '0.5px solid #c8ff00',
+                    background: 'transparent',
+                    color: '#c8ff00',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Все периоды
                 </button>
               </div>
-            </form>
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {/* Таблица задач (с падающим блоками размеров и кол-ва) */}
-      <div className="print-area rounded-xl border border-white/25 dark:border-white/25 overflow-hidden overflow-x-auto">
-        <h1 className="print-title print-only">Раскрой — {activeType}</h1>
-        {loading ? (
-          <div className="p-6 sm:p-8 text-center text-[#ECECEC]/80 dark:text-dark-text/80">Загрузка...</div>
-        ) : tasks.length === 0 ? (
-          <div className="p-6 sm:p-8 text-[#ECECEC]/80 dark:text-dark-text/80">Нет задач по типу «{activeType}»</div>
-        ) : (
-          <table className="w-full min-w-[640px]">
-            <thead>
-              <tr className="bg-accent-3/80 dark:bg-dark-900 border-b border-white/25 dark:border-white/25">
-                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Заказ</th>
-                {isOurWorkshop && (
-                  <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Этаж</th>
-                )}
-                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Рост</th>
-                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Операция</th>
-                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Статус</th>
-                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Ответственный</th>
-                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">По факту</th>
-                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Действия</th>
-                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90 no-print">Печать</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tasks.map((task) => {
-                const actualVariants = task.status === 'Готово' ? (task.actual_variants || []) : [];
-                const batchPivot = buildBatchPivot(actualVariants);
-                const totalQty = batchPivot.rows.reduce((s, r) => {
-                  s += Object.values(r.bySize).reduce((a, b) => a + b, 0);
-                  return s;
-                }, 0);
-                const planTotal = (task.Order?.OrderVariants || []).reduce((s, v) => s + (v.quantity || 0), 0);
-                const isExpanded = expandedTaskIds.has(task.id);
-                return (
-                  <React.Fragment key={task.id}>
-                  <tr className="border-b border-white/10 dark:border-white/10">
-                    <td className="px-4 py-3 align-top">
-                      <div className="flex items-center gap-2">
-                        <ModelPhoto
-                          photo={task.Order?.photos?.[0]}
-                          inline
-                          size={48}
-                          className="shrink-0"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => toggleTaskExpand(task.id)}
-                          className="p-1 rounded hover:bg-accent-2/50 dark:hover:bg-dark-800 text-[#ECECEC]/80 dark:text-dark-text/80 transition-transform duration-200"
-                          title={isExpanded ? 'Свернуть' : 'Развернуть детали'}
-                        >
-                          <svg
-                            className={`w-5 h-5 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
-                            fill="currentColor"
-                            viewBox="0 0 20 20"
-                          >
-                            <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-                          </svg>
-                        </button>
-                        <button
-                          onClick={() => navigate(`/orders/${task.order_id}`)}
-                          className="text-primary-400 hover:underline"
-                        >
-                          #{task.order_id} {task.Order?.Client?.name} — {task.Order?.title}
-                        </button>
-                      </div>
-                    </td>
-                    {isOurWorkshop && (
-                      <td className="px-4 py-3 align-top">
-                        {task.status === 'Готово' ? (
-                          <span className="text-[#ECECEC]/90 dark:text-dark-text/80">{formatFloor(task.floor)}</span>
-                        ) : (
-                          <select
-                            value={task.floor ?? ''}
-                            onChange={(e) => handleFloorChange(task, e.target.value)}
-                            className="px-2 py-1 rounded bg-accent-2/80 dark:bg-dark-800 border border-white/25 text-[#ECECEC] dark:text-dark-text text-sm"
-                          >
-                            {FLOOR_OPTIONS.map((o) => (
-                              <option key={o.value} value={o.value}>{o.label}</option>
-                            ))}
-                          </select>
-                        )}
-                      </td>
-                    )}
-                    <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80 align-top">
-                      {task.height_value != null ? String(task.height_value) : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80 align-top">{task.operation || '—'}</td>
-                    <td className="px-4 py-3 align-top">
-                      <select
-                        value={task.status}
-                        onChange={(e) => handleStatusChange(task, e.target.value)}
-                        className="px-2 py-1 rounded bg-accent-2/80 dark:bg-dark-800 border border-white/25 text-[#ECECEC] dark:text-dark-text text-sm"
+              <select
+                value={chainFilterStatus}
+                onChange={(e) => setChainFilterStatus(e.target.value)}
+                style={CHAIN_FILTER_INPUT}
+              >
+                <option value="all">Все статусы</option>
+                <option value="pending">Не начато</option>
+                <option value="in_progress">В процессе</option>
+                <option value="done">Раскроено</option>
+              </select>
+              <select
+                value={chainFilterSection}
+                onChange={(e) => setChainFilterSection(e.target.value)}
+                style={CHAIN_FILTER_INPUT}
+              >
+                <option value="all">Все цеха</option>
+                {workshops.map((w) => (
+                  <option key={w.id} value={String(w.id)}>
+                    {w.name}
+                  </option>
+                ))}
+              </select>
+              <span style={{ fontSize: 13, color: '#666', marginLeft: 'auto' }}>
+                Показано: {filteredChainDocs.length} заказов
+              </span>
+            </div>
+          ) : null}
+          {chainLoading ? (
+            <div className="p-8 text-center text-[#ECECEC]/80 dark:text-dark-text/80">Загрузка...</div>
+          ) : chainDocs.length === 0 ? (
+            <p className="text-[#ECECEC]/80 dark:text-dark-text/80">Нет документов из плана цеха</p>
+          ) : filteredChainDocs.length === 0 ? (
+            <p className="text-[#ECECEC]/80 dark:text-dark-text/80">Нет документов по выбранным фильтрам</p>
+          ) : (
+            <div className="no-print overflow-x-auto rounded-lg border border-white/15 max-h-[min(70vh,calc(100vh-14rem))] overflow-y-auto mb-6">
+              <table style={{ width: '100%', minWidth: 1040, borderCollapse: 'collapse' }}>
+                <thead
+                  style={{
+                    position: 'sticky',
+                    top: 0,
+                    zIndex: 10,
+                    background: '#1a237e',
+                  }}
+                >
+                  <tr style={{ color: '#fff' }}>
+                    {CHAIN_TABLE_HEADERS.map((h) => (
+                      <th
+                        key={h.label}
+                        style={{
+                          textAlign: 'left',
+                          padding: '10px 12px',
+                          fontSize: 12,
+                          fontWeight: 600,
+                          whiteSpace: 'nowrap',
+                          ...h.thStyle,
+                        }}
                       >
-                        <option value="Ожидает">Ожидает</option>
-                        <option value="В работе">В работе</option>
-                        <option value="Готово">Готово</option>
-                      </select>
-                    </td>
-                    <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80 align-top">{task.responsible || '—'}</td>
-                    <td className="px-4 py-3 align-top">
-                      {batchPivot.rows.length > 0 || planTotal > 0 ? (
-                        isExpanded ? (
-                          <button
-                            onClick={() => setCompleteModalTask(task)}
-                            className="min-w-[260px] px-2.5 py-1 text-sm rounded-lg bg-primary-600 text-white hover:bg-primary-700"
+                        {h.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {cuttingDocsByPlanWeek.map(([weekKey, docs]) => (
+                    <Fragment key={weekKey}>
+                      <tr style={{ background: '#1a1a24' }}>
+                        <td
+                          colSpan={CHAIN_COLS}
+                          style={{
+                            padding: '8px 12px',
+                            fontSize: 13,
+                            fontWeight: 600,
+                            color: '#94a3b8',
+                            borderBottom: '1px solid #2a2a2a',
+                          }}
+                        >
+                          Неделя: {weekKey === '__none' ? '—' : formatWeekRangeLabel(weekKey)} — {docs.length}{' '}
+                          заказов
+                        </td>
+                      </tr>
+                      {docs.map((doc) => {
+                        const o = doc.Order;
+                        const photo = firstPhotoSrcCutting(o);
+                        const client = o?.Client?.name || '—';
+                        const st = doc.status || 'pending';
+                        const weekS = chainDateIsoCut(doc.week_start);
+                        const origWeek = chainDateIsoCut(doc.original_week_start);
+                        const factW =
+                          chainDateIsoCut(doc.actual_week_start) || chainDateIsoCut(doc.week_start) || '';
+                        const sectionVal = effectiveCuttingSectionId(doc);
+                        const overdue = isOverdueCuttingFactWeek(doc.week_start, doc.actual_week_start);
+                        const doneRow = st === 'done';
+                        let rowBg = 'transparent';
+                        if (overdue) rowBg = 'rgba(255,68,68,0.08)';
+                        else if (doneRow) rowBg = 'rgba(200,255,0,0.05)';
+                        return (
+                          <tr
+                            key={doc.id}
+                            style={{
+                              background: rowBg,
+                              borderBottom: '1px solid #222',
+                            }}
                           >
-                            {task.status === 'Готово' ? 'Редактировать по факту' : 'Завершить по факту'}
-                          </button>
-                        ) : (
-                          <div className="text-sm text-[#ECECEC]/90 dark:text-dark-text/90 flex flex-col gap-0.5">
-                            <div className="flex items-baseline gap-2">
-                              <span className="shrink-0 w-10">План:</span>
-                              <span className="tabular-nums">{planTotal}</span>
-                            </div>
-                            {task.status === 'Готово' && (
-                              <div className="flex items-baseline gap-2">
-                                <span className="shrink-0 w-10">Факт:</span>
-                                <span className="tabular-nums">{totalQty}</span>
+                            <td style={{ padding: '8px 12px', verticalAlign: 'top' }}>
+                              {photo ? (
+                                <img
+                                  src={photo}
+                                  alt=""
+                                  width={48}
+                                  height={48}
+                                  style={{ objectFit: 'cover', borderRadius: 4, display: 'block' }}
+                                />
+                              ) : (
+                                <div
+                                  style={{
+                                    width: 48,
+                                    height: 48,
+                                    borderRadius: 4,
+                                    background: '#222',
+                                  }}
+                                />
+                              )}
+                              <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>#{doc.order_id}</div>
+                            </td>
+                            <td style={{ padding: '8px 12px', verticalAlign: 'top' }}>
+                              <div style={{ color: '#c8ff00', fontWeight: 500 }}>{orderTzModelLineCutting(o)}</div>
+                              <div style={{ fontSize: 11, color: '#666' }}>#{doc.id}</div>
+                            </td>
+                            <td style={{ textAlign: 'right', padding: '4px 12px', verticalAlign: 'top' }}>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>
+                                {planQtyCuttingOrder(o)}
                               </div>
-                            )}
-                          </div>
-                        )
-                      ) : null}
-                    </td>
-                    <td className="px-4 py-3 align-top">
-                      <button
-                        onClick={() => handleDeleteTask(task)}
-                        className="text-red-500 hover:text-red-400 text-sm"
-                      >
-                        Удалить
-                      </button>
-                    </td>
-                    <td className="px-4 py-3 align-top no-print">
-                      <Link
-                        to={`/print/cutting/${task.id}`}
-                        className="text-primary-400 hover:text-primary-300 hover:underline text-sm"
-                      >
-                        Печать
-                      </Link>
-                    </td>
-                  </tr>
-                  <tr className="border-b border-white/15 dark:border-white/15 bg-accent-2/20 dark:bg-dark-900/50">
-                    <td colSpan={isOurWorkshop ? 9 : 8} className="px-4 py-0 overflow-hidden">
-                      <div
-                        className={`grid transition-[grid-template-rows] duration-300 ease-out`}
-                        style={{ gridTemplateRows: isExpanded ? '1fr' : '0fr' }}
-                      >
-                        <div className="min-h-0 overflow-hidden">
-                            <div className="px-4 py-2 flex flex-wrap gap-6">
-                              {(() => {
-                                const pivot = buildBatchPivot(actualVariants);
-                                const hasTotals = pivot.sizes?.length && pivot.rows?.length;
-                                let totalsByColor = {};
-                                let totalsBySize = {};
-                                let grandTotal = 0;
-                                if (hasTotals) {
-                                  pivot.rows.forEach(({ color, bySize }) => {
-                                    let t = 0;
-                                    Object.values(bySize || {}).forEach((q) => { t += q; });
-                                    totalsByColor[color] = { bySize: bySize || {}, total: t };
-                                  });
-                                  pivot.sizes.forEach((s) => {
-                                    let t = 0;
-                                    pivot.rows.forEach(({ bySize }) => { t += (bySize && bySize[s]) || 0; });
-                                    totalsBySize[s] = t;
-                                    grandTotal += t;
-                                  });
-                                }
-                                return (
-                                  <>
-                                    <div className="min-w-0">
-                                      <table className="text-sm border border-white/15 dark:border-white/15 rounded overflow-hidden max-w-[480px]">
-                                        <thead>
-                                          <tr className="bg-accent-2/50 dark:bg-dark-800">
-                                            <th className="text-left px-4 py-2 font-medium">Цвет</th>
-                                            <th className="text-left px-4 py-2 font-medium">Размер</th>
-                                            <th className="text-center px-4 py-2 font-medium">Кол-во план</th>
-                                            <th className="text-center px-4 py-2 font-medium">Кол-во факт</th>
-                                          </tr>
-                                        </thead>
-                                        <tbody>
-                                          {(() => {
-                                            const planVariants = task.Order?.OrderVariants || [];
-                                            const factMap = {};
-                                            (actualVariants || []).forEach((v) => {
-                                              const k = `${String(v.color || '').trim()}|${String(v.size || '').trim()}`;
-                                              factMap[k] = parseInt(v.quantity_actual, 10) || 0;
-                                            });
-                                            const rows = planVariants.map((v) => {
-                                              const color = String(v.color || '').trim() || '—';
-                                              const size = (v.Size?.name || v.Size?.code || '').toString().trim() || '—';
-                                              const plan = parseInt(v.quantity, 10) || 0;
-                                              const factKey = `${color}|${size}`;
-                                              const fact = factMap[factKey] !== undefined ? factMap[factKey] : null;
-                                              return { color, size, plan, fact };
-                                            });
-                                            if (rows.length === 0) {
-                                              return (
-                                                <tr>
-                                                  <td colSpan={4} className="px-4 py-2 text-[#ECECEC]/60">Нет данных</td>
-                                                </tr>
-                                              );
-                                            }
-                                            return rows.map((r, i) => (
-                                              <tr key={`${r.color}-${r.size}-${i}`} className="border-t border-white/10">
-                                                <td className="px-4 py-2">{r.color}</td>
-                                                <td className="px-4 py-2">{r.size}</td>
-                                                <td className="px-4 py-2 text-center">{r.plan}</td>
-                                                <td className="px-4 py-2 text-center">{r.fact !== null ? r.fact : '—'}</td>
-                                              </tr>
-                                            ));
-                                          })()}
-                                        </tbody>
-                                      </table>
-                                    </div>
-                                    {hasTotals && (
-                                      <div className="shrink-0">
-                                        <p className="text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-2">Итог по цветам</p>
-                                        <table className="text-sm border border-white/15 dark:border-white/15 rounded overflow-hidden min-w-[200px]">
-                                          <thead>
-                                            <tr className="bg-accent-2/50 dark:bg-dark-800">
-                                              <th className="text-left px-4 py-2 font-medium">Цвет</th>
-                                              {pivot.sizes.map((s) => (
-                                                <th key={s} className="text-center px-2 py-2 font-medium">{s}</th>
-                                              ))}
-                                              <th className="text-right px-4 py-2 font-medium">Итого</th>
-                                            </tr>
-                                          </thead>
-                                          <tbody>
-                                            {Object.entries(totalsByColor).map(([color, { bySize, total }]) => (
-                                              <tr key={color} className="border-t border-white/10">
-                                                <td className="px-4 py-2">{color}</td>
-                                                {pivot.sizes.map((s) => (
-                                                  <td key={s} className="px-2 py-2 text-center">{bySize[s] ?? 0}</td>
-                                                ))}
-                                                <td className="px-4 py-2 text-right font-medium">{total}</td>
-                                              </tr>
-                                            ))}
-                                            <tr className="border-t-2 border-white/20 bg-accent-2/30 dark:bg-dark-800 font-semibold">
-                                              <td className="px-4 py-2">Итого по размерам</td>
-                                              {pivot.sizes.map((s) => (
-                                                <td key={s} className="px-2 py-2 text-center">{totalsBySize[s] ?? 0}</td>
-                                              ))}
-                                              <td className="px-4 py-2 text-right">{grandTotal}</td>
-                                            </tr>
-                                          </tbody>
-                                        </table>
-                                      </div>
-                                    )}
-                                  </>
-                                );
-                              })()}
-                            </div>
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                  </React.Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
+                              <div style={{ fontSize: 10, color: '#666', marginTop: 2 }}>шт</div>
+                            </td>
+                            <td style={{ padding: '4px 8px', verticalAlign: 'top', minWidth: 120 }}>
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'center',
+                                  marginBottom: 4,
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    fontSize: 13,
+                                    fontWeight: 600,
+                                    color: getTotalFact(doc) > 0 ? '#c8ff00' : '#666',
+                                  }}
+                                >
+                                  {getTotalFact(doc) || '0'} шт
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => openFactModal(doc)}
+                                  style={{
+                                    fontSize: 10,
+                                    color: '#4a9eff',
+                                    background: 'transparent',
+                                    border: '0.5px solid #4a9eff',
+                                    borderRadius: 4,
+                                    padding: '2px 6px',
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  Детали
+                                </button>
+                              </div>
+                              {(doc.cutting_facts || []).slice(0, 2).map((f) => (
+                                <div
+                                  key={f.id}
+                                  style={{ fontSize: 10, color: '#888', whiteSpace: 'nowrap' }}
+                                >
+                                  {f.color || '—'} / {f.size || '—'}: {f.quantity ?? 0}шт
+                                </div>
+                              ))}
+                              {(doc.cutting_facts || []).length > 2 ? (
+                                <div style={{ fontSize: 10, color: '#555' }}>
+                                  +{(doc.cutting_facts || []).length - 2} ещё...
+                                </div>
+                              ) : null}
+                            </td>
+                            <td style={{ padding: '8px 12px', color: '#4a9eff', verticalAlign: 'top' }}>{client}</td>
+                            <td style={{ padding: '8px 12px', color: '#ccc', fontSize: 13, verticalAlign: 'top' }}>
+                              {formatWeekRangeLabel(doc.week_start)}
+                            </td>
+                            <td style={{ padding: '8px 12px', verticalAlign: 'top' }}>
+                              {origWeek && origWeek !== weekS ? (
+                                <div
+                                  style={{
+                                    fontSize: 10,
+                                    color: '#555',
+                                    textDecoration: 'line-through',
+                                    marginBottom: 2,
+                                  }}
+                                >
+                                  {formatWeekRangeLabel(doc.original_week_start)}
+                                </div>
+                              ) : null}
+                              <div style={{ fontSize: 12, color: '#888', marginBottom: 2 }}>
+                                {formatWeekRangeLabel(doc.week_start)}
+                              </div>
+                              <input
+                                type="date"
+                                value={weekS}
+                                disabled={!canEditChainDocs}
+                                title="Изменить неделю плана"
+                                onChange={(e) => changeCuttingPlanWeek(doc.id, e.target.value)}
+                                style={{
+                                  background: 'transparent',
+                                  border: '0.5px solid #444',
+                                  color: '#c8ff00',
+                                  padding: '4px 8px',
+                                  borderRadius: 4,
+                                  fontSize: 12,
+                                  cursor: canEditChainDocs ? 'pointer' : 'not-allowed',
+                                  width: 150,
+                                }}
+                              />
+                            </td>
+                            <td style={{ padding: '8px 12px', verticalAlign: 'top' }}>
+                              <input
+                                type="date"
+                                value={factW}
+                                disabled={!canEditChainDocs}
+                                onChange={(e) => saveCuttingFactWeek(doc.id, e.target.value)}
+                                style={{
+                                  background: 'transparent',
+                                  border: '0.5px solid #333',
+                                  color: '#fff',
+                                  padding: '4px 8px',
+                                  borderRadius: 4,
+                                  fontSize: 12,
+                                  cursor: canEditChainDocs ? 'pointer' : 'not-allowed',
+                                }}
+                              />
+                              {factW ? (
+                                <div style={{ fontSize: 11, color: '#c8ff00', marginTop: 2 }}>
+                                  ✓ {formatDateChain(factW)}
+                                </div>
+                              ) : null}
+                            </td>
+                            <td style={{ padding: '8px 12px', verticalAlign: 'top' }}>
+                              <select
+                                value={st}
+                                disabled={!canEditChainDocs}
+                                onChange={(e) => updateCuttingStatus(doc.id, e.target.value)}
+                                style={{
+                                  background: '#1a1a1a',
+                                  border: '0.5px solid #333',
+                                  color: statusColorCutting(st),
+                                  padding: '4px 8px',
+                                  borderRadius: 4,
+                                  fontSize: 12,
+                                }}
+                              >
+                                <option value="pending">Не начато</option>
+                                <option value="in_progress">В процессе</option>
+                                <option value="done">Раскроено</option>
+                              </select>
+                            </td>
+                            <td style={{ padding: '8px 12px', verticalAlign: 'top' }}>
+                              <select
+                                value={sectionVal}
+                                disabled={!canEditChainDocs}
+                                onChange={(e) => updateCuttingSection(doc.id, e.target.value)}
+                                style={{
+                                  background: '#1a1a1a',
+                                  border: '0.5px solid #444',
+                                  color: '#fff',
+                                  padding: '4px 8px',
+                                  borderRadius: 4,
+                                  fontSize: 12,
+                                  minWidth: 140,
+                                }}
+                              >
+                                <option value="">— Выбрать цех —</option>
+                                {workshops.map((w) => (
+                                  <option key={w.id} value={String(w.id)}>
+                                    {w.name}
+                                  </option>
+                                ))}
+                                {sectionVal &&
+                                !workshops.some((w) => String(w.id) === String(sectionVal)) ? (
+                                  <option value={sectionVal}>
+                                    {LEGACY_SECTION_LABELS[sectionVal] || sectionVal}
+                                  </option>
+                                ) : null}
+                              </select>
+                            </td>
+                            <td style={{ padding: '8px 12px', verticalAlign: 'top' }}>
+                              <input
+                                key={`${doc.id}-${doc.updated_at || ''}-${doc.comment || ''}`}
+                                type="text"
+                                placeholder="Комментарий..."
+                                defaultValue={doc.comment || ''}
+                                disabled={!canEditChainDocs}
+                                onBlur={(e) => saveCuttingComment(doc.id, e.target.value)}
+                                style={{
+                                  background: 'transparent',
+                                  border: '0.5px solid #333',
+                                  color: '#aaa',
+                                  padding: '4px 8px',
+                                  borderRadius: 4,
+                                  fontSize: 12,
+                                  width: 160,
+                                  maxWidth: '100%',
+                                }}
+                              />
+                            </td>
+                            <td style={{ padding: '8px 12px', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+                              <button
+                                type="button"
+                                onClick={() => printCuttingDocWithData(doc)}
+                                style={{
+                                  color: '#4a9eff',
+                                  background: 'transparent',
+                                  border: '0.5px solid #4a9eff',
+                                  borderRadius: 4,
+                                  padding: '4px 10px',
+                                  cursor: 'pointer',
+                                  fontSize: 12,
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                🖨 Печать
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
 
-      {completeModalTask && (
-        <CompleteByFactModal
-          task={completeModalTask}
-          onClose={() => setCompleteModalTask(null)}
-          onSave={(actualVariants, endDate) =>
-            completeModalTask.status === 'Готово'
-              ? handleEditActualVariants(completeModalTask, actualVariants, endDate)
-              : handleCompleteByFact(completeModalTask, actualVariants, endDate)
-          }
-          isEditMode={completeModalTask.status === 'Готово'}
-        />
-      )}
+      {factModal &&
+        createPortal(
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0,0,0,0.8)',
+              zIndex: 1000,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setFactModal(null);
+            }}
+            role="presentation"
+          >
+            <div
+              style={{
+                background: '#1a1a1a',
+                border: '0.5px solid #333',
+                borderRadius: 12,
+                padding: 24,
+                width: 560,
+                maxWidth: 'calc(100vw - 32px)',
+                maxHeight: '80vh',
+                overflowY: 'auto',
+              }}
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="cutting-fact-modal-title"
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  marginBottom: 16,
+                  gap: 12,
+                }}
+              >
+                <div>
+                  <div
+                    id="cutting-fact-modal-title"
+                    style={{ fontSize: 16, fontWeight: 600, color: '#c8ff00' }}
+                  >
+                    {(() => {
+                      const fo = factModal.Order;
+                      const a = String(fo?.article || fo?.tz_code || '').trim();
+                      const n = String(fo?.model_name || fo?.title || '').trim();
+                      if (a && n) return `${a} — ${n}`;
+                      return a || n || '—';
+                    })()}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+                    План: {planQtyCuttingOrder(factModal.Order)} шт
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFactModal(null)}
+                  style={{
+                    color: '#666',
+                    background: 'transparent',
+                    border: 'none',
+                    fontSize: 20,
+                    cursor: 'pointer',
+                    lineHeight: 1,
+                  }}
+                  aria-label="Закрыть"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {factModal._orderSpecLoading ? (
+                <div style={{ padding: '24px 0', textAlign: 'center', fontSize: 13, color: '#888' }}>
+                  Загрузка спецификации заказа…
+                </div>
+              ) : (factModal.specification || []).length === 0 ? (
+                <div style={{ padding: '16px 0', fontSize: 13, color: '#888' }}>
+                  В заказе нет матрицы цвет/размер (варианты). Добавьте варианты в карточке заказа.
+                </div>
+              ) : (
+                (() => {
+                  const spec = factModal.specification || [];
+                  const colors = [
+                    ...new Set(spec.map((s) => String(s.color ?? '').trim()).filter(Boolean)),
+                  ].sort((a, b) => a.localeCompare(b, 'ru'));
+                  const sizes = [
+                    ...new Set(spec.map((s) => String(s.size ?? '').trim()).filter(Boolean)),
+                  ].sort((a, b) => a.localeCompare(b, 'ru'));
+
+                  const getPlanQty = (color, size) => {
+                    const row = spec.find(
+                      (s) =>
+                        String(s.color ?? '').trim() === String(color ?? '').trim() &&
+                        String(s.size ?? '').trim() === String(size ?? '').trim()
+                    );
+                    return row ? Math.max(0, parseInt(row.quantity, 10) || 0) : 0;
+                  };
+
+                  const getFactQty = (color, size) => {
+                    const f = findCuttingFactForSpec(factModal.cutting_facts, color, size);
+                    return parseInt(f?.quantity, 10) || 0;
+                  };
+
+                  const getRowTotal = (color) =>
+                    sizes.reduce((sum, size) => sum + getFactQty(color, size), 0);
+
+                  const getColTotal = (size) =>
+                    colors.reduce((sum, color) => sum + getFactQty(color, size), 0);
+
+                  const getGrandTotal = () =>
+                    colors.reduce((sum, color) => sum + getRowTotal(color), 0);
+
+                  return (
+                    <div style={{ overflowX: 'auto' }}>
+                        <table
+                          style={{
+                            width: '100%',
+                            borderCollapse: 'collapse',
+                            fontSize: 13,
+                          }}
+                        >
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid #333' }}>
+                              <th
+                                style={{
+                                  textAlign: 'left',
+                                  padding: '10px 12px',
+                                  color: '#666',
+                                  fontWeight: 500,
+                                  minWidth: 120,
+                                }}
+                              >
+                                Цвет
+                              </th>
+                              {sizes.map((size) => (
+                                <th
+                                  key={size}
+                                  style={{
+                                    textAlign: 'center',
+                                    padding: '10px 16px',
+                                    color: '#aaa',
+                                    fontWeight: 500,
+                                    minWidth: 80,
+                                  }}
+                                >
+                                  {size}
+                                </th>
+                              ))}
+                              <th
+                                style={{
+                                  textAlign: 'right',
+                                  padding: '10px 12px',
+                                  color: '#888',
+                                  fontWeight: 500,
+                                  minWidth: 80,
+                                }}
+                              >
+                                Итого
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {colors.map((color) => (
+                              <tr key={color} style={{ borderBottom: '0.5px solid #1e1e1e' }}>
+                                <td style={{ padding: '8px 12px', color: '#fff', fontSize: 13 }}>{color}</td>
+                                {sizes.map((size) => {
+                                  const planQty = getPlanQty(color, size);
+                                  const factQty = getFactQty(color, size);
+                                  const over = planQty > 0 && factQty > planQty;
+                                  const complete = planQty > 0 && factQty === planQty;
+                                  const partial = planQty > 0 && factQty > 0 && factQty < planQty;
+
+                                  return (
+                                    <td key={size} style={{ padding: '6px 8px', textAlign: 'center' }}>
+                                      {planQty > 0 ? (
+                                        canEditChainDocs ? (
+                                          <input
+                                            type="number"
+                                            min={0}
+                                            max={planQty}
+                                            value={numInputValue(factQty)}
+                                            onChange={(e) => {
+                                              const raw = e.target.value;
+                                              const n =
+                                                raw === '' ? 0 : Math.max(0, parseInt(raw, 10) || 0);
+                                              updateFactQty(color, size, Math.min(planQty, n));
+                                            }}
+                                            style={{
+                                              width: 72,
+                                              textAlign: 'center',
+                                              background: over
+                                                ? 'rgba(255,68,68,0.12)'
+                                                : complete
+                                                  ? 'rgba(200,255,0,0.1)'
+                                                  : partial
+                                                    ? 'rgba(245,158,11,0.1)'
+                                                    : '#1a1a1a',
+                                              border: `0.5px solid ${
+                                                over
+                                                  ? '#ff6b6b'
+                                                  : complete
+                                                    ? '#c8ff00'
+                                                    : partial
+                                                      ? '#F59E0B'
+                                                      : '#333'
+                                              }`,
+                                              color: complete ? '#c8ff00' : '#fff',
+                                              padding: '6px 8px',
+                                              borderRadius: 6,
+                                              fontSize: 13,
+                                              fontWeight: 600,
+                                            }}
+                                          />
+                                        ) : (
+                                          <span
+                                            style={{
+                                              display: 'inline-block',
+                                              minWidth: 72,
+                                              textAlign: 'center',
+                                              color: complete ? '#c8ff00' : '#fff',
+                                              fontWeight: 600,
+                                            }}
+                                          >
+                                            {factQty}
+                                          </span>
+                                        )
+                                      ) : (
+                                        <span style={{ color: '#333', fontSize: 12 }}>—</span>
+                                      )}
+                                    </td>
+                                  );
+                                })}
+                                <td
+                                  style={{
+                                    padding: '8px 12px',
+                                    textAlign: 'right',
+                                    fontSize: 14,
+                                    fontWeight: 700,
+                                    color: '#fff',
+                                    borderLeft: '0.5px solid #333',
+                                  }}
+                                >
+                                  {getRowTotal(color)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot>
+                            <tr style={{ borderTop: '2px solid #444' }}>
+                              <td
+                                style={{
+                                  padding: '10px 12px',
+                                  fontSize: 13,
+                                  fontWeight: 600,
+                                  color: '#888',
+                                }}
+                              >
+                                Итого
+                              </td>
+                              {sizes.map((size) => (
+                                <td
+                                  key={size}
+                                  style={{
+                                    padding: '10px 8px',
+                                    textAlign: 'center',
+                                    fontSize: 14,
+                                    fontWeight: 700,
+                                    color: '#aaa',
+                                  }}
+                                >
+                                  {getColTotal(size)}
+                                </td>
+                              ))}
+                              <td
+                                style={{
+                                  padding: '10px 12px',
+                                  textAlign: 'right',
+                                  fontSize: 15,
+                                  fontWeight: 700,
+                                  color: '#c8ff00',
+                                  borderLeft: '0.5px solid #333',
+                                }}
+                              >
+                                {getGrandTotal()}
+                              </td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                    </div>
+                  );
+                })()
+              )}
+
+              {(() => {
+                const spec = factModal.specification || [];
+                const matrixReady = spec.length > 0 && !factModal._orderSpecLoading;
+                let planTotal = 0;
+                let factTotal = 0;
+                if (matrixReady) {
+                  const colors = [
+                    ...new Set(spec.map((s) => String(s.color ?? '').trim()).filter(Boolean)),
+                  ].sort((a, b) => a.localeCompare(b, 'ru'));
+                  const sizes = [
+                    ...new Set(spec.map((s) => String(s.size ?? '').trim()).filter(Boolean)),
+                  ].sort((a, b) => a.localeCompare(b, 'ru'));
+                  planTotal = spec.reduce((s, r) => s + (parseInt(r.quantity, 10) || 0), 0) || 0;
+                  factTotal = colors.reduce(
+                    (acc, color) =>
+                      acc +
+                      sizes.reduce(
+                        (rowSum, size) =>
+                          rowSum +
+                          (parseInt(
+                            findCuttingFactForSpec(factModal.cutting_facts, color, size)?.quantity,
+                            10
+                          ) || 0),
+                        0
+                      ),
+                    0
+                  );
+                } else {
+                  planTotal = planQtyCuttingNumber(factModal.Order);
+                  factTotal = getTotalFact(factModal);
+                }
+                const percent =
+                  planTotal > 0 ? Math.min(100, Math.round((factTotal / planTotal) * 100)) : 0;
+                const barBg = matrixReady
+                  ? percent >= 100
+                    ? '#c8ff00'
+                    : '#F59E0B'
+                  : '#c8ff00';
+                const trackBg = matrixReady ? '#222' : '#333';
+                return (
+                  <div style={{ marginTop: 16 }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        fontSize: 12,
+                        color: '#666',
+                        marginBottom: matrixReady ? 6 : 4,
+                      }}
+                    >
+                      <span>{matrixReady ? `Выполнено ${percent}%` : 'Выполнено'}</span>
+                      <span
+                        style={{
+                          color:
+                            matrixReady && factTotal >= planTotal ? '#c8ff00' : matrixReady ? '#aaa' : undefined,
+                        }}
+                      >
+                        {factTotal} / {matrixReady ? planTotal : planQtyCuttingOrder(factModal.Order)} шт
+                      </span>
+                    </div>
+                    <div style={{ background: trackBg, borderRadius: 4, height: 6 }}>
+                      <div
+                        style={{
+                          background: barBg,
+                          borderRadius: 4,
+                          height: 6,
+                          width: `${percent}%`,
+                          transition: 'width 0.3s ease',
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'flex-end',
+                  marginTop: 16,
+                  gap: 8,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setFactModal(null)}
+                  style={{
+                    padding: '8px 20px',
+                    background: 'transparent',
+                    border: '0.5px solid #444',
+                    color: '#888',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Закрыть
+                </button>
+                {canEditChainDocs ? (
+                  <button
+                    type="button"
+                    onClick={() => saveFacts()}
+                    disabled={!!factModal._orderSpecLoading}
+                    style={{
+                      padding: '8px 20px',
+                      background: '#c8ff00',
+                      border: 'none',
+                      color: '#000',
+                      fontWeight: 600,
+                      borderRadius: 6,
+                      cursor: factModal._orderSpecLoading ? 'not-allowed' : 'pointer',
+                      opacity: factModal._orderSpecLoading ? 0.5 : 1,
+                    }}
+                  >
+                    Сохранить
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

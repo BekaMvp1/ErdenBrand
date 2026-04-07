@@ -7,10 +7,244 @@ const express = require('express');
 const { Op } = require('sequelize');
 const db = require('../models');
 const { logAudit } = require('../utils/audit');
+const { getWeekStart } = require('../utils/planningUtils');
 
 const router = express.Router();
 // Этажи 1–4: раскрой передаётся в пошив (в т.ч. цех Салиха / 1 этаж)
 const SEWING_FLOOR_IDS = [1, 2, 3, 4];
+const { syncDocumentsForChainIds } = require('../services/chainDocumentsSync');
+
+const CHAIN_DOC_STATUSES = new Set(['pending', 'in_progress', 'done']);
+const CHAIN_DOC_WORKSHOPS = new Set(['floor_4', 'floor_3', 'floor_2', 'aksy', 'outsource']);
+
+function normalizeCuttingDocIso(v) {
+  const s = String(v || '').trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  return s;
+}
+
+const cuttingDocumentInclude = [
+  {
+    model: db.Order,
+    attributes: [
+      'id',
+      'title',
+      'tz_code',
+      'model_name',
+      'article',
+      'client_id',
+      'photos',
+      'quantity',
+      'total_quantity',
+    ],
+    include: [{ model: db.Client, attributes: ['id', 'name'] }],
+  },
+  {
+    model: db.PlanningChain,
+    attributes: ['id', 'section_id', 'purchase_week_start', 'cutting_week_start', 'sewing_week_start'],
+  },
+  {
+    model: db.CuttingFactDetail,
+    as: 'cutting_facts',
+    required: false,
+    attributes: ['id', 'color', 'size', 'quantity', 'created_at', 'updated_at'],
+  },
+];
+
+function parseCuttingDocIdParam(req) {
+  const id = parseInt(req.params.id, 10);
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
+
+/**
+ * GET /api/cutting/documents — документы раскроя из плана цеха
+ */
+router.get('/documents', async (req, res, next) => {
+  try {
+    const rows = await db.CuttingDocument.findAll({
+      order: [
+        ['week_start', 'ASC'],
+        ['id', 'ASC'],
+      ],
+      include: cuttingDocumentInclude,
+    });
+    res.json(rows.map((r) => r.toJSON()));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/cutting/documents/from-chain
+ */
+router.post('/documents/from-chain', async (req, res, next) => {
+  try {
+    if (!['admin', 'manager'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Только admin/manager' });
+    }
+    const chainIds = Array.isArray(req.body?.chain_ids) ? req.body.chain_ids : [];
+    await syncDocumentsForChainIds(chainIds);
+    await logAudit(req.user.id, 'SYNC', 'cutting_documents_from_chain', chainIds.length);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/cutting/documents/:id/facts
+ */
+router.get('/documents/:id/facts', async (req, res, next) => {
+  try {
+    const docId = parseCuttingDocIdParam(req);
+    if (!docId) return res.status(400).json({ error: 'Неверный id' });
+    const doc = await db.CuttingDocument.findByPk(docId);
+    if (!doc) return res.status(404).json({ error: 'Не найдено' });
+    const facts = await db.CuttingFactDetail.findAll({
+      where: { cutting_document_id: docId },
+      order: [['id', 'ASC']],
+      attributes: ['id', 'color', 'size', 'quantity'],
+    });
+    res.json(facts.map((f) => f.toJSON()));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/cutting/documents/:id/facts
+ */
+router.post('/documents/:id/facts', async (req, res, next) => {
+  try {
+    const docId = parseCuttingDocIdParam(req);
+    if (!docId) return res.status(400).json({ error: 'Неверный id' });
+    const doc = await db.CuttingDocument.findByPk(docId);
+    if (!doc) return res.status(404).json({ error: 'Не найдено' });
+    const color = req.body?.color != null ? String(req.body.color).slice(0, 100) : '';
+    const size = req.body?.size != null ? String(req.body.size).slice(0, 50) : '';
+    const quantity = Math.max(0, parseInt(req.body?.quantity, 10) || 0);
+    const row = await db.CuttingFactDetail.create({
+      cutting_document_id: docId,
+      color: color || null,
+      size: size || null,
+      quantity,
+    });
+    await logAudit(req.user.id, 'CREATE', 'cutting_fact_detail', row.id);
+    res.status(201).json(row.toJSON());
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PATCH /api/cutting/facts/:factId
+ */
+router.patch('/facts/:factId', async (req, res, next) => {
+  try {
+    const factId = parseInt(req.params.factId, 10);
+    if (!factId) return res.status(400).json({ error: 'Неверный id' });
+    const row = await db.CuttingFactDetail.findByPk(factId);
+    if (!row) return res.status(404).json({ error: 'Не найдено' });
+    const patch = {};
+    if (req.body.color !== undefined) {
+      patch.color = req.body.color == null || req.body.color === '' ? null : String(req.body.color).slice(0, 100);
+    }
+    if (req.body.size !== undefined) {
+      patch.size = req.body.size == null || req.body.size === '' ? null : String(req.body.size).slice(0, 50);
+    }
+    if (req.body.quantity !== undefined) {
+      patch.quantity = Math.max(0, parseInt(req.body.quantity, 10) || 0);
+    }
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ error: 'Нет полей для обновления' });
+    }
+    await row.update(patch);
+    await logAudit(req.user.id, 'UPDATE', 'cutting_fact_detail', factId);
+    res.json(row.toJSON());
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * DELETE /api/cutting/facts/:factId
+ */
+router.delete('/facts/:factId', async (req, res, next) => {
+  try {
+    const factId = parseInt(req.params.factId, 10);
+    if (!factId) return res.status(400).json({ error: 'Неверный id' });
+    const row = await db.CuttingFactDetail.findByPk(factId);
+    if (!row) return res.status(404).json({ error: 'Не найдено' });
+    await row.destroy();
+    await logAudit(req.user.id, 'DELETE', 'cutting_fact_detail', factId);
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PATCH /api/cutting/documents/:id
+ */
+router.patch('/documents/:id', async (req, res, next) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).json({ error: 'Неверный id' });
+    const row = await db.CuttingDocument.findByPk(id);
+    if (!row) return res.status(404).json({ error: 'Не найдено' });
+    const patch = {};
+    if (req.body.week_start !== undefined) {
+      const raw = normalizeCuttingDocIso(req.body.week_start);
+      if (!raw) return res.status(400).json({ error: 'Некорректная week_start' });
+      patch.week_start = getWeekStart(raw);
+    }
+    if (req.body.actual_week_start !== undefined) {
+      if (req.body.actual_week_start == null || req.body.actual_week_start === '') {
+        patch.actual_week_start = null;
+      } else {
+        const d = normalizeCuttingDocIso(req.body.actual_week_start);
+        if (!d) return res.status(400).json({ error: 'Некорректная actual_week_start' });
+        patch.actual_week_start = getWeekStart(d);
+      }
+    }
+    if (req.body.section_id !== undefined) {
+      if (req.body.section_id == null || req.body.section_id === '') {
+        patch.section_id = null;
+      } else {
+        patch.section_id = String(req.body.section_id).trim().slice(0, 64) || null;
+      }
+    }
+    if (req.body.status !== undefined) {
+      const v = String(req.body.status).trim();
+      if (!CHAIN_DOC_STATUSES.has(v)) return res.status(400).json({ error: 'Недопустимый status' });
+      patch.status = v;
+    }
+    if (req.body.comment !== undefined) {
+      patch.comment = req.body.comment == null ? null : String(req.body.comment).slice(0, 5000);
+    }
+    if (req.body.workshop !== undefined) {
+      const raw = req.body.workshop;
+      if (raw == null || raw === '') {
+        patch.workshop = null;
+      } else {
+        const w = String(raw).trim();
+        if (!CHAIN_DOC_WORKSHOPS.has(w)) {
+          return res.status(400).json({ error: 'Недопустимый workshop' });
+        }
+        patch.workshop = w;
+      }
+    }
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ error: 'Нет полей для обновления' });
+    }
+    await row.update(patch);
+    await logAudit(req.user.id, 'UPDATE', 'cutting_document', id);
+    const full = await db.CuttingDocument.findByPk(id, { include: cuttingDocumentInclude });
+    res.json(full.toJSON());
+  } catch (err) {
+    next(err);
+  }
+});
 
 /**
  * GET /api/cutting/tasks?cutting_type=Аксы|cutting_type=Аутсорс|...
@@ -39,6 +273,33 @@ router.get('/tasks', async (req, res, next) => {
     });
 
     res.json(tasks);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/cutting/facts-by-order
+ * Сумма quantity_actual по actual_variants всех задач раскроя, ключ — order_id (связь с заказом в планировании).
+ */
+router.get('/facts-by-order', async (req, res, next) => {
+  try {
+    const rows = await db.CuttingTask.findAll({
+      attributes: ['order_id', 'actual_variants'],
+      raw: true,
+    });
+    const byOrder = {};
+    for (const t of rows) {
+      const vars = t.actual_variants && Array.isArray(t.actual_variants) ? t.actual_variants : [];
+      let s = 0;
+      for (const v of vars) {
+        s += parseInt(v.quantity_actual, 10) || 0;
+      }
+      const oid = Number(t.order_id);
+      if (!Number.isFinite(oid)) continue;
+      byOrder[oid] = (byOrder[oid] || 0) + s;
+    }
+    res.json(byOrder);
   } catch (err) {
     next(err);
   }

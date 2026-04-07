@@ -2,13 +2,13 @@
  * Основной layout: Topbar + Sidebar + контент + ИИ-ассистент
  */
 
-import { useEffect, useState } from 'react';
-import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import BackButton from './BackButton';
+import { useCallback, useEffect, useState } from 'react';
+import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { usePrintHeader } from '../context/PrintContext';
 import PrintDocHeader from './PrintDocHeader';
 import { api } from '../api';
+import { normalizeUserRole } from '../utils/userRole';
 import DashboardSummary from './DashboardSummary';
 
 const ROLE_LABELS = {
@@ -102,19 +102,19 @@ const NAV_ICONS = {
   ),
 };
 
-const CUTTING_DEFAULT = ['Аксы', 'Аутсорс', 'Наш цех'];
 const SIDEBAR_LOCK_KEY = 'sidebar_locked';
 const SIDEBAR_LOCK_EXPANDED_KEY = 'sidebar_locked_expanded';
 
 export default function Layout() {
   const { user, logout } = useAuth();
+  const userRole = normalizeUserRole(user?.role);
   const location = useLocation();
   const [summary, setSummary] = useState(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [cuttingTypes, setCuttingTypes] = useState([]);
   const [cuttingOpen, setCuttingOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [connectionError, setConnectionError] = useState(false);
+  const [serverOk, setServerOk] = useState(true);
   const [sidebarHovered, setSidebarHovered] = useState(false);
   const [sidebarLocked, setSidebarLocked] = useState(() => {
     try { return sessionStorage.getItem(SIDEBAR_LOCK_KEY) === '1'; } catch { return false; }
@@ -153,14 +153,19 @@ export default function Layout() {
     '/orders/create': 'Создать заказ',
     '/procurement': 'Закуп',
     '/planning': 'Планирование',
+    '/planning-draft': 'Планирование месяц',
+    '/planning-week': 'Планирование неделя',
     '/sewing': 'Пошив',
     '/finance': 'Финансы',
     '/warehouse': 'Склад',
-    '/qc': 'ОТК',
+    '/otk': 'ОТК',
+    '/qc': 'ОТК (партии)',
     '/shipments': 'Отгрузка',
     '/cutting': 'Раскрой',
     '/references': 'Справочники',
     '/settings': 'Настройки',
+    '/settings/production-cycle': 'Настройки цикла',
+    '/production-chain': 'План цеха',
     '/assistant': 'ИИ Ассистент',
   };
   const basePath = location.pathname.replace(/\/$/, '') || '/';
@@ -168,20 +173,7 @@ export default function Layout() {
   usePrintHeader(printTitle, '');
   const isBoard = location.pathname === '/board';
   const isAssistant = location.pathname === '/assistant';
-  const isCutting = location.pathname.startsWith('/cutting');
   const shouldShowSummary = !isReferences && !isBoard && !isAssistant;
-  // Аксы и Аутсорс — по умолчанию; остальные — из справочника (без дублей)
-  const cuttingMenuItems = [
-    ...CUTTING_DEFAULT,
-    ...cuttingTypes.filter((t) => !CUTTING_DEFAULT.includes(t.name)).map((t) => t.name),
-  ];
-
-  useEffect(() => {
-    if (user?.role !== 'operator') {
-      api.references.cuttingTypes().then(setCuttingTypes).catch(() => setCuttingTypes([]));
-    }
-  }, [user?.role]);
-
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 1024px)');
     const onChange = () => {
@@ -191,29 +183,46 @@ export default function Layout() {
     return () => mq.removeEventListener('change', onChange);
   }, []);
 
-  useEffect(() => {
-    if (shouldShowSummary) {
-      setSummaryLoading(true);
-      setConnectionError(false);
-      api.dashboard
-        .summary()
-        .then((d) => {
-          setSummary(d);
-          setSummaryLoading(false);
-          setConnectionError(false);
-        })
-        .catch(() => {
-          setSummary(null);
-          setSummaryLoading(false);
-          setConnectionError(true);
-        });
+  const checkServer = useCallback(async () => {
+    try {
+      await api.health();
+      setServerOk(true);
+    } catch {
+      setServerOk(false);
     }
+  }, []);
+
+  const loadLayoutData = useCallback(() => {
+    if (!shouldShowSummary) return;
+    setSummaryLoading(true);
+    api.dashboard
+      .summary()
+      .then((d) => {
+        setSummary(d);
+        setSummaryLoading(false);
+      })
+      .catch(() => {
+        setSummary(null);
+        setSummaryLoading(false);
+      });
   }, [shouldShowSummary]);
+
+  useEffect(() => {
+    checkServer();
+    const interval = setInterval(checkServer, 5000);
+    return () => clearInterval(interval);
+  }, [checkServer]);
+
+  useEffect(() => {
+    if (serverOk && shouldShowSummary) {
+      loadLayoutData();
+    }
+  }, [serverOk, shouldShowSummary, loadLayoutData]);
 
   // Структура sidebar: Дашборд сверху, блок заказов, разделитель, производственный блок, разделитель, системный блок
   const dashboardItem = { type: 'item', to: '/production-dashboard', label: 'Дашборд', icon: 'dashboard' };
   const orderBlockItems =
-    user?.role === 'operator'
+    userRole === 'operator'
       ? [
           { type: 'item', to: '/board', label: 'Панель заказов', icon: 'board' },
           { type: 'item', to: '/orders', label: 'Заказы', icon: 'orders', end: true },
@@ -222,28 +231,34 @@ export default function Layout() {
           { type: 'item', to: '/board', label: 'Панель заказов', icon: 'board' },
           { type: 'item', to: '/orders', label: 'Заказы', icon: 'orders', end: true },
           { type: 'item', to: '/orders/create', label: 'Создать заказ', icon: 'create' },
-          { type: 'item', to: '/planning', label: 'Планирование', icon: 'planning', end: true },
+          { type: 'item', to: '/planning', label: 'Планирование месяц', icon: 'planning', end: true },
+          { type: 'item', to: '/planning-week', label: 'Планирование неделя', icon: 'planning', end: true },
+          { type: 'item', to: '/production-chain', label: 'План цеха', icon: 'planning', end: true },
         ];
   // ОТК и производственный блок: admin, manager, technologist (не operator)
-  const canSeeProduction = user?.role && ['admin', 'manager', 'technologist'].includes(user.role);
+  const canSeeProduction = ['admin', 'manager', 'technologist'].includes(userRole);
   const productionBlockItems = canSeeProduction
     ? [
         { type: 'item', to: '/procurement', label: 'Закуп', icon: 'procurement' },
-        { type: 'item', to: '/cutting', label: 'Раскрой', icon: 'cutting', dropdown: cuttingMenuItems },
+        { type: 'item', to: '/cutting', label: 'Раскрой', icon: 'cutting' },
         { type: 'item', to: '/sewing', label: 'Пошив', icon: 'floorTasks' },
-        { type: 'item', to: '/qc', label: 'ОТК', icon: 'qc' },
+        { type: 'item', to: '/otk', label: 'ОТК', icon: 'qc' },
         { type: 'item', to: '/warehouse', label: 'Склад', icon: 'warehouse' },
         { type: 'item', to: '/shipments', label: 'Отгрузка', icon: 'shipments' },
       ]
     : [];
   const systemBlockItems = [
-    ...(user?.role !== 'operator' ? [{ type: 'item', to: '/finance', label: 'Финансы', icon: 'finance' }] : []),
+    ...(userRole !== 'operator' ? [{ type: 'item', to: '/finance', label: 'Финансы', icon: 'finance' }] : []),
     { type: 'item', to: '/assistant', label: 'ИИ Ассистент', icon: 'assistant' },
     { type: 'item', to: '/references', label: 'Справочники', icon: 'references' },
+    ...(userRole && ['admin', 'manager'].includes(userRole)
+      ? [{ type: 'item', to: '/settings/production-cycle', label: 'Настройки цикла', icon: 'references', end: true }]
+      : []),
     { type: 'item', to: '/settings', label: 'Настройки', icon: 'settings' },
   ];
 
-  const sidebarExpanded = sidebarLocked ? lockedExpanded : sidebarHovered;
+  /** При наведении всегда показываем подписи; при уходе мыши — остаётся развёрнутым только если зафиксировано открытым */
+  const sidebarExpanded = sidebarHovered || (sidebarLocked && lockedExpanded);
 
   const navStructure = [
     dashboardItem,
@@ -275,7 +290,7 @@ export default function Layout() {
         className={`fixed lg:relative inset-y-0 left-0 z-50 bg-neon-bg2 sidebar-header-border flex flex-col transform transition-all duration-200 ease-out overflow-hidden
           w-[min(100vw-2rem,16rem)] max-w-[16rem] sm:w-64
           ${sidebarExpanded ? 'lg:w-56' : 'lg:w-16'}
-          ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
+          ${mobileMenuOpen ? 'translate-x-0 max-lg:pointer-events-auto' : '-translate-x-full lg:translate-x-0 max-lg:pointer-events-none max-lg:[&_*]:pointer-events-none'}`}
       >
         <div className={`header-top flex items-center gap-2 p-4 lg:px-2 lg:py-3 shrink-0 border-b border-white/10 ${sidebarExpanded ? 'lg:justify-start' : 'lg:justify-center'}`}>
           {/* Свёрнуто: логотип (только desktop lg+) */}
@@ -321,45 +336,8 @@ export default function Layout() {
             if (entry.type === 'spacer') {
               return <div key={`spacer-${idx}`} className="py-2" aria-hidden="true" />;
             }
-            const { to, label, icon, end, dropdown } = entry;
-            return dropdown ? (
-              <div key={to} className="relative">
-                <button
-                  onClick={() => setCuttingOpen(!cuttingOpen)}
-                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors duration-300 ease-out min-w-0 ${
-                    isCutting
-                      ? 'bg-primary-600 text-white'
-                      : 'text-neon-text/85 hover:bg-white/5 hover:text-neon-text'
-                  }`}
-                >
-                  <span className="flex-shrink-0">{NAV_ICONS[icon]}</span>
-                  <span className={`truncate whitespace-nowrap ${mobileMenuOpen ? 'inline' : 'max-lg:hidden'} ${sidebarExpanded ? 'lg:inline' : 'lg:hidden'}`}>{label}</span>
-                  <svg className={`w-4 h-4 ml-auto flex-shrink-0 transition-transform ${mobileMenuOpen ? 'block' : 'max-lg:hidden'} ${sidebarExpanded ? 'lg:block' : 'lg:hidden'} ${cuttingOpen ? 'rotate-180' : ''}`} fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-                  </svg>
-                </button>
-                {cuttingOpen && (
-                  <div className={`mt-1 ml-4 pl-2 border-l border-white/20 dark:border-white/20 space-y-0.5 block ${mobileMenuOpen ? 'block' : 'max-lg:hidden'} ${sidebarExpanded ? 'lg:block' : 'lg:hidden'}`}>
-                    {dropdown.map((type) => (
-                      <NavLink
-                        key={type}
-                        to={`/cutting/${encodeURIComponent(type)}`}
-                        onClick={() => { setCuttingOpen(false); setMobileMenuOpen(false); }}
-                        className={({ isActive }) =>
-                          `block px-3 py-1.5 rounded text-sm truncate ${
-                            isActive
-                              ? 'bg-primary-600/80 text-white'
-                              : 'text-neon-muted hover:bg-white/5'
-                          }`
-                        }
-                      >
-                        {type}
-                      </NavLink>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ) : (
+            const { to, label, icon, end } = entry;
+            return (
               <NavLink
                 key={to}
                 to={to}
@@ -385,7 +363,13 @@ export default function Layout() {
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         <header className="header-top bg-neon-surface flex items-center justify-between px-3 md:px-6 lg:px-8 gap-2 min-h-[3rem]">
           <div className="flex items-center gap-1 min-w-0">
-            <BackButton className="text-neon-text hover:bg-white/10 shrink-0" />
+            <Link
+              to="/production-dashboard"
+              className="shrink-0 px-2 py-1 rounded-lg hover:bg-white/10 transition-colors"
+              style={{ fontWeight: 700, fontSize: 18, color: '#c8ff00' }}
+            >
+              ERDEN
+            </Link>
             <button
               onClick={() => setMobileMenuOpen(true)}
               className="p-2 rounded-lg lg:hidden hover:bg-white/10 text-neon-text shrink-0"
@@ -415,9 +399,47 @@ export default function Layout() {
 
         <main className="flex-1 overflow-x-hidden overflow-y-auto px-3 py-3 sm:py-4 md:px-6 md:py-5 lg:px-8 lg:py-6 bg-transparent relative">
           <PrintDocHeader />
-          {connectionError && (
-            <div className="no-print mb-4 p-4 rounded-xl bg-red-500/20 border border-red-500/50 text-red-400">
-              <strong>Сервер не отвечает.</strong> Запустите backend: <code className="bg-black/20 px-1 rounded">cd backend && npm run dev</code>
+          {!serverOk && (
+            <div
+              className="no-print mb-4 flex flex-wrap items-center gap-2"
+              style={{
+                background: 'rgba(200, 0, 0, 0.15)',
+                border: '1px solid #ff4444',
+                padding: '12px 16px',
+                borderRadius: 6,
+                fontSize: 13,
+              }}
+            >
+              <span style={{ color: '#ff6b6b', fontWeight: 600 }}>Сервер не отвечает.</span>
+              <span style={{ color: '#aaa', marginLeft: 8 }}>Запустите backend:</span>
+              <code
+                style={{
+                  background: '#1a1a1a',
+                  color: '#c8ff00',
+                  padding: '2px 8px',
+                  borderRadius: 4,
+                  marginLeft: 8,
+                  fontSize: 12,
+                }}
+              >
+                cd backend && npm run dev
+              </code>
+              <button
+                type="button"
+                onClick={() => checkServer()}
+                style={{
+                  marginLeft: 16,
+                  padding: '4px 12px',
+                  background: 'transparent',
+                  border: '0.5px solid #666',
+                  color: '#888',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  fontSize: 12,
+                }}
+              >
+                Повторить подключение
+              </button>
             </div>
           )}
           {shouldShowSummary && (

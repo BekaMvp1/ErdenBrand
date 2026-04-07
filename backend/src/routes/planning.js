@@ -14,6 +14,11 @@ const { WORKING_DAYS_PER_WEEK, getWorkingDaysInRange, getWeekStart, isWorkingDay
 const { syncWeeklyCacheFromDaily, checkWeeklyIntegrity, recalculateCarry } = require('../utils/planningSync');
 const kitPlanningService = require('../services/kitPlanningService');
 const { getOrderIdsForPlanningByOperations } = require('../utils/planningOrderIdsByOperations');
+const {
+  mergeCellsIntoPayloadSections,
+  replaceDayCellsBatch,
+  listCellsForScope,
+} = require('../utils/planningDraftCells');
 
 const router = express.Router();
 
@@ -2047,6 +2052,53 @@ router.get('/matrix-orders-meta', async (req, res, next) => {
   }
 });
 
+// ========== Черновик таблицы «Планирование производства» (PlanningDraft) ==========
+
+function planningProductionDraftScopeKey(workshopId, floorId, monthKey) {
+  const w = workshopId != null && String(workshopId).trim() !== '' ? String(workshopId).trim() : '0';
+  const f = floorId != null && String(floorId).trim() !== '' ? String(floorId).trim() : '0';
+  const m = String(monthKey || '').trim().slice(0, 7);
+  return `w${w}_f${f}_m${m}`;
+}
+
+/**
+ * GET /api/planning/production-draft?workshop_id=&building_floor_id=&month_key=YYYY-MM
+ * Дневные ячейки (Планирование неделя) агрегируются в недельные поля sections[].rows[].weeks.
+ * В ответе дополнительно day_cells — сырые строки из БД для недельного UI.
+ */
+router.get('/production-draft', async (req, res, next) => {
+  try {
+    const { workshop_id, building_floor_id, month_key } = req.query;
+    if (!month_key || !/^\d{4}-\d{2}$/.test(String(month_key).trim())) {
+      return res.status(400).json({ error: 'Укажите month_key в формате YYYY-MM' });
+    }
+    const key = planningProductionDraftScopeKey(workshop_id, building_floor_id, month_key);
+    const row = await db.PlanningProductionDraft.findOne({
+      where: { user_id: req.user.id, scope_key: key },
+    });
+    if (!row) return res.json(null);
+    let payload = row.payload && typeof row.payload === 'object' ? { ...row.payload } : {};
+    const cellRows = await listCellsForScope(db, req.user.id, key).catch(() => []);
+    if (Number(payload.version) === 2 && Array.isArray(payload.sections) && cellRows.length > 0) {
+      payload = mergeCellsIntoPayloadSections(
+        { ...payload, _merge_month_key: String(month_key).trim().slice(0, 7) },
+        cellRows
+      );
+    }
+    const day_cells = (cellRows || []).map((r) => ({
+      row_id: r.row_id,
+      section_key: r.section_key,
+      subsection_key: r.subsection_key,
+      date: r.date ? String(r.date).slice(0, 10) : '',
+      cell_key: r.cell_key,
+      cell_value: r.cell_value != null ? String(r.cell_value) : '',
+    }));
+    res.json({ ...payload, day_cells });
+  } catch (err) {
+    next(err);
+  }
+});
+
 /**
  * GET /api/planning/matrix-snapshot?month=YYYY-MM&workshop_id=&week_slice_start=&floor_id=
  * floor_id — building_floor_id (1–4) или не передаётся для цеха без этажей
@@ -2137,6 +2189,277 @@ router.put('/matrix-snapshot', async (req, res, next) => {
     }
     res.json({ ok: true, updated_at: snap.updated_at });
   } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PUT /api/planning/production-draft
+ * body: { workshop_id?, building_floor_id?, month_key, week_slice_start?, rows: [...], day_cells?, capacity_day_cells? }
+ * day_cells — сохранение из «Планирование неделя» (замена ячеек по затронутым датам).
+ */
+router.put('/production-draft', async (req, res, next) => {
+  try {
+    if (!['admin', 'manager', 'technologist'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Сохранение черновика доступно admin/manager/technologist' });
+    }
+    const {
+      workshop_id,
+      building_floor_id,
+      month_key,
+      week_slice_start,
+      rows,
+      sections,
+      version,
+      day_cells,
+      capacity_day_cells,
+    } = req.body || {};
+    if (!month_key || !/^\d{4}-\d{2}$/.test(String(month_key).trim())) {
+      return res.status(400).json({ error: 'Укажите month_key (YYYY-MM)' });
+    }
+    const key = planningProductionDraftScopeKey(workshop_id, building_floor_id, month_key);
+    const ws = Math.max(0, parseInt(week_slice_start, 10) || 0);
+    const mk = String(month_key).trim().slice(0, 7);
+
+    let payload;
+    if (Number(version) === 2 && Array.isArray(sections)) {
+      const trimmed = sections.slice(0, 24).map((s) => {
+        if (s.type === 'group_header') return s;
+        return {
+          ...s,
+          subsections: Array.isArray(s.subsections)
+            ? s.subsections.slice(0, 48).map((sub) => ({
+                ...sub,
+                rows: Array.isArray(sub.rows) ? sub.rows.slice(0, 80) : [],
+              }))
+            : [],
+        };
+      });
+      payload = { version: 2, week_slice_start: ws, sections: trimmed };
+    } else {
+      if (!Array.isArray(rows)) {
+        return res.status(400).json({ error: 'Поле rows должно быть массивом (или version:2 + sections)' });
+      }
+      payload = { week_slice_start: ws, rows: rows.slice(0, 40) };
+    }
+
+    const existing = await db.PlanningProductionDraft.findOne({
+      where: { user_id: req.user.id, scope_key: key },
+    });
+    const prevPayload = existing?.payload && typeof existing.payload === 'object' ? existing.payload : {};
+
+    if (capacity_day_cells && typeof capacity_day_cells === 'object') {
+      payload.capacity_day_cells = capacity_day_cells;
+    } else if (prevPayload.capacity_day_cells) {
+      payload.capacity_day_cells = prevPayload.capacity_day_cells;
+    }
+
+    if (Array.isArray(day_cells)) {
+      await replaceDayCellsBatch(db, req.user.id, key, day_cells);
+      const cellRows = await listCellsForScope(db, req.user.id, key);
+      if (Number(payload.version) === 2 && Array.isArray(payload.sections)) {
+        payload = mergeCellsIntoPayloadSections({ ...payload, _merge_month_key: mk }, cellRows);
+      }
+    }
+
+    const [draft, created] = await db.PlanningProductionDraft.findOrCreate({
+      where: { user_id: req.user.id, scope_key: key },
+      defaults: { user_id: req.user.id, scope_key: key, payload },
+    });
+    if (!created) {
+      await draft.update({ payload });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ========== План цеха: цепочка закуп → раскрой → пошив ==========
+
+const CHAIN_STATUSES = new Set(['pending', 'in_progress', 'done']);
+const { syncDocumentsForChainIds } = require('../services/chainDocumentsSync');
+
+/** YYYY-MM-DD: проверка календарной даты (иначе PostgreSQL DATE выдаёт ошибку и POST /chain → 500). */
+function normalizeChainIsoDate(v) {
+  const s = String(v || '').trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const parts = s.split('-');
+  const y = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  const d = parseInt(parts[2], 10);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+  if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) return null;
+  return s;
+}
+
+const chainOrderInclude = {
+  model: db.Order,
+  attributes: [
+    'id',
+    'article',
+    'tz_code',
+    'model_name',
+    'title',
+    'photos',
+    'total_quantity',
+    'quantity',
+    'client_id',
+    'workshop_id',
+  ],
+  include: [
+    { model: db.Client, attributes: ['id', 'name'] },
+    {
+      model: db.OrderOperation,
+      separate: true,
+      attributes: ['id', 'actual_quantity', 'actual_qty', 'stage_key', 'operation_id'],
+      include: [{ model: db.Operation, attributes: ['id', 'category', 'name'] }],
+      required: false,
+    },
+  ],
+};
+
+const chainRowIncludes = [
+  chainOrderInclude,
+  { model: db.PurchaseDocument, as: 'purchase_doc', required: false },
+  { model: db.CuttingDocument, as: 'cutting_doc', required: false },
+];
+
+/**
+ * GET /api/planning/chain
+ * Список цепочек с заказами.
+ */
+router.get('/chain', async (req, res, next) => {
+  try {
+    const rows = await db.PlanningChain.findAll({
+      order: [['id', 'ASC']],
+      include: chainRowIncludes,
+    });
+    res.json(rows.map((r) => r.toJSON()));
+  } catch (err) {
+    console.error('[planning/chain GET]', err.message);
+    next(err);
+  }
+});
+
+/**
+ * POST /api/planning/chain
+ * Тело: массив [{ order_id, section_id, purchase_week_start, cutting_week_start, sewing_week_start }]
+ * Только admin / manager.
+ */
+router.post('/chain', async (req, res, next) => {
+  try {
+    if (!['admin', 'manager'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Только admin/manager' });
+    }
+    const items = Array.isArray(req.body) ? req.body : req.body?.items;
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'Ожидался непустой массив записей' });
+    }
+    const out = [];
+    const rowErrors = [];
+    for (const it of items.slice(0, 500)) {
+      try {
+        const orderId = parseInt(it.order_id, 10);
+        const sectionId = String(it.section_id || '').trim().slice(0, 64);
+        const ps = normalizeChainIsoDate(it.purchase_week_start);
+        const cs = normalizeChainIsoDate(it.cutting_week_start);
+        const ss = normalizeChainIsoDate(it.sewing_week_start);
+        if (!orderId || !sectionId || !ps || !cs || !ss) continue;
+        const order = await db.Order.findByPk(orderId);
+        if (!order) continue;
+        const [rec, created] = await db.PlanningChain.findOrCreate({
+          where: { order_id: orderId, section_id: sectionId },
+          defaults: {
+            order_id: orderId,
+            section_id: sectionId,
+            purchase_week_start: ps,
+            cutting_week_start: cs,
+            sewing_week_start: ss,
+            purchase_status: 'pending',
+            cutting_status: 'pending',
+            sewing_status: 'pending',
+          },
+        });
+        if (!created) {
+          await rec.update({
+            purchase_week_start: ps,
+            cutting_week_start: cs,
+            sewing_week_start: ss,
+          });
+        }
+        out.push(rec.toJSON());
+      } catch (itemErr) {
+        console.error('[planning/chain POST item]', itemErr.message, itemErr.stack);
+        rowErrors.push({
+          order_id: it?.order_id,
+          section_id: it?.section_id,
+          error: itemErr.message || String(itemErr),
+        });
+      }
+    }
+    if (out.length === 0) {
+      return res.status(400).json({
+        error:
+          'Не удалось сохранить ни одной записи: проверьте order_id, section_id и даты YYYY-MM-DD',
+        details: rowErrors.length ? rowErrors : undefined,
+      });
+    }
+    const ids = out.map((row) => row.id);
+    try {
+      await syncDocumentsForChainIds(ids);
+    } catch (syncErr) {
+      console.error('[planning/chain POST sync docs]', syncErr.message, syncErr.stack);
+    }
+    await logAudit(req.user.id, 'UPSERT', 'planning_chains', out.length);
+    res.json({
+      ok: true,
+      saved: out.length,
+      rows: out,
+      ids,
+      ...(rowErrors.length > 0 ? { row_errors: rowErrors } : {}),
+    });
+  } catch (err) {
+    console.error('[planning/chain POST]', err.message, err.stack);
+    next(err);
+  }
+});
+
+/**
+ * PATCH /api/planning/chain/:id
+ * body: { purchase_status?, cutting_status?, sewing_status? }
+ */
+router.patch('/chain/:id', async (req, res, next) => {
+  try {
+    if (!['admin', 'manager', 'technologist'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Нет доступа' });
+    }
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).json({ error: 'Неверный id' });
+    const row = await db.PlanningChain.findByPk(id);
+    if (!row) return res.status(404).json({ error: 'Не найдено' });
+    const patch = {};
+    for (const k of ['purchase_status', 'cutting_status', 'sewing_status']) {
+      if (req.body[k] !== undefined) {
+        const v = String(req.body[k]).trim();
+        if (!CHAIN_STATUSES.has(v)) {
+          return res.status(400).json({ error: `Недопустимый ${k}` });
+        }
+        patch[k] = v;
+      }
+    }
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ error: 'Нет полей для обновления' });
+    }
+    await row.update(patch);
+    const full = await db.PlanningChain.findByPk(id, {
+      include: chainRowIncludes,
+    });
+    res.json(full.toJSON());
+  } catch (err) {
+    console.error('[planning/chain PATCH]', err.message);
     next(err);
   }
 });

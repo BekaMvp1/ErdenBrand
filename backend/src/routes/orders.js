@@ -553,6 +553,13 @@ router.get('/', async (req, res, next) => {
       { model: db.Workshop, as: 'Workshop', required: false, attributes: ['id', 'name'] },
       { model: db.BuildingFloor, as: 'BuildingFloor' },
       { model: db.Technologist, as: 'Technologist', include: [{ model: db.User, as: 'User' }] },
+      {
+        model: db.OrderOperation,
+        as: 'OrderOperations',
+        required: false,
+        attributes: ['id', 'order_id', 'operation_id', 'actual_quantity', 'actual_qty', 'stage_key'],
+        include: [{ model: db.Operation, as: 'Operation', attributes: ['category', 'name'] }],
+      },
     ];
 
     const order = [['created_at', 'DESC']];
@@ -603,6 +610,33 @@ router.get('/by-workshop', async (req, res, next) => {
       client_name: o.Client?.name || '—',
     }));
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/orders/stats
+ * Сводка по заказам (для дашборда / диагностики).
+ */
+router.get('/stats', async (req, res, next) => {
+  try {
+    const [rows] = await db.sequelize.query(`
+      SELECT
+        (SELECT COUNT(*) FROM orders) AS total,
+        (SELECT COUNT(*) FROM orders o
+         JOIN order_status os ON os.id = o.status_id
+         WHERE os.name IN ('Принят', 'В работе')) AS active,
+        (SELECT COUNT(*) FROM orders o
+         JOIN order_status os ON os.id = o.status_id
+         WHERE os.name = 'Готов') AS completed
+    `);
+    const r = rows[0];
+    res.json({
+      total: parseInt(r?.total || 0, 10),
+      active: parseInt(r?.active || 0, 10),
+      done: parseInt(r?.completed || 0, 10),
+    });
   } catch (err) {
     next(err);
   }

@@ -15,8 +15,10 @@ const {
 
 const authRoutes = require("./routes/auth");
 const dashboardRoutes = require("./routes/dashboard");
+const productionPanelRoutes = require("./routes/productionPanel");
 const ordersRoutes = require("./routes/orders");
 const procurementRoutes = require("./routes/procurement");
+const purchaseDocumentsRoutes = require("./routes/purchaseDocuments");
 const cuttingRoutes = require("./routes/cutting");
 const warehouseRoutes = require("./routes/warehouse");
 const warehouseStockRoutes = require("./routes/warehouseStock");
@@ -140,6 +142,13 @@ app.use(
   dashboardRoutes,
 );
 app.use(
+  "/api/production",
+  authenticate,
+  requireRole("admin", "manager", "technologist", "operator"),
+  technologistFloorOnly,
+  productionPanelRoutes,
+);
+app.use(
   "/api/orders",
   authenticate,
   requireRole("admin", "manager", "technologist", "operator"),
@@ -152,6 +161,13 @@ app.use(
   requireRole("admin", "manager", "technologist", "operator"),
   technologistFloorOnly,
   procurementRoutes,
+);
+app.use(
+  "/api/purchase",
+  authenticate,
+  requireRole("admin", "manager", "technologist", "operator"),
+  technologistFloorOnly,
+  purchaseDocumentsRoutes,
 );
 app.use(
   "/api/cutting",

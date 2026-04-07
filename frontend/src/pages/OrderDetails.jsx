@@ -1293,7 +1293,7 @@ export default function OrderDetails() {
       <div className="card-neon rounded-card overflow-hidden mt-4 sm:mt-6 transition-block">
         <div className="p-4 sm:p-6 border-b border-white/25 dark:border-white/25 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-base sm:text-lg font-medium text-[#ECECEC] dark:text-dark-text">ОТК</h2>
-          <Link to="/qc" className="text-sm px-3 py-1.5 rounded-lg bg-primary-600/80 text-white hover:bg-primary-600">
+          <Link to="/otk" className="text-sm px-3 py-1.5 rounded-lg bg-primary-600/80 text-white hover:bg-primary-600">
             Открыть ОТК
           </Link>
         </div>

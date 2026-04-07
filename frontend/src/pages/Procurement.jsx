@@ -7,9 +7,6 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api';
-import { NeonCard, NeonInput, NeonSelect } from '../components/ui';
-import ProcurementCompleteModal from '../components/procurement/ProcurementCompleteModal';
-import ModelPhoto from '../components/ModelPhoto';
 import PrintButton from '../components/PrintButton';
 import { MONTH_SHORT_RU, getMonday } from '../utils/cycleWeekLabels';
 import {
@@ -19,25 +16,6 @@ import {
   effectiveChainSectionKey,
   orderQuantityShown,
 } from '../utils/planChainWorkshops';
-
-const STATUS_OPTIONS = [
-  { value: '', label: 'Все статусы' },
-  { value: 'sent', label: 'Отправлено' },
-  { value: 'received', label: 'Закуплено' },
-];
-
-const STATUS_LABELS = { sent: 'Отправлено', received: 'Закуплено' };
-
-const PROCUREMENT_FILTERS_KEY = 'procurement_filters';
-
-function loadProcurementFilters() {
-  try {
-    const s = sessionStorage.getItem(PROCUREMENT_FILTERS_KEY);
-    return s ? { ...JSON.parse(s) } : { q: '', status: '', date_from: '', date_to: '' };
-  } catch {
-    return { q: '', status: '', date_from: '', date_to: '' };
-  }
-}
 
 function formatDate(iso) {
   if (!iso) return '—';
@@ -113,6 +91,351 @@ function isOverdueActualDate(weekStartIso, actualDateIso) {
   return ad > limit;
 }
 
+function escapeHtmlPrint(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function absPhotoUrlForPrint(url) {
+  if (!url || typeof url !== 'string') return '';
+  const t = url.trim();
+  if (!t) return '';
+  if (t.startsWith('http://') || t.startsWith('https://')) return t;
+  if (t.startsWith('//'))
+    return `${typeof window !== 'undefined' ? window.location.protocol : 'https:'}${t}`;
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  return `${origin}${t.startsWith('/') ? '' : '/'}${t}`;
+}
+
+async function purchasePhotoUrlToDataUrl(url) {
+  if (!url || typeof url !== 'string') return null;
+  const t = url.trim();
+  if (!t) return null;
+  if (t.startsWith('data:image/')) return t;
+  const abs = absPhotoUrlForPrint(t);
+  if (!abs) return null;
+  try {
+    const res = await fetch(abs, { mode: 'cors', credentials: 'include' });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    if (!blob?.size) return null;
+    return await new Promise((resolve) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(typeof fr.result === 'string' ? fr.result : null);
+      fr.onerror = () => resolve(null);
+      fr.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+const PRINT_MONTHS_SHORT = [
+  'янв',
+  'фев',
+  'мар',
+  'апр',
+  'май',
+  'июн',
+  'июл',
+  'авг',
+  'сен',
+  'окт',
+  'ноя',
+  'дек',
+];
+
+function formatWeekForPrint(dateStr) {
+  if (!dateStr || dateStr === 'unknown') return '—';
+  const iso = chainDateIso(dateStr);
+  if (!iso) return '—';
+  const start = new Date(`${iso}T12:00:00`);
+  if (Number.isNaN(start.getTime())) return '—';
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  const months = PRINT_MONTHS_SHORT;
+  if (start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear()) {
+    return `${start.getDate()}–${end.getDate()} ${months[start.getMonth()]}`;
+  }
+  return `${start.getDate()} ${months[start.getMonth()]}–${end.getDate()} ${months[end.getMonth()]}`;
+}
+
+function groupPurchasePrintDocsByWeek(docs) {
+  const groups = {};
+  for (const doc of docs) {
+    const week = chainDateIso(doc.week_start) || 'unknown';
+    if (!groups[week]) groups[week] = [];
+    groups[week].push(doc);
+  }
+  return Object.entries(groups).sort(([a], [b]) => {
+    if (a === 'unknown') return 1;
+    if (b === 'unknown') return -1;
+    return a.localeCompare(b);
+  });
+}
+
+function resolvePrintWorkshopName(doc, workshops) {
+  const sec = effectiveChainSectionKey(doc);
+  if (!sec) return doc.workshop_name || '—';
+  const hit = (workshops || []).find((w) => String(w.id) === String(sec));
+  if (hit?.name) return hit.name;
+  return LEGACY_SECTION_LABELS[sec] || sec;
+}
+
+function purchasePrintQtyNumber(order) {
+  const q = orderQuantityShown(order);
+  const n = parseInt(String(q).replace(/\s/g, ''), 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function buildPurchasePlanPrintHtml(fullDocs, chainWorkshops) {
+  const printDate = escapeHtmlPrint(new Date().toLocaleDateString('ru-RU'));
+
+  const weeksHtml = groupPurchasePrintDocsByWeek(fullDocs)
+    .map(([weekStart, weekDocs]) => {
+      const weekTotal = weekDocs.reduce((s, d) => s + purchasePrintQtyNumber(d.Order), 0);
+      const weekLabel = escapeHtmlPrint(formatWeekForPrint(weekStart));
+
+      const rowsHtml = weekDocs
+        .map((doc) => {
+          const O = doc.Order || {};
+          const article = String(O.article || O.tz_code || '').trim();
+          const art3 = escapeHtmlPrint(article.slice(0, 3) || '?');
+          const displayName = escapeHtmlPrint(orderTzModelLine(O));
+          const qtyStr = escapeHtmlPrint(orderQuantityShown(O));
+          const clientName = escapeHtmlPrint(O.Client?.name || O.client_name || '—');
+          const planWeekLabel = escapeHtmlPrint(formatWeekForPrint(doc.week_start));
+          const weekIso = chainDateIso(doc.week_start);
+          const planDateStr = weekIso
+            ? escapeHtmlPrint(new Date(`${weekIso}T12:00:00`).toLocaleDateString('ru-RU'))
+            : '—';
+          const actualIso = chainDateIso(doc.actual_date);
+          const actualDateHtml = actualIso
+            ? escapeHtmlPrint(new Date(`${actualIso}T12:00:00`).toLocaleDateString('ru-RU'))
+            : '<span class="date-line"></span>';
+          const st = doc.status || 'pending';
+          const statusText =
+            st === 'done' ? 'Закуплено' : st === 'in_progress' ? 'В процессе' : 'Не начато';
+          const workshopLabel = escapeHtmlPrint(resolvePrintWorkshopName(doc, chainWorkshops));
+          const comment = escapeHtmlPrint(doc.comment || '');
+
+          const photoB64 =
+            O.photoBase64 != null && typeof O.photoBase64 === 'string' && O.photoBase64.startsWith('data:')
+              ? O.photoBase64
+              : null;
+          const photoRaw = firstPhotoSrc(O);
+          const photoUrl = photoB64 ? '' : photoRaw ? absPhotoUrlForPrint(photoRaw) : '';
+          const rowImgSrc = photoB64 || photoUrl;
+
+          let photoCell;
+          if (rowImgSrc) {
+            if (photoB64) {
+              photoCell = `<img src="${escapeHtmlPrint(photoB64)}" alt="" style="width:36px;height:36px;object-fit:cover;border-radius:3px;border:1px solid #ddd">`;
+            } else {
+              photoCell = `<img src="${escapeHtmlPrint(photoUrl)}" crossorigin="anonymous" alt="" style="width:36px;height:36px;object-fit:cover;border-radius:3px;border:1px solid #ddd" onerror="this.style.display='none';if(this.nextElementSibling)this.nextElementSibling.style.display='flex'"><div style="display:none;width:36px;height:36px;background:#e8eaf6;border-radius:3px;align-items:center;justify-content:center;font-size:8px;color:#3949ab;border:1px solid #c5cae9;font-weight:700">${art3}</div>`;
+            }
+          } else {
+            photoCell = `<div style="width:36px;height:36px;background:#e8eaf6;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;color:#3949ab;font-weight:700;border:1px solid #c5cae9">${art3}</div>`;
+          }
+
+          return `
+      <div class="doc-row">
+        <div class="col-photo">${photoCell}</div>
+        <div class="col-name">
+          <div class="name-main">${displayName}</div>
+          <div class="name-sub">#${escapeHtmlPrint(String(doc.order_id ?? ''))}</div>
+        </div>
+        <div class="col-qty">${qtyStr} шт</div>
+        <div class="col-client">${clientName}</div>
+        <div>${planWeekLabel}</div>
+        <div>${planDateStr}</div>
+        <div>${actualDateHtml}</div>
+        <div>
+          <span class="status-badge status-${escapeHtmlPrint(st)}">${escapeHtmlPrint(statusText)}</span>
+        </div>
+        <div>${workshopLabel}</div>
+        <div style="color:#666;font-style:italic">${comment}</div>
+      </div>`;
+        })
+        .join('');
+
+      return `
+    <div class="week-header">
+      <span>Неделя закупа: ${weekLabel}</span>
+      <span class="week-header-meta">
+        ${weekDocs.length} заказов · ${weekTotal} шт
+      </span>
+    </div>
+    <div class="table-header">
+      <div>Фото</div>
+      <div>TZ — MODEL</div>
+      <div style="text-align:right">Кол-во</div>
+      <div>Клиент</div>
+      <div>Неделя план</div>
+      <div>Дата план</div>
+      <div>Дата факт</div>
+      <div>Статус</div>
+      <div>Цех</div>
+      <div>Комментарий</div>
+    </div>
+    ${rowsHtml}`;
+    })
+    .join('');
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>План закупа</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      font-family: Arial, sans-serif;
+      font-size: 11px;
+      color: #000;
+      padding: 8mm;
+    }
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      padding-bottom: 8px;
+      margin-bottom: 12px;
+      border-bottom: 2px solid #000;
+    }
+    .page-title { font-size:16px; font-weight:700; }
+    .page-meta { font-size:10px; color:#555; margin-top:2px; }
+    .week-header {
+      background: #1a237e;
+      color: #fff;
+      padding: 7px 12px;
+      margin: 10px 0 4px 0;
+      font-size: 12px;
+      font-weight: 700;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-radius: 2px;
+    }
+    .week-header-meta {
+      font-size: 10px;
+      font-weight: 400;
+      opacity: 0.85;
+    }
+    .table-header {
+      display: grid;
+      grid-template-columns:
+        44px 180px 70px 90px 80px 85px 80px 90px 120px 1fr;
+      background: #e8eaf6;
+      border: 1px solid #c5cae9;
+      border-bottom: 2px solid #1a237e;
+      padding: 4px 0;
+      font-size: 9px;
+      font-weight: 700;
+      color: #1a237e;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .table-header > div {
+      padding: 2px 6px;
+      border-right: 0.5px solid #c5cae9;
+    }
+    .table-header > div:last-child { border-right: none; }
+    .doc-row {
+      display: grid;
+      grid-template-columns:
+        44px 180px 70px 90px 80px 85px 80px 90px 120px 1fr;
+      border-bottom: 0.5px solid #ddd;
+      min-height: 44px;
+      align-items: center;
+    }
+    .doc-row:nth-child(even) { background: #f9f9f9; }
+    .doc-row > div {
+      padding: 4px 6px;
+      border-right: 0.5px solid #eee;
+      align-self: stretch;
+      display: flex;
+      align-items: center;
+    }
+    .doc-row > div:last-child { border-right: none; }
+    .col-photo { justify-content: center; padding: 3px; }
+    .col-name { flex-direction: column; gap: 1px; }
+    .col-qty { justify-content: flex-end; font-weight:700; }
+    .col-client { color: #1a237e; font-weight: 600; }
+    .name-main { font-size:11px; font-weight:600; }
+    .name-sub { font-size:9px; color:#999; }
+    .status-badge {
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 9px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .status-pending {
+      background: #ffebee; color: #c62828;
+    }
+    .status-in_progress {
+      background: #fff8e1; color: #f57f17;
+    }
+    .status-done {
+      background: #e8f5e9; color: #2e7d32;
+    }
+    .date-line {
+      border-bottom: 1px solid #000;
+      width: 65px;
+      height: 13px;
+      display: inline-block;
+    }
+    .signatures {
+      display: flex;
+      gap: 32px;
+      margin-top: 16px;
+      padding-top: 10px;
+      border-top: 1px solid #ccc;
+    }
+    .sig-line {
+      border-bottom: 1px solid #000;
+      height: 18px;
+      margin-bottom: 3px;
+    }
+    .sig-label { font-size: 9px; color: #666; }
+    @media print {
+      body { padding: 5mm; }
+      @page { margin: 8mm; size: A4; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page-header">
+    <div>
+      <div class="page-title">ПЛАН ЗАКУПА</div>
+      <div class="page-meta">${printDate} · Заказов: ${fullDocs.length}</div>
+    </div>
+    <div style="font-size:18px;font-weight:700;color:#1a237e">ERDEN</div>
+  </div>
+  ${weeksHtml}
+  <div class="signatures">
+    <div style="flex:1">
+      <div class="sig-line"></div>
+      <div class="sig-label">Менеджер по закупу</div>
+    </div>
+    <div style="flex:1">
+      <div class="sig-line"></div>
+      <div class="sig-label">Руководитель</div>
+    </div>
+    <div style="flex:1">
+      <div class="sig-line"></div>
+      <div class="sig-label">Дата</div>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
 const CHAIN_COLS = 11;
 
 const CHAIN_TABLE_HEADERS = [
@@ -152,11 +475,6 @@ export default function Procurement() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const canEditProcurement = ['admin', 'manager', 'technologist'].includes(user?.role);
-  const [list, setList] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState(loadProcurementFilters);
-  const [selectedProcurementId, setSelectedProcurementId] = useState(null);
-  const [listTab, setListTab] = useState('manual');
   const [chainDocs, setChainDocs] = useState([]);
   const [chainLoading, setChainLoading] = useState(false);
   const [chainBanner, setChainBanner] = useState(null);
@@ -165,6 +483,7 @@ export default function Procurement() {
   const [chainFilterStatus, setChainFilterStatus] = useState('all');
   const [chainFilterSection, setChainFilterSection] = useState('all');
   const [chainWorkshops, setChainWorkshops] = useState([]);
+  const [isPrinting, setIsPrinting] = useState(false);
 
   useEffect(() => {
     api.workshops
@@ -199,15 +518,6 @@ export default function Procurement() {
     }
   };
 
-  const loadData = (nextFilters = filters) => {
-    setLoading(true);
-    api.procurement
-      .list(nextFilters)
-      .then(setList)
-      .catch(() => setList([]))
-      .finally(() => setLoading(false));
-  };
-
   const loadChainDocs = useCallback(() => {
     setChainLoading(true);
     api.purchase
@@ -218,21 +528,8 @@ export default function Procurement() {
   }, []);
 
   useEffect(() => {
-    loadData(filters);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (listTab === 'chain') loadChainDocs();
-  }, [listTab, loadChainDocs]);
-
-  useEffect(() => {
-    try {
-      sessionStorage.setItem(PROCUREMENT_FILTERS_KEY, JSON.stringify(filters));
-    } catch (_) {}
-  }, [filters]);
-
-  const rows = useMemo(() => list || [], [list]);
+    loadChainDocs();
+  }, [loadChainDocs]);
 
   const filteredChainDocs = useMemo(() => {
     return chainDocs.filter((doc) => {
@@ -330,105 +627,67 @@ export default function Procurement() {
       window.setTimeout(() => setChainBanner(null), 4000);
     }
   };
-  const getOrderName = (row) => {
-    const tzCode = String(row?.tz_code || '').trim();
-    const modelName = String(row?.model_name || '').trim();
-    return (tzCode && modelName ? `${tzCode} — ${modelName}` : '') || row?.title || tzCode || modelName || '—';
-  };
 
-  const handleRowClick = (pr) => {
-    const pid = pr.procurement_id ?? pr.procurement?.id ?? pr.order_id;
-    if (pid) setSelectedProcurementId(pid);
-  };
-
-  const handleModalClose = () => {
-    setSelectedProcurementId(null);
-    loadData(filters);
-  };
+  const printAllPurchaseDocs = useCallback(async () => {
+    const docs = filteredChainDocs;
+    if (!docs.length) {
+      setChainBanner({ type: 'err', text: 'Нет документов для печати по фильтрам' });
+      window.setTimeout(() => setChainBanner(null), 3500);
+      return;
+    }
+    setIsPrinting(true);
+    try {
+      const fullDocs = await Promise.all(
+        docs.map(async (doc) => {
+          const photoUrl = firstPhotoSrc(doc.Order);
+          const photoBase64 = photoUrl ? await purchasePhotoUrlToDataUrl(photoUrl) : null;
+          return {
+            ...doc,
+            Order: {
+              ...(doc.Order || {}),
+              ...(photoBase64 ? { photoBase64 } : {}),
+            },
+          };
+        })
+      );
+      const html = buildPurchasePlanPrintHtml(fullDocs, chainWorkshops);
+      const win = window.open('', '_blank');
+      if (!win) {
+        setChainBanner({ type: 'err', text: 'Браузер заблокировал окно печати' });
+        window.setTimeout(() => setChainBanner(null), 4000);
+        return;
+      }
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      window.setTimeout(() => win.print(), 800);
+    } catch (e) {
+      setChainBanner({ type: 'err', text: e?.message || 'Не удалось подготовить печать' });
+      window.setTimeout(() => setChainBanner(null), 4000);
+    } finally {
+      setIsPrinting(false);
+    }
+  }, [filteredChainDocs, chainWorkshops]);
 
   return (
     <div>
-      <div className="no-print flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4 sm:mb-6">
+      <div className="no-print relative flex flex-wrap items-center justify-between gap-3 sm:gap-4 mb-4 sm:mb-6">
         <h1 className="text-xl md:text-2xl lg:text-3xl font-bold text-neon-text">Закуп</h1>
-        <PrintButton />
-      </div>
-
-      <div className="no-print flex flex-wrap gap-2 mb-4">
-        <button
-          type="button"
-          onClick={() => setListTab('manual')}
-          className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${
-            listTab === 'manual'
-              ? 'border-primary-400/60 bg-primary-500/15 text-[#ECECEC]'
-              : 'border-white/20 bg-transparent text-[#ECECEC]/70 hover:border-white/35'
-          }`}
-        >
-          Ручные
-        </button>
-        <button
-          type="button"
-          onClick={() => setListTab('chain')}
-          className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${
-            listTab === 'chain'
-              ? 'border-primary-400/60 bg-primary-500/15 text-[#ECECEC]'
-              : 'border-white/20 bg-transparent text-[#ECECEC]/70 hover:border-white/35'
-          }`}
-        >
-          Из плана цеха ✦
-        </button>
-      </div>
-
-      {listTab === 'manual' ? (
-      <NeonCard className="p-4 mb-4 flex flex-col md:flex-row flex-wrap gap-3 md:items-end">
-        <div className="min-w-0 w-full md:min-w-[220px] md:flex-1">
-          <label className="block text-sm text-[#ECECEC]/80 mb-1">Поиск</label>
-          <NeonInput
-            value={filters.q}
-            onChange={(e) => setFilters((prev) => ({ ...prev, q: e.target.value }))}
-            placeholder="TZ / MODEL / клиент"
-          />
-        </div>
-        <div className="w-full md:w-[180px]">
-          <label className="block text-sm text-[#ECECEC]/80 mb-1">Статус</label>
-          <NeonSelect
-            value={filters.status}
-            onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value }))}
+        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+          <button
+            type="button"
+            onClick={() => printAllPurchaseDocs()}
+            disabled={isPrinting}
+            className="no-print inline-flex items-center gap-1.5 px-[18px] py-2 rounded-md text-[13px] font-semibold text-white border-0 cursor-pointer shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
+            style={{ background: '#1a237e' }}
           >
-            {STATUS_OPTIONS.map((s) => (
-              <option key={s.value || 'all'} value={s.value}>
-                {s.label}
-              </option>
-            ))}
-          </NeonSelect>
+            {isPrinting ? '⏳ Подготовка...' : '🖨 Печать'}
+          </button>
+          <PrintButton />
         </div>
-        <div>
-          <label className="block text-sm text-[#ECECEC]/80 mb-1">С даты</label>
-          <NeonInput
-            type="date"
-            value={filters.date_from}
-            onChange={(e) => setFilters((prev) => ({ ...prev, date_from: e.target.value }))}
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-[#ECECEC]/80 mb-1">По дату</label>
-          <NeonInput
-            type="date"
-            value={filters.date_to}
-            onChange={(e) => setFilters((prev) => ({ ...prev, date_to: e.target.value }))}
-          />
-        </div>
-        <button
-          type="button"
-          onClick={() => loadData(filters)}
-          className="h-10 px-4 rounded-lg bg-accent-1/30 hover:bg-accent-1/40 text-[#ECECEC]"
-        >
-          Применить
-        </button>
-      </NeonCard>
-      ) : null}
+      </div>
 
-      {listTab === 'chain' ? (
-        <>
+      <>
           {chainBanner ? (
             <div
               className={`no-print mb-3 px-4 py-2 rounded-lg text-sm ${
@@ -817,92 +1076,7 @@ export default function Procurement() {
               </table>
             </div>
           )}
-        </>
-      ) : loading ? (
-        <div className="p-8 text-center text-[#ECECEC]/80 dark:text-dark-text/80">Загрузка...</div>
-      ) : rows.length === 0 ? (
-        <p className="text-[#ECECEC]/80 dark:text-dark-text/80">Нет закупов</p>
-      ) : (
-        <NeonCard className="print-area rounded-card overflow-hidden overflow-x-auto p-0">
-          <table className="w-full min-w-[640px]">
-            <thead>
-              <tr className="bg-accent-3/80 dark:bg-dark-900 border-b border-white/25">
-                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">TZ — MODEL</th>
-                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Клиент</th>
-                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Дедлайн</th>
-                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Статус</th>
-                <th className="text-right px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Сумма</th>
-                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Обновлено</th>
-                <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90 no-print">Печать</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((pr) => (
-                <tr
-                  key={pr.order_id}
-                  onClick={() => handleRowClick(pr)}
-                  className="border-b border-white/15 hover:bg-accent-2/30 dark:hover:bg-dark-800 cursor-pointer transition-colors"
-                >
-                  <td className="px-4 py-3">
-                    <ModelPhoto
-                      photo={pr.order_photos?.[0]}
-                      modelName={getOrderName(pr)}
-                      size={48}
-                    />
-                    <div className="text-xs text-[#ECECEC]/60 mt-0.5">#{pr.order_id}</div>
-                  </td>
-                  <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80">{pr.client_name || '—'}</td>
-                  <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80">
-                    {formatDate(pr.procurement?.due_date)}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`px-2 py-0.5 rounded text-xs ${
-                        pr.procurement?.status === 'received'
-                          ? 'bg-green-500/20 text-green-400'
-                          : pr.procurement?.status === 'sent'
-                            ? 'bg-lime-500/20 text-lime-400'
-                            : 'bg-gray-500/20 text-gray-400'
-                      }`}
-                    >
-                      {STATUS_LABELS[pr.procurement?.status] || '—'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 font-medium text-primary-400 text-right">
-                    {Number(pr.procurement?.total_sum || 0).toFixed(2)} ₽
-                  </td>
-                  <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80 text-sm">
-                    {pr.procurement?.updated_at ? formatDate(pr.procurement.updated_at.slice(0, 10)) : '—'}
-                  </td>
-                  <td className="px-4 py-3 no-print">
-                    {pr.procurement?.status === 'received' && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          const pid = pr.procurement_id ?? pr.procurement?.id;
-                          if (pid) navigate(`/print/procurement/${pid}`);
-                        }}
-                        className="text-primary-400 hover:text-primary-300 hover:underline text-sm"
-                      >
-                        Печать закупа
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </NeonCard>
-      )}
-
-      <ProcurementCompleteModal
-        open={!!selectedProcurementId}
-        procurementId={selectedProcurementId}
-        onClose={handleModalClose}
-        onSaved={handleModalClose}
-        canEdit={canEditProcurement}
-      />
+      </>
     </div>
   );
 }

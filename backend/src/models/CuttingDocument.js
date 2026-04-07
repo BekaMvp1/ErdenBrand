@@ -22,6 +22,11 @@ module.exports = (sequelize, DataTypes) => {
       },
       comment: { type: DataTypes.TEXT, allowNull: true },
       workshop: { type: DataTypes.STRING(50), allowNull: true },
+      floor_id: {
+        type: DataTypes.STRING(50),
+        allowNull: true,
+        defaultValue: null,
+      },
     },
     {
       tableName: 'cutting_documents',

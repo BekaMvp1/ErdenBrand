@@ -528,6 +528,7 @@ async function getBoardOrders(req, res, next) {
         workshop_name: plain.Workshop?.name || '—',
         client_name: plain.Client?.name || '—',
         model_name: plain.title || '—',
+        photos: Array.isArray(plain.photos) ? plain.photos : [],
         total_quantity: totalQty,
         article: plain.color || null,
         priority: computedPriority,

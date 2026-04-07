@@ -15,6 +15,7 @@ const {
 
 const authRoutes = require("./routes/auth");
 const dashboardRoutes = require("./routes/dashboard");
+const orderProgressRoutes = require("./routes/orderProgress");
 const productionPanelRoutes = require("./routes/productionPanel");
 const ordersRoutes = require("./routes/orders");
 const procurementRoutes = require("./routes/procurement");
@@ -35,6 +36,7 @@ const settingsRoutes = require("./routes/settings");
 const sizesRoutes = require("./routes/sizes");
 const boardRoutes = require("./routes/boardRoutes");
 const sewingRoutes = require("./routes/sewing");
+const otkRoutes = require("./routes/otk");
 const analyticsRoutes = require("./modules/analytics/analytics.routes");
 const assistantRoutes = require("./modules/assistant/assistant.routes");
 const plannerRoutes = require("./modules/planner/planner.routes");
@@ -101,6 +103,14 @@ app.use(cors(corsOptions));
 // Health check — первым, до всех роутов
 app.get("/", (req, res) => res.json({ ok: true }));
 app.get("/health", (req, res) => res.json({ ok: true }));
+app.get("/api/health", (req, res) => {
+  res.json({
+    status: "ok",
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    port: Number(process.env.PORT) || 3001,
+  });
+});
 
 // Отключить кэш для API — чтобы заказы всегда подгружались свежие
 app.use("/api", (req, res, next) => {
@@ -116,11 +126,16 @@ app.use(helmet({
 }));
 app.use(express.json({ limit: "10mb" }));
 
-// Rate limit на auth: 20 запросов за 5 минут с IP
+// Rate limit на auth: в dev — мягче (nodemon задаёт NODE_ENV=development)
+const isDevAuthLimit = process.env.NODE_ENV === "development";
 const authLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000,
-  max: 20,
-  message: { error: "Слишком много попыток входа. Попробуйте через 5 минут." },
+  windowMs: isDevAuthLimit ? 1 * 60 * 1000 : 5 * 60 * 1000,
+  max: isDevAuthLimit ? 100 : 10,
+  message: {
+    error: isDevAuthLimit
+      ? "Слишком много попыток. Попробуйте через минуту."
+      : "Слишком много попыток входа. Попробуйте через 5 минут.",
+  },
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -140,6 +155,12 @@ app.use(
   authenticate,
   requireRole("admin", "manager", "technologist", "operator"),
   dashboardRoutes,
+);
+app.use(
+  "/api/progress",
+  authenticate,
+  requireRole("admin", "manager", "technologist", "operator"),
+  orderProgressRoutes,
 );
 app.use(
   "/api/production",
@@ -260,6 +281,13 @@ app.use(
   requireRole("admin", "manager", "technologist", "operator"),
   technologistFloorOnly,
   sewingRoutes,
+);
+app.use(
+  "/api/otk",
+  authenticate,
+  requireRole("admin", "manager", "technologist", "operator"),
+  technologistFloorOnly,
+  otkRoutes,
 );
 app.use(
   "/api/analytics",

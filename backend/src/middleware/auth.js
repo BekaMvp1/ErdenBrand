@@ -4,6 +4,7 @@
 
 const jwt = require('jsonwebtoken');
 const db = require('../models');
+const config = require('../config');
 
 /**
  * Проверка JWT токена, загрузка пользователя
@@ -16,9 +17,14 @@ const authenticate = async (req, res, next) => {
     }
 
     const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, require('../config').jwt.secret);
+    const decoded = jwt.verify(token, config.jwt.secret);
+    const rawId = decoded.userId ?? decoded.id;
+    const userId = rawId != null && rawId !== '' ? Number(rawId) : NaN;
+    if (!Number.isFinite(userId) || userId < 1) {
+      return res.status(401).json({ error: 'Недействительный токен' });
+    }
 
-    const user = await db.User.scope('withPassword').findByPk(decoded.userId, {
+    const user = await db.User.scope('withPassword').findByPk(userId, {
       include: [
         { model: db.Floor, as: 'Floor', required: false },
         { model: db.Technologist, as: 'Technologist', required: false, include: [{ model: db.Floor, as: 'Floor', required: false }] },

@@ -4,7 +4,11 @@
  */
 export default function PrintDocHeader() {
   return (
-    <div id="print-doc-header" className="print-only" aria-hidden="true">
+    <div
+      id="print-doc-header"
+      className="print-only pointer-events-none"
+      aria-hidden="true"
+    >
       <div>
         <h1 id="print-title-text" className="print-title" />
         <p id="print-subtitle-text" className="print-subtitle" />

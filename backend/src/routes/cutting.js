@@ -49,11 +49,64 @@ const cuttingDocumentInclude = [
     required: false,
     attributes: ['id', 'color', 'size', 'quantity', 'created_at', 'updated_at'],
   },
+  {
+    model: db.SewingDocument,
+    as: 'sewing_doc',
+    required: false,
+    attributes: ['id', 'cutting_document_id', 'status'],
+  },
 ];
 
 function parseCuttingDocIdParam(req) {
   const id = parseInt(req.params.id, 10);
   return Number.isFinite(id) && id > 0 ? id : null;
+}
+
+/**
+ * Синхронизация факта раскроя с планом пошива (без ожидания статуса done).
+ */
+async function syncCuttingFactToSewingPlan(factRow) {
+  const qty = Math.max(0, parseInt(factRow.quantity, 10) || 0);
+  const cuttingDoc = await db.CuttingDocument.findByPk(factRow.cutting_document_id);
+  if (!cuttingDoc) return;
+
+  let sewingDoc = await db.SewingDocument.findOne({
+    where: { cutting_document_id: cuttingDoc.id },
+  });
+  if (!sewingDoc) {
+    sewingDoc = await db.SewingDocument.create({
+      cutting_document_id: cuttingDoc.id,
+      chain_id: cuttingDoc.chain_id,
+      order_id: cuttingDoc.order_id,
+      section_id: cuttingDoc.section_id,
+      floor_id: cuttingDoc.floor_id != null && cuttingDoc.floor_id !== '' ? String(cuttingDoc.floor_id) : null,
+      week_start: cuttingDoc.actual_week_start || cuttingDoc.week_start,
+      status: 'pending',
+    });
+    console.log('[cutting→sewing] создан документ пошива:', sewingDoc.id);
+  }
+
+  const [sewingFact, created] = await db.SewingFactDetail.findOrCreate({
+    where: {
+      sewing_document_id: sewingDoc.id,
+      color: factRow.color,
+      size: factRow.size,
+    },
+    defaults: {
+      cutting_quantity: qty,
+      sewing_quantity: 0,
+    },
+  });
+  if (!created) {
+    await sewingFact.update({ cutting_quantity: qty });
+  }
+  console.log(
+    created ? '[cutting→sewing] создана строка пошива:' : '[cutting→sewing] обновлён план пошива:',
+    factRow.color,
+    factRow.size,
+    '→',
+    qty
+  );
 }
 
 /**
@@ -130,6 +183,13 @@ router.post('/documents/:id/facts', async (req, res, next) => {
       quantity,
     });
     await logAudit(req.user.id, 'CREATE', 'cutting_fact_detail', row.id);
+    if (quantity > 0) {
+      try {
+        await syncCuttingFactToSewingPlan(row);
+      } catch (sewingErr) {
+        console.error('[cutting→sewing] ошибка после POST факта:', sewingErr.message);
+      }
+    }
     res.status(201).json(row.toJSON());
   } catch (err) {
     next(err);
@@ -159,8 +219,41 @@ router.patch('/facts/:factId', async (req, res, next) => {
       return res.status(400).json({ error: 'Нет полей для обновления' });
     }
     await row.update(patch);
+    await row.reload();
     await logAudit(req.user.id, 'UPDATE', 'cutting_fact_detail', factId);
+    try {
+      await syncCuttingFactToSewingPlan(row);
+    } catch (sewingErr) {
+      console.error('[cutting→sewing] ошибка после PATCH факта:', sewingErr.message);
+    }
     res.json(row.toJSON());
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/cutting/sync-to-sewing
+ * Однократная синхронизация всех фактов раскроя (quantity > 0) в план пошива.
+ */
+router.post('/sync-to-sewing', async (req, res, next) => {
+  try {
+    const allFacts = await db.CuttingFactDetail.findAll({
+      where: { quantity: { [Op.gt]: 0 } },
+      include: [{ model: db.CuttingDocument, required: true }],
+    });
+    let synced = 0;
+    for (const fact of allFacts) {
+      if (!fact.CuttingDocument) continue;
+      try {
+        await syncCuttingFactToSewingPlan(fact);
+        synced += 1;
+      } catch (e) {
+        console.error('[sync-to-sewing] строка', fact.id, e.message);
+      }
+    }
+    console.log('[sync-to-sewing] синхронизировано:', synced);
+    res.json({ synced, total: allFacts.length });
   } catch (err) {
     next(err);
   }
@@ -234,11 +327,25 @@ router.patch('/documents/:id', async (req, res, next) => {
         patch.workshop = w;
       }
     }
+    if (req.body.floor_id !== undefined) {
+      if (req.body.floor_id == null || req.body.floor_id === '') {
+        patch.floor_id = null;
+      } else {
+        const fid = parseInt(req.body.floor_id, 10);
+        if (!Number.isFinite(fid) || fid < 1) {
+          return res.status(400).json({ error: 'Некорректный floor_id' });
+        }
+        const bf = await db.BuildingFloor.findByPk(fid);
+        if (!bf) return res.status(400).json({ error: 'Этаж не найден' });
+        patch.floor_id = fid;
+      }
+    }
     if (Object.keys(patch).length === 0) {
       return res.status(400).json({ error: 'Нет полей для обновления' });
     }
     await row.update(patch);
     await logAudit(req.user.id, 'UPDATE', 'cutting_document', id);
+
     const full = await db.CuttingDocument.findByPk(id, { include: cuttingDocumentInclude });
     res.json(full.toJSON());
   } catch (err) {

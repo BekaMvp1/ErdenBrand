@@ -34,14 +34,14 @@ export default function PrintQc() {
 
   if (loading) {
     return (
-      <PrintLayout backTo="/qc" backLabel="К ОТК">
+      <PrintLayout backTo="/otk" backLabel="К ОТК">
         <p className="text-center text-gray-500">Загрузка...</p>
       </PrintLayout>
     );
   }
   if (error || !data) {
     return (
-      <PrintLayout backTo="/qc" backLabel="К ОТК">
+      <PrintLayout backTo="/otk" backLabel="К ОТК">
         <p className="text-red-500">{error || 'Партия не найдена'}</p>
       </PrintLayout>
     );
@@ -63,7 +63,7 @@ export default function PrintQc() {
   return (
     <PrintLayout
       title="АКТ ОТК (КОНТРОЛЬ КАЧЕСТВА)"
-      backTo="/qc"
+      backTo="/otk"
       backLabel="К ОТК"
     >
       <div className="grid grid-cols-2 gap-4 mb-6 text-sm">

@@ -7,6 +7,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const db = require('../models');
 const { QueryTypes } = require('sequelize');
+const config = require('../config');
 const { authenticate } = require('../middleware/auth');
 
 const router = express.Router();
@@ -62,39 +63,44 @@ router.get('/debug', async (req, res) => {
  */
 router.post('/login', async (req, res) => {
   try {
+    console.log('[login] попытка входа:', req.body?.email);
+
     const { email, password } = req.body;
     if (!email || !password) {
-      return res.status(400).json({ error: 'Укажите email и пароль' });
+      return res.status(400).json({ error: 'Email и пароль обязательны' });
     }
 
-    const emailNorm = email.trim().toLowerCase();
+    const emailNorm = String(email).trim().toLowerCase();
 
-    const rows = await db.sequelize.query(
-      'SELECT id, name, email, role, floor_id, is_active, password_hash FROM users WHERE email = $1',
-      {
-        bind: [emailNorm],
-        type: QueryTypes.SELECT,
-      }
-    );
+    const user = await db.User.scope('withPassword').findOne({
+      where: { email: emailNorm },
+    });
+    console.log('[login] пользователь найден:', !!user);
 
-    const user = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
     if (!user || !user.is_active) {
       return res.status(401).json({ error: 'Неверный email или пароль' });
     }
 
-    const valid = await bcrypt.compare(password, user.password_hash);
+    let valid = false;
+    try {
+      const hash =
+        user.password_hash != null ? String(user.password_hash).trim() : '';
+      valid = hash.length > 0 && (await bcrypt.compare(password, hash));
+    } catch (pe) {
+      console.error('[login] bcrypt:', pe.message);
+      valid = false;
+    }
+    console.log('[login] пароль верный:', valid);
+
     if (!valid) {
       return res.status(401).json({ error: 'Неверный email или пароль' });
     }
 
-    const jwtSecret = process.env.JWT_SECRET || 'default-secret-change-me';
-    const jwtExpires = process.env.JWT_EXPIRES_IN || '24h';
+    const token = jwt.sign({ userId: user.id }, config.jwt.secret, {
+      expiresIn: config.jwt.expiresIn,
+    });
 
-    const token = jwt.sign(
-      { userId: user.id },
-      jwtSecret,
-      { expiresIn: jwtExpires }
-    );
+    console.log('[login] успешный вход:', user.email);
 
     res.json({
       token,
@@ -107,7 +113,8 @@ router.post('/login', async (req, res) => {
       },
     });
   } catch (err) {
-    console.error('Ошибка login:', err.message, err.stack);
+    console.error('[login] ОШИБКА 500:', err.message);
+    console.error('[login] stack:', err.stack);
     res.status(500).json({
       error: err.message || 'Внутренняя ошибка сервера',
       stack: process.env.NODE_ENV !== 'production' ? err.stack : undefined,

@@ -9,7 +9,6 @@ import { useAuth } from '../context/AuthContext';
 import { api } from '../api';
 import { useRefreshOnVisible } from '../hooks/useRefreshOnVisible';
 import { NeonButton, NeonCard, NeonInput, NeonSelect } from '../components/ui';
-import PrintButton from '../components/PrintButton';
 import ModelPhoto from '../components/ModelPhoto';
 
 const STATUS_COLORS = {
@@ -18,6 +17,55 @@ const STATUS_COLORS = {
   Готов: 'bg-green-500/20 text-green-400',
   Просрочен: 'bg-red-500/20 text-red-400',
 };
+
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function orderPhotoRaw(order) {
+  const p = order.photos?.[0];
+  if (typeof p === 'string' && p.trim()) return p.trim();
+  if (p && typeof p === 'object' && typeof p.url === 'string' && p.url.trim()) return p.url.trim();
+  if (typeof order.image_url === 'string' && order.image_url.trim()) return order.image_url.trim();
+  return null;
+}
+
+function orderStatusName(order) {
+  return order.OrderStatus?.name || '';
+}
+
+function isOrderDoneByStatus(order) {
+  const n = String(orderStatusName(order)).trim();
+  return n === 'Готов';
+}
+
+function isOrderOverdueForPrint(order) {
+  const d = order.deadline;
+  if (!d) return false;
+  const today = new Date().toISOString().slice(0, 10);
+  const dd = String(d).slice(0, 10);
+  if (dd >= today) return false;
+  return !isOrderDoneByStatus(order);
+}
+
+/** Бейдж печати: классы s-* как в шаблоне таблицы */
+function printTableStatus(order) {
+  const n = String(orderStatusName(order)).trim();
+  if (n === 'Готов') return { label: 'Выполнен', cls: 's-done' };
+  if (n === 'В работе') return { label: 'В работе', cls: 's-active' };
+  if (n === 'Принят') return { label: 'Принят', cls: 's-accepted' };
+  return { label: n || 'Принят', cls: 's-default' };
+}
+
+function isOrderActiveOrAccepted(order) {
+  const n = String(orderStatusName(order)).trim();
+  return n === 'В работе' || n === 'Принят';
+}
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -30,6 +78,27 @@ export default function Dashboard() {
   const [searchTerm, setSearchTerm] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [statuses, setStatuses] = useState([]);
+  const [isPrinting, setIsPrinting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [selectMode, setSelectMode] = useState(false);
+
+  const toggleSelect = useCallback((id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === orders.length && orders.length > 0) {
+        return new Set();
+      }
+      return new Set(orders.map((o) => o.id));
+    });
+  }, [orders]);
 
   const loadStatuses = useCallback(async () => {
     try {
@@ -76,10 +145,222 @@ export default function Dashboard() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape' && selectMode) {
+        setSelectMode(false);
+        setSelectedIds(new Set());
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectMode]);
+
   const clearSearch = useCallback(() => {
     setSearchInput('');
     setSearchTerm('');
   }, []);
+
+  const printOrders = useCallback(async () => {
+    if (orders.length === 0) return;
+    const ordersToPrint =
+      selectMode && selectedIds.size > 0
+        ? orders.filter((o) => selectedIds.has(o.id))
+        : orders;
+    if (ordersToPrint.length === 0) return;
+
+    setIsPrinting(true);
+    const today = new Date();
+    try {
+      const toBase64 = async (url) => {
+        if (!url) return null;
+        const u = String(url).trim();
+        if (!u) return null;
+        if (u.startsWith('data:')) return u;
+        try {
+          const res = await fetch(u, { mode: 'cors', cache: 'no-store' });
+          if (!res.ok) return null;
+          const blob = await res.blob();
+          return await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => resolve(null);
+            reader.readAsDataURL(blob);
+          });
+        } catch {
+          return null;
+        }
+      };
+
+      const ordersWithPhotos = await Promise.all(
+        ordersToPrint.map(async (order) => ({
+          ...order,
+          photoBase64: await toBase64(orderPhotoRaw(order)),
+        }))
+      );
+
+      const totalQtySum = ordersWithPhotos.reduce(
+        (s, o) => s + (Number(o.quantity) || Number(o.qty_order) || 0),
+        0
+      );
+      const overdueCount = ordersWithPhotos.filter((o) => isOrderOverdueForPrint(o)).length;
+      const doneCount = ordersWithPhotos.filter((o) => isOrderDoneByStatus(o)).length;
+      const inWorkCount = ordersWithPhotos.filter((o) => isOrderActiveOrAccepted(o)).length;
+
+      const tbodyHtml = ordersWithPhotos
+        .map((order, idx) => {
+          const planQty = Number(order.quantity) || Number(order.qty_order) || 0;
+          const overdue = isOrderOverdueForPrint(order);
+          const st = printTableStatus(order);
+          const orderDate = order.receipt_date || order.created_at || order.order_date || order.date;
+          const deadlineDate = order.deadline || order.due_date;
+          const receiptStr = orderDate
+            ? escapeHtml(new Date(orderDate).toLocaleDateString('ru-RU'))
+            : '—';
+          const deadlineStr = deadlineDate
+            ? escapeHtml(new Date(deadlineDate).toLocaleDateString('ru-RU'))
+            : '—';
+          const workshop = escapeHtml(
+            order.Workshop?.name ||
+              order.Floor?.name ||
+              order.workshop_name ||
+              order.sewing_workshop ||
+              '—'
+          );
+          const clientName = escapeHtml(order.Client?.name || order.client_name || '—');
+          const title = escapeHtml(order.title || order.model_name || '—');
+          const tzCell = escapeHtml(
+            String(order.article || order.color || order.tz_code || order.id || '—')
+          );
+          const thumbFallback = escapeHtml(
+            String(order.article || order.color || order.tz_code || '?').slice(0, 4)
+          );
+
+          const photoHtml = order.photoBase64
+            ? `<img src="${order.photoBase64}" alt="" style="width:38px;height:38px;object-fit:cover;border-radius:4px;border:1px solid #ddd">`
+            : `<div style="width:38px;height:38px;background:#e8eaf6;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:8px;color:#3949ab;font-weight:700;border:1px solid #c5cae9">${thumbFallback}</div>`;
+
+          return `<tr>
+          <td class="col-num">${idx + 1}</td>
+          <td class="col-photo">${photoHtml}</td>
+          <td class="col-tz">${tzCell}</td>
+          <td class="col-name"><div class="name-main">${title}</div></td>
+          <td class="col-client">${clientName}</td>
+          <td class="col-qty">${planQty} шт</td>
+          <td class="col-date">${receiptStr}</td>
+          <td class="col-deadline${overdue ? ' overdue' : ''}">${deadlineStr}${overdue ? ' ⚠' : ''}</td>
+          <td class="col-status"><span class="status-badge ${st.cls}">${escapeHtml(st.label)}</span></td>
+          <td class="col-workshop">${workshop}</td>
+        </tr>`;
+        })
+        .join('');
+
+      const html = `<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Заказы ERDEN</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family: Arial, sans-serif; font-size: 10px; color: #000; padding: 6mm; }
+    .page-header { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 8px; margin-bottom: 10px; border-bottom: 2px solid #1a237e; }
+    .page-title { font-size: 16px; font-weight: 700; color: #1a237e; }
+    .page-meta { font-size: 10px; color: #666; margin-top: 3px; }
+    .brand { font-size: 20px; font-weight: 700; color: #1a237e; }
+    table { width: 100%; border-collapse: collapse; font-size: 10px; }
+    thead tr { background: #1a237e; color: #fff; }
+    thead th { padding: 6px 8px; text-align: left; font-weight: 700; font-size: 9px; text-transform: uppercase; letter-spacing: 0.3px; border-right: 0.5px solid rgba(255,255,255,0.2); white-space: nowrap; }
+    thead th:last-child { border-right: none; }
+    tbody tr { border-bottom: 0.5px solid #e0e0e0; break-inside: avoid; }
+    tbody tr:nth-child(even) { background: #f9f9f9; }
+    tbody tr:hover { background: #f0f0f0; }
+    td { padding: 5px 8px; vertical-align: middle; border-right: 0.5px solid #eee; }
+    td:last-child { border-right: none; }
+    .col-num { width: 30px; text-align: center; color: #999; font-size: 9px; }
+    .col-photo { width: 44px; text-align: center; }
+    .col-tz { width: 70px; font-weight: 700; color: #1a237e; font-size: 10px; }
+    .col-name { min-width: 140px; }
+    .name-main { font-weight: 600; font-size: 10px; }
+    .col-client { width: 80px; color: #1a237e; font-weight: 600; }
+    .col-qty { width: 55px; text-align: right; font-weight: 700; font-size: 11px; }
+    .col-date { width: 80px; font-size: 9px; }
+    .col-deadline { width: 80px; font-size: 9px; }
+    .col-status { width: 70px; text-align: center; }
+    .col-workshop { width: 80px; font-size: 9px; }
+    .status-badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 9px; font-weight: 700; }
+    .s-accepted { background:#e8f5e9; color:#2e7d32; }
+    .s-active { background:#e3f2fd; color:#1565c0; }
+    .s-done { background:#ede7f6; color:#4527a0; }
+    .s-default { background:#f5f5f5; color:#666; }
+    .overdue { color:#c62828; font-weight:700; }
+    .summary { display: flex; gap: 24px; padding: 8px 10px; background: #e8eaf6; border-top: 2px solid #1a237e; margin-top: 6px; border-radius: 0 0 4px 4px; }
+    .sum-item { display: flex; flex-direction: column; gap: 1px; }
+    .sum-label { font-size: 8px; color: #888; text-transform: uppercase; }
+    .sum-value { font-weight: 700; font-size: 13px; }
+    .signatures { display: flex; gap: 32px; margin-top: 14px; padding-top: 10px; border-top: 1px solid #ccc; }
+    .sig-line { border-bottom: 1px solid #000; height: 18px; margin-bottom: 3px; }
+    .sig-label { font-size: 9px; color: #777; }
+    @media print { body { padding: 4mm; } @page { margin: 8mm; size: A4 landscape; } }
+  </style>
+</head>
+<body>
+  <div class="page-header">
+    <div>
+      <div class="page-title">СПИСОК ЗАКАЗОВ</div>
+      <div class="page-meta">
+        Дата: ${escapeHtml(today.toLocaleDateString('ru-RU'))} &nbsp;·&nbsp;
+        Всего заказов: ${ordersWithPhotos.length} &nbsp;·&nbsp;
+        Общее кол-во: ${totalQtySum} шт
+      </div>
+    </div>
+    <div class="brand">ERDEN</div>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th class="col-num">№</th>
+        <th class="col-photo">Фото</th>
+        <th class="col-tz">ТЗ</th>
+        <th class="col-name">Название</th>
+        <th class="col-client">Клиент</th>
+        <th class="col-qty">Кол-во</th>
+        <th class="col-date">Дата поступления</th>
+        <th class="col-deadline">Дедлайн</th>
+        <th class="col-status">Статус</th>
+        <th class="col-workshop">Цех пошива</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${tbodyHtml}
+    </tbody>
+  </table>
+  <div class="summary">
+    <div class="sum-item"><span class="sum-label">Всего заказов</span><span class="sum-value">${ordersWithPhotos.length}</span></div>
+    <div class="sum-item"><span class="sum-label">Общее количество</span><span class="sum-value">${totalQtySum} шт</span></div>
+    <div class="sum-item"><span class="sum-label">Просрочено</span><span class="sum-value" style="color:#c62828">${overdueCount}</span></div>
+    <div class="sum-item"><span class="sum-label">Выполнено</span><span class="sum-value" style="color:#2e7d32">${doneCount}</span></div>
+    <div class="sum-item"><span class="sum-label">В работе</span><span class="sum-value" style="color:#1565c0">${inWorkCount}</span></div>
+  </div>
+  <div class="signatures">
+    <div style="flex:1"><div class="sig-line"></div><div class="sig-label">Менеджер</div></div>
+    <div style="flex:1"><div class="sig-line"></div><div class="sig-label">Руководитель</div></div>
+    <div style="flex:1"><div class="sig-line"></div><div class="sig-label">Дата</div></div>
+  </div>
+</body>
+</html>`;
+
+      const win = window.open('', '_blank');
+      if (!win) return;
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      setTimeout(() => win.print(), 800);
+      setSelectedIds(new Set());
+      setSelectMode(false);
+    } finally {
+      setIsPrinting(false);
+    }
+  }, [orders, selectMode, selectedIds]);
 
   const handleDelete = async (e, orderId) => {
     e.preventDefault();
@@ -103,9 +384,90 @@ export default function Dashboard() {
   return (
     <div className="text-neon-text">
       <div className="no-print flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4 md:mb-6">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-xl md:text-2xl lg:text-3xl font-bold">Заказы</h1>
-          <PrintButton />
+          <div className="no-print flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setSelectMode((m) => {
+                  if (m) setSelectedIds(new Set());
+                  return !m;
+                });
+              }}
+              style={{
+                padding: '8px 14px',
+                background: selectMode ? 'rgba(200,255,0,0.15)' : 'transparent',
+                border: `0.5px solid ${selectMode ? '#c8ff00' : '#444'}`,
+                color: selectMode ? '#c8ff00' : '#888',
+                borderRadius: 6,
+                cursor: 'pointer',
+                fontSize: 13,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              ☑ {selectMode ? 'Отмена выбора' : 'Выбрать'}
+            </button>
+            {selectMode && (
+              <button
+                type="button"
+                onClick={toggleSelectAll}
+                style={{
+                  padding: '8px 14px',
+                  background: 'transparent',
+                  border: '0.5px solid #444',
+                  color: '#888',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  fontSize: 13,
+                }}
+              >
+                {selectedIds.size === orders.length && orders.length > 0 ? 'Снять все' : 'Выбрать все'}
+              </button>
+            )}
+            {selectMode && selectedIds.size > 0 && (
+              <span className="text-[13px]" style={{ color: '#c8ff00' }}>
+                Выбрано: {selectedIds.size}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => printOrders()}
+              disabled={isPrinting || loading || orders.length === 0}
+              className="font-semibold text-white disabled:cursor-not-allowed"
+              style={{
+                padding: '8px 18px',
+                background: '#1a237e',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 6,
+                cursor: isPrinting || loading || orders.length === 0 ? 'not-allowed' : 'pointer',
+                fontSize: 13,
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                opacity: isPrinting ? 0.7 : 1,
+              }}
+              title="Печать: все заказы или только отмеченные в режиме выбора"
+            >
+              {isPrinting ? '⏳ Подготовка...' : '🖨 Печать'}
+              {selectMode && selectedIds.size > 0 && (
+                <span
+                  style={{
+                    background: 'rgba(255,255,255,0.2)',
+                    padding: '1px 6px',
+                    borderRadius: 3,
+                    fontSize: 11,
+                  }}
+                >
+                  {selectedIds.size}
+                </span>
+              )}
+            </button>
+          </div>
           <NeonButton
             type="button"
             onClick={() => loadOrders()}
@@ -177,6 +539,18 @@ export default function Dashboard() {
           <table className="w-full min-w-[640px]">
             <thead>
               <tr className="border-b border-white/20 dark:border-white/20">
+                {selectMode && (
+                  <th className="w-10 px-2 py-3 text-center text-sm font-medium text-neon-muted">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.size === orders.length && orders.length > 0}
+                      onChange={toggleSelectAll}
+                      className="h-4 w-4 cursor-pointer"
+                      style={{ accentColor: '#c8ff00' }}
+                      title="Выбрать все"
+                    />
+                  </th>
+                )}
                 <th className="text-left px-4 py-3 text-sm font-medium text-neon-muted">ТЗ</th>
                 <th className="text-left px-4 py-3 text-sm font-medium text-neon-muted">Название</th>
                 <th className="text-left px-4 py-3 text-sm font-medium text-neon-muted">Клиент</th>
@@ -192,16 +566,55 @@ export default function Dashboard() {
               {orders.map((order) => (
                 <tr
                   key={order.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => navigate(`/orders/${order.id}`)}
-                  onKeyDown={(e) => e.key === 'Enter' && navigate(`/orders/${order.id}`)}
-                  className="border-b border-white/10 hover:bg-white/5 transition-colors duration-300 ease-out cursor-pointer"
+                  role={selectMode ? undefined : 'button'}
+                  tabIndex={selectMode ? -1 : 0}
+                  onClick={(e) => {
+                    if (selectMode) {
+                      if (e.target.closest('input, a, button')) return;
+                      toggleSelect(order.id);
+                    } else {
+                      navigate(`/orders/${order.id}`);
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (!selectMode && e.key === 'Enter') navigate(`/orders/${order.id}`);
+                  }}
+                  className={`border-b border-white/10 transition-colors duration-300 ease-out ${
+                    selectMode ? 'cursor-pointer' : 'hover:bg-white/5 cursor-pointer'
+                  }`}
+                  style={{
+                    borderBottom: '0.5px solid rgba(26,26,26,0.6)',
+                    ...(selectedIds.has(order.id)
+                      ? {
+                          background: 'rgba(200,255,0,0.06)',
+                          outline: '1px solid rgba(200,255,0,0.2)',
+                          outlineOffset: -1,
+                        }
+                      : {}),
+                  }}
                 >
+                  {selectMode && (
+                    <td
+                      className="w-10 px-2 py-3 text-center"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(order.id)}
+                        onChange={() => toggleSelect(order.id)}
+                        className="h-4 w-4 cursor-pointer"
+                        style={{ accentColor: '#c8ff00' }}
+                        aria-label={`Выбрать заказ ${order.tz_code || order.id}`}
+                      />
+                    </td>
+                  )}
                   <td className="px-4 py-3 text-primary-400">
                     {order.tz_code || order.id || '—'}
                   </td>
-                  <td className="px-4 py-3 text-neon-text">
+                  <td
+                    className="px-4 py-3 text-neon-text"
+                    onClick={selectMode ? (e) => e.stopPropagation() : undefined}
+                  >
                     <ModelPhoto
                       photo={order.photos?.[0]}
                       modelName={order.title}

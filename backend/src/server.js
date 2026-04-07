@@ -2,9 +2,77 @@
  * Точка входа сервера
  */
 
+const http = require('http');
 const { execSync } = require('child_process');
 const app = require('./app');
 const db = require('./models');
+
+process.on('uncaughtException', (err) => {
+  console.error('[UNCAUGHT EXCEPTION]', err.message);
+  console.error(err.stack);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[UNHANDLED REJECTION]', reason);
+});
+
+function killPortWindows(port) {
+  let result = '';
+  try {
+    result = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8' });
+  } catch {
+    return;
+  }
+  const lines = result.trim().split(/\r?\n/).filter(Boolean);
+  lines.forEach((line) => {
+    const parts = line.trim().split(/\s+/);
+    const pid = parts[parts.length - 1];
+    if (pid && pid !== process.pid.toString() && /^\d+$/.test(pid)) {
+      try {
+        execSync(`taskkill /PID ${pid} /F`);
+        console.log(`Завершён процесс PID ${pid}`);
+      } catch (_) {}
+    }
+  });
+}
+
+function killPortUnix(port) {
+  try {
+    execSync(`fuser -k ${port}/tcp`, { stdio: 'ignore' });
+  } catch {
+    // порт свободен или нет fuser
+  }
+}
+
+function bindServer(port) {
+  const server = http.createServer(app);
+
+  server.listen(port, () => {
+    console.log(`Сервер запущен на порту ${port}`);
+  });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`Порт ${port} занят. Завершаю старый процесс...`);
+      try {
+        if (process.platform === 'win32') {
+          killPortWindows(port);
+        } else {
+          killPortUnix(port);
+        }
+        setTimeout(() => {
+          bindServer(port);
+        }, 1000);
+      } catch (killErr) {
+        console.error('Не удалось освободить порт:', killErr);
+        process.exit(1);
+      }
+    } else {
+      console.error('Ошибка сервера:', err);
+      process.exit(1);
+    }
+  });
+}
 
 async function start() {
   try {
@@ -70,11 +138,8 @@ async function start() {
   }
 
   // Локально — как в .env.example / vite proxy (3001). На Render/Fly PORT задаётся средой.
-  const PORT = process.env.PORT || 3001;
-
-  app.listen(PORT, () => {
-    console.log(`Сервер запущен на порту ${PORT}`);
-  });
+  const PORT = Number(process.env.PORT) || 3001;
+  bindServer(PORT);
 }
 
 start();

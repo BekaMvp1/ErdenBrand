@@ -4,28 +4,9 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
-
-const CARD_LINKS = {
-  orders_in_progress: '/board',
-  cut_today: '/cutting',
-  sewn_today: '/sewing',
-  qc_today: '/qc',
-  warehouse_ready: '/warehouse',
-  shipped_today: '/shipments',
-};
-
-const TASK_LINKS = { cutting: '/cutting', sewing: '/sewing', qc: '/qc' };
-
-const EMPTY_STATS = {
-  orders_in_progress: 0,
-  cut_today: 0,
-  sewn_today: 0,
-  qc_today: 0,
-  warehouse_ready: 0,
-  shipped_today: 0,
-};
+import { useOrderProgress } from '../context/OrderProgressContext';
 
 function formatDate(d) {
   if (!d) return '—';
@@ -65,16 +46,20 @@ function mergeDailyWithWeek(apiRows) {
 }
 
 export default function ProductionDashboard() {
-  const [stats, setStats] = useState(null);
+  const navigate = useNavigate();
+  const {
+    dashboardStats,
+    ordersProgress,
+    loading: progressLoading,
+    lastUpdated,
+    refresh,
+  } = useOrderProgress();
   const [dailyLoad, setDailyLoad] = useState([]);
   const [tasks, setTasks] = useState({});
-  const [orders, setOrders] = useState([]);
   const [deadlines, setDeadlines] = useState([]);
 
-  const [statsLoading, setStatsLoading] = useState(true);
   const [loadLoading, setLoadLoading] = useState(true);
   const [tasksLoading, setTasksLoading] = useState(true);
-  const [ordersLoading, setOrdersLoading] = useState(true);
   const [deadlinesLoading, setDeadlinesLoading] = useState(true);
 
   useEffect(() => {
@@ -101,25 +86,10 @@ export default function ProductionDashboard() {
     const timeout = setTimeout(() => {
       if (cancelled) return;
       console.warn('[Dashboard] таймаут загрузки');
-      setStatsLoading(false);
       setLoadLoading(false);
       setTasksLoading(false);
-      setOrdersLoading(false);
       setDeadlinesLoading(false);
     }, 5000);
-
-    const fetchStats = () =>
-      api.dashboard
-        .productionStats()
-        .then((r) => {
-          if (!cancelled) setStats(r?.production_stats ?? EMPTY_STATS);
-        })
-        .catch(() => {
-          if (!cancelled) setStats(EMPTY_STATS);
-        })
-        .finally(() => {
-          if (!cancelled) setStatsLoading(false);
-        });
 
     const fetchDailyLoad = () =>
       api.productionPanel
@@ -147,19 +117,6 @@ export default function ProductionDashboard() {
           if (!cancelled) setTasksLoading(false);
         });
 
-    const fetchOrdersProgress = () =>
-      api.dashboard
-        .productionOrdersProgress()
-        .then((r) => {
-          if (!cancelled) setOrders(Array.isArray(r?.orders_progress) ? r.orders_progress : []);
-        })
-        .catch(() => {
-          if (!cancelled) setOrders([]);
-        })
-        .finally(() => {
-          if (!cancelled) setOrdersLoading(false);
-        });
-
     const fetchDeadlines = () =>
       api.dashboard
         .productionDeadlines()
@@ -174,18 +131,14 @@ export default function ProductionDashboard() {
         });
 
     Promise.allSettled([
-      fetchStats(),
       fetchDailyLoad(),
       fetchTasksToday(),
-      fetchOrdersProgress(),
       fetchDeadlines(),
     ]).finally(() => {
       clearTimeout(timeout);
       if (!cancelled) {
-        setStatsLoading(false);
         setLoadLoading(false);
         setTasksLoading(false);
-        setOrdersLoading(false);
         setDeadlinesLoading(false);
       }
     });
@@ -196,38 +149,118 @@ export default function ProductionDashboard() {
     };
   }, []);
 
-  const displayStats = stats ?? EMPTY_STATS;
   const displayDaily = useMemo(() => mergeDailyWithWeek(dailyLoad), [dailyLoad]);
 
-  const statCards = [
-    { key: 'orders_in_progress', label: 'Заказы в работе', value: displayStats.orders_in_progress ?? 0 },
-    { key: 'cut_today', label: 'Сегодня раскроено', value: displayStats.cut_today ?? 0 },
-    { key: 'sewn_today', label: 'Сегодня сшито', value: displayStats.sewn_today ?? 0 },
-    { key: 'qc_today', label: 'Сегодня проверено ОТК', value: displayStats.qc_today ?? 0 },
-    { key: 'warehouse_ready', label: 'Готово на складе', value: displayStats.warehouse_ready ?? 0 },
-    { key: 'shipped_today', label: 'Отгружено сегодня', value: displayStats.shipped_today ?? 0 },
+  const dashCards = [
+    {
+      label: 'Заказы в работе',
+      value: dashboardStats?.active_orders ?? 0,
+      onClick: () => navigate('/orders'),
+      color: '#fff',
+    },
+    {
+      label: 'Сегодня раскроено',
+      value: dashboardStats?.today_cutting ?? 0,
+      onClick: () => navigate('/cutting'),
+      color: '#c8ff00',
+    },
+    {
+      label: 'Сегодня сшито',
+      value: dashboardStats?.today_sewing ?? 0,
+      onClick: () => navigate('/sewing'),
+      color: '#c8ff00',
+    },
+    {
+      label: 'Сегодня проверено ОТК',
+      value: dashboardStats?.today_otk ?? tasks.qc ?? 0,
+      onClick: () => navigate('/otk'),
+      color: '#4a9eff',
+    },
+    {
+      label: 'Готово на складе',
+      value: dashboardStats?.warehouse_total ?? 0,
+      onClick: () => navigate('/warehouse'),
+      color: '#1D9E75',
+    },
+    {
+      label: 'Отгружено сегодня',
+      value: dashboardStats?.today_shipped ?? 0,
+      onClick: () => navigate('/shipments'),
+      color: '#F59E0B',
+    },
   ];
 
   return (
     <div className="min-h-screen px-3 md:px-6 lg:px-8 py-4 md:py-6 text-white bg-[#0f0f12] overflow-x-hidden">
       <div className="max-w-[1400px] mx-auto w-full min-w-0">
-        <h1 className="text-xl md:text-2xl lg:text-3xl font-bold mb-4 md:mb-6 text-white">Дашборд производства</h1>
+        <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-3 mb-4 md:mb-6">
+          <h1 className="text-xl md:text-2xl lg:text-3xl font-bold text-white">Дашборд производства</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => refresh()}
+              className="text-xs rounded border border-white/20 bg-transparent px-3 py-1.5 text-white/70 hover:text-white hover:border-white/40 transition-colors"
+            >
+              Обновить
+              {lastUpdated ? (
+                <span className="ml-2 text-white/40">
+                  Обновлено:{' '}
+                  {lastUpdated.toLocaleTimeString('ru-RU', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                  })}
+                </span>
+              ) : null}
+            </button>
+          </div>
+        </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 mb-8">
-          {statsLoading ? (
+        <div
+          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-8 relative z-[2]"
+          style={{ isolation: 'isolate' }}
+        >
+          {progressLoading && !dashboardStats ? (
             [...Array(6)].map((_, i) => (
-              <div key={i} className="h-24 rounded-xl bg-white/5 animate-pulse border border-white/10" />
+              <div key={i} className="h-24 rounded-lg bg-[#111] animate-pulse border border-[#222]" />
             ))
           ) : (
-            statCards.map(({ key, label, value }) => (
-              <Link
-                key={key}
-                to={CARD_LINKS[key] || '#'}
-                className="rounded-xl bg-[#1a1a1f] border border-white/10 p-4 hover:border-white/25 hover:bg-[#222] transition-colors"
+            dashCards.map((card, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={card.onClick}
+                className="rounded-lg border p-4 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#c8ff00]/40"
+                style={{
+                  background: '#111',
+                  borderColor: '#222',
+                  cursor: 'pointer',
+                  position: 'relative',
+                  zIndex: 2,
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = '#333';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = '#222';
+                }}
               >
-                <div className="text-xs uppercase tracking-wide text-white/50 mb-1">{label}</div>
-                <div className="text-2xl font-bold">{value}</div>
-              </Link>
+                <div
+                  className="text-[11px] uppercase tracking-wide mb-2"
+                  style={{ color: '#888' }}
+                >
+                  {card.label}
+                </div>
+                <div
+                  style={{
+                    fontSize: 28,
+                    fontWeight: 700,
+                    color: card.color,
+                  }}
+                >
+                  {card.value}
+                </div>
+              </button>
             ))
           )}
         </div>
@@ -265,67 +298,140 @@ export default function ProductionDashboard() {
             )}
           </div>
 
-          <div className="rounded-xl bg-[#1a1a1f] border border-white/10 p-4">
-            <h2 className="text-sm font-semibold text-white/80 mb-4">Задачи сегодня</h2>
+          <div
+            className="rounded-lg border overflow-hidden relative z-[2]"
+            style={{ background: '#111', borderColor: '#222' }}
+          >
+            <div
+              className="px-4 py-3 text-[13px]"
+              style={{ borderBottom: '1px solid #222', color: '#888' }}
+            >
+              Задачи сегодня
+            </div>
             {tasksLoading ? (
-              <div className="text-white/50 py-4">Загрузка...</div>
+              <div className="text-white/50 py-4 px-4">Загрузка...</div>
             ) : (
-              <div className="space-y-3">
-                {[
-                  { key: 'cutting', label: 'Раскрой', count: tasks.cutting ?? 0 },
-                  { key: 'sewing', label: 'Пошив', count: tasks.sewing ?? 0 },
-                  { key: 'qc', label: 'ОТК', count: tasks.qc ?? 0 },
-                ].map(({ key, label, count }) => (
-                  <Link
-                    key={key}
-                    to={TASK_LINKS[key]}
-                    className="flex items-center justify-between rounded-lg bg-white/5 border border-white/10 px-4 py-3 hover:bg-white/10"
-                  >
-                    <span>{label}</span>
-                    <span className="text-xl font-bold">{count}</span>
-                  </Link>
-                ))}
-              </div>
+              [
+                {
+                  label: 'Раскрой',
+                  value: dashboardStats?.today_cutting ?? tasks.cutting ?? 0,
+                  path: '/cutting',
+                },
+                {
+                  label: 'Пошив',
+                  value: dashboardStats?.today_sewing ?? tasks.sewing ?? 0,
+                  path: '/sewing',
+                },
+                {
+                  label: 'ОТК',
+                  value: dashboardStats?.today_otk ?? tasks.qc ?? 0,
+                  path: '/otk',
+                },
+              ].map((task, idx) => (
+                <button
+                  key={task.path}
+                  type="button"
+                  onClick={() => navigate(task.path)}
+                  className="flex w-full items-center justify-between px-4 py-3.5 text-left transition-colors focus:outline-none focus-visible:bg-[#1a1a1a]"
+                  style={{
+                    borderBottom: idx < 2 ? '1px solid #1a1a1a' : undefined,
+                    cursor: 'pointer',
+                    background: 'transparent',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = '#1a1a1a';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'transparent';
+                  }}
+                >
+                  <span className="text-sm text-white">{task.label}</span>
+                  <span className="text-base font-bold" style={{ color: '#c8ff00' }}>
+                    {task.value}
+                  </span>
+                </button>
+              ))
             )}
           </div>
         </div>
 
         <div className="mt-6 rounded-xl bg-[#1a1a1f] border border-white/10 p-4">
-          <h2 className="text-sm font-semibold text-white/80 mb-4">Заказы в производстве</h2>
-          {ordersLoading ? (
+          <h2 className="text-sm font-semibold text-white/80 mb-4">Заказы — прогресс цепочки</h2>
+          {progressLoading && ordersProgress.length === 0 ? (
             <div className="text-white/50 py-4">Загрузка...</div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-xs sm:text-sm border-collapse">
                 <thead>
-                  <tr className="border-b border-white/10 text-left text-white/60">
-                    <th className="py-2 pr-4">Заказ</th>
-                    <th className="py-2 pr-4">Клиент</th>
-                    <th className="py-2 pr-4">Модель</th>
-                    <th className="py-2 pr-4 text-right">План</th>
-                    <th className="py-2 pr-4 text-right">Раскрой</th>
-                    <th className="py-2 pr-4 text-right">Пошив</th>
-                    <th className="py-2 pr-4 text-right">ОТК</th>
-                    <th className="py-2 text-right">Склад</th>
+                  <tr className="border-b border-white/15 text-left text-white/55">
+                    <th className="py-2 pr-3">Заказ</th>
+                    <th className="py-2 pr-3">Клиент</th>
+                    <th className="py-2 pr-2 text-center">План</th>
+                    <th className="py-2 pr-2 text-center">✂️ Раскрой</th>
+                    <th className="py-2 pr-2 text-center">🧵 Пошив</th>
+                    <th className="py-2 pr-2 text-center">✓ ОТК</th>
+                    <th className="py-2 pr-2 text-center">📦 Склад</th>
+                    <th className="py-2 pr-2 text-center">🚚 Отгрузка</th>
+                    <th className="py-2 pr-0 min-w-[104px]">Прогресс</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {orders.slice(0, 20).map((o) => (
-                    <tr key={o.order_id} className="border-b border-white/5 hover:bg-white/5">
-                      <td className="py-2 pr-4">
-                        <Link to={`/orders/${o.order_id}`} className="text-blue-400 hover:underline">
-                          {o.title}
-                        </Link>
-                      </td>
-                      <td className="py-2 pr-4">{o.client_name}</td>
-                      <td className="py-2 pr-4">{o.model_name}</td>
-                      <td className="py-2 pr-4 text-right">{o.plan}</td>
-                      <td className="py-2 pr-4 text-right">{o.cutting}</td>
-                      <td className="py-2 pr-4 text-right">{o.sewing}</td>
-                      <td className="py-2 pr-4 text-right">{o.qc}</td>
-                      <td className="py-2 text-right">{o.warehouse}</td>
-                    </tr>
-                  ))}
+                  {ordersProgress.slice(0, 40).map((order) => {
+                    const plan = order.plan_qty ?? 0;
+                    const q = order.quantities || {};
+                    const cells = [
+                      q.cutting ?? 0,
+                      q.sewing ?? 0,
+                      q.otk_passed ?? 0,
+                      q.warehouse ?? 0,
+                      q.shipped ?? 0,
+                    ];
+                    return (
+                      <tr key={order.id} className="border-b border-white/[0.06] hover:bg-white/[0.04]">
+                        <td className="py-2 pr-3 align-top">
+                          <Link
+                            to={`/orders/${order.id}`}
+                            className="font-semibold text-[#c8ff00] hover:underline block leading-snug"
+                          >
+                            {order.article ? `${order.article} — ` : ''}
+                            {order.name || '—'}
+                          </Link>
+                        </td>
+                        <td className="py-2 pr-3 text-[#4a9eff] align-top">{order.client || '—'}</td>
+                        <td className="py-2 pr-2 text-center font-semibold align-top">{plan}</td>
+                        {cells.map((qty, i) => (
+                          <td key={i} className="py-2 pr-2 text-center align-top">
+                            <span
+                              className={
+                                qty > 0 && plan > 0 && qty >= plan
+                                  ? 'text-[#c8ff00] font-semibold'
+                                  : qty > 0
+                                    ? 'text-white font-medium'
+                                    : 'text-white/25'
+                              }
+                            >
+                              {qty > 0 ? qty : '—'}
+                            </span>
+                          </td>
+                        ))}
+                        <td className="py-2 pr-0 align-top min-w-[104px]">
+                          <div className="h-1.5 rounded bg-black/40 overflow-hidden">
+                            <div
+                              className="h-full rounded transition-all duration-500"
+                              style={{
+                                width: `${Math.min(100, order.total_progress ?? 0)}%`,
+                                background:
+                                  (order.total_progress ?? 0) >= 100 ? '#c8ff00' : '#4a9eff',
+                              }}
+                            />
+                          </div>
+                          <div className="text-[10px] text-white/40 mt-0.5 text-right">
+                            {order.total_progress ?? 0}%
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

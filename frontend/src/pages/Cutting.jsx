@@ -2,10 +2,12 @@
  * Страница раскроя — документы из плана цеха
  */
 
-import React, { Fragment, useState, useEffect, useCallback, useMemo } from 'react';
+import React, { Fragment, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useAuth } from '../context/AuthContext';
+import { useOrderProgress } from '../context/OrderProgressContext';
 import { formatWeekRangeLabel } from '../components/planChain/PlanChainDocumentCard';
 import { useGridNavigation } from '../hooks/useGridNavigation';
 import { numInputValue } from '../utils/numInput';
@@ -25,7 +27,7 @@ function chainDateIsoCut(v) {
   return s.length >= 10 ? s.slice(0, 10) : '';
 }
 
-const CHAIN_COLS = 12;
+const CHAIN_COLS = 13;
 
 const CHAIN_TABLE_HEADERS = [
   { label: 'Фото' },
@@ -36,6 +38,7 @@ const CHAIN_TABLE_HEADERS = [
   { label: 'Неделя план' },
   { label: 'Дата план' },
   { label: 'Дата факт' },
+  { label: 'Этаж', thStyle: { minWidth: 120 } },
   { label: 'Статус' },
   { label: 'Цех' },
   { label: 'Комментарий' },
@@ -100,6 +103,47 @@ function absPhotoUrlForPrint(url) {
   return `${origin}${t.startsWith('/') ? '' : '/'}${t}`;
 }
 
+/** Загрузка фото в data URL для печати (обходит блокировки внешних img в окне печати) */
+async function cuttingPhotoUrlToDataUrl(url) {
+  if (!url || typeof url !== 'string') return null;
+  const t = url.trim();
+  if (!t) return null;
+  if (t.startsWith('data:image/')) return t;
+  const abs = absPhotoUrlForPrint(t);
+  if (!abs) return null;
+  try {
+    const res = await fetch(abs, { mode: 'cors', credentials: 'include' });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    if (!blob?.size) return null;
+    return await new Promise((resolve) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(typeof fr.result === 'string' ? fr.result : null);
+      fr.onerror = () => resolve(null);
+      fr.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+const CUT_PRINT_LEGACY_FLOOR_LABELS = {
+  floor_2: '2 этаж',
+  floor_3: '3 этаж',
+  floor_4: '4 этаж',
+};
+
+/** Название этажа для печати: справочник building_floors, затем legacy-ключи, затем id */
+function resolvePrintFloorName(doc, buildingFloors = []) {
+  const fid = doc?.floor_id;
+  if (fid == null || fid === '') return '—';
+  const hit = (buildingFloors || []).find((f) => String(f.id) === String(fid));
+  if (hit?.name) return hit.name;
+  const leg = CUT_PRINT_LEGACY_FLOOR_LABELS[String(fid)];
+  if (leg) return leg;
+  return String(fid);
+}
+
 /** Печать документа раскроя из плана цеха (отдельное окно + window.print) */
 function printCuttingDoc(doc) {
   const specification = doc.specification || [];
@@ -133,10 +177,22 @@ function printCuttingDoc(doc) {
   const productLine = escapeHtmlPrint(orderTzModelLineCutting(O));
   const clientName = escapeHtmlPrint(O.Client?.name || O.client_name || '—');
   const photoRaw = firstPhotoSrcCutting(O);
-  const photoAbs = absPhotoUrlForPrint(photoRaw);
-  const photoBlock = photoAbs
-    ? `<img class="product-photo" src="${escapeHtmlPrint(photoAbs)}" alt="" onerror="this.style.display='none'">`
-    : `<div class="product-photo-placeholder">Фото</div>`;
+  const photoBase64 =
+    O.photoBase64 != null && typeof O.photoBase64 === 'string' && O.photoBase64.startsWith('data:')
+      ? O.photoBase64
+      : null;
+  const photoUrl = photoBase64 ? '' : absPhotoUrlForPrint(photoRaw);
+  const imgSrc = photoBase64 || photoUrl;
+  const photoArt3 = escapeHtmlPrint((article || '?').slice(0, 3));
+  const cardPhotoPlaceholderHidden = `<div class="card-photo-placeholder" style="display:none;background:#e8eaf6;color:#3949ab;border:1px solid #c5cae9;font-weight:700">${photoArt3}</div>`;
+  let cardPhotoHtml;
+  if (!imgSrc) {
+    cardPhotoHtml = `<div class="card-photo-placeholder" style="background:#e8eaf6;color:#3949ab;border:1px solid #c5cae9;font-weight:700">${photoArt3}</div>`;
+  } else if (photoBase64) {
+    cardPhotoHtml = `<img class="card-photo" src="${escapeHtmlPrint(photoBase64)}" alt="" onerror="this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex'">${cardPhotoPlaceholderHidden}`;
+  } else {
+    cardPhotoHtml = `<img class="card-photo" src="${escapeHtmlPrint(photoUrl)}" alt="" crossorigin="anonymous" onerror="this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex'">${cardPhotoPlaceholderHidden}`;
+  }
 
   const weekIso = chainDateIsoCut(doc.week_start);
   const planDateStr = weekIso
@@ -150,6 +206,12 @@ function printCuttingDoc(doc) {
   const workshopLabel = escapeHtmlPrint(
     doc.print_workshop_name || doc.workshop_name || doc.section_id || doc.workshop || '—'
   );
+
+  const floorStr =
+    doc.print_floor_name != null && String(doc.print_floor_name).trim() !== ''
+      ? String(doc.print_floor_name).trim()
+      : resolvePrintFloorName(doc, doc._print_building_floors || []);
+  const floorLabel = escapeHtmlPrint(floorStr);
 
   const st = doc.status || 'pending';
   const statusLabel = escapeHtmlPrint(
@@ -241,38 +303,24 @@ function printCuttingDoc(doc) {
       margin-bottom: 4px;
     }
     .doc-subtitle { font-size: 12px; color: #555; }
-    .doc-info {
-      display: grid;
-      grid-template-columns: auto auto auto;
-      gap: 8px 32px;
-      margin-bottom: 16px;
-      padding: 12px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      background: #f9f9f9;
-    }
-    .info-item { display: flex; flex-direction: column; gap: 2px; }
-    .info-label {
-      font-size: 10px;
-      color: #888;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    .info-value { font-size: 13px; font-weight: 600; }
-    .product-block {
+    .card-header {
       display: flex;
-      gap: 12px;
       align-items: flex-start;
-      margin-bottom: 16px;
+      gap: 8px;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #ddd;
+      flex-wrap: wrap;
     }
-    .product-photo {
+    .card-photo {
       width: 80px;
       height: 80px;
       object-fit: cover;
       border-radius: 4px;
       border: 1px solid #ddd;
+      flex-shrink: 0;
     }
-    .product-photo-placeholder {
+    .card-photo-placeholder {
       width: 80px;
       height: 80px;
       background: #eee;
@@ -282,14 +330,33 @@ function printCuttingDoc(doc) {
       justify-content: center;
       font-size: 10px;
       color: #999;
+      flex-shrink: 0;
     }
-    .product-info { flex: 1; }
-    .product-name {
-      font-size: 15px;
-      font-weight: 700;
-      margin-bottom: 4px;
+    .card-name { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+    .card-id { font-size: 12px; color: #666; }
+    .card-meta-group {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      flex: 1;
+      justify-content: flex-end;
+      min-width: 200px;
     }
-    .product-article { font-size: 12px; color: #666; }
+    .meta-item { display: flex; flex-direction: column; gap: 2px; min-width: 72px; }
+    .meta-label {
+      font-size: 9px;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .meta-value { font-size: 12px; font-weight: 600; }
+    .meta-line {
+      display: block;
+      min-height: 14px;
+      border-bottom: 1px solid #ccc;
+      margin-top: 2px;
+    }
     .matrix-title {
       font-size: 13px;
       font-weight: 700;
@@ -342,17 +409,19 @@ function printCuttingDoc(doc) {
     .cell-fact.done { color: #1a7e2e; }
     .cell-fact.partial { color: #b36800; }
     .cell-fact.zero { color: #bbb; }
-    .totals-block {
+    .card-totals {
       display: flex;
-      gap: 24px;
+      flex-wrap: wrap;
+      gap: 16px 24px;
       margin-bottom: 16px;
       padding: 10px 14px;
       border: 2px solid #1a237e;
       border-radius: 4px;
+      align-items: flex-end;
     }
-    .total-item { display: flex; flex-direction: column; gap: 2px; }
-    .total-label { font-size: 10px; color: #888; }
-    .total-value { font-size: 18px; font-weight: 700; }
+    .card-totals > div { display: flex; flex-direction: column; gap: 2px; }
+    .tot-label { font-size: 9px; color: #888; text-transform: uppercase; }
+    .tot-value { font-size: 16px; font-weight: 700; }
     .signatures {
       display: flex;
       gap: 48px;
@@ -384,59 +453,63 @@ function printCuttingDoc(doc) {
       <div style="font-size:11px;color:#888">Производство одежды</div>
     </div>
   </div>
-  <div class="product-block">
-    ${photoBlock}
-    <div class="product-info">
-      <div class="product-name">${productLine}</div>
-      <div class="product-article">Заказ #${escapeHtmlPrint(String(doc.order_id ?? ''))} · Документ #${escapeHtmlPrint(String(doc.id ?? ''))}</div>
+  <div class="card-header">
+    ${cardPhotoHtml}
+    <div style="flex:1;min-width:120px">
+      <div class="card-name">${productLine}</div>
+      <div class="card-id">#${escapeHtmlPrint(String(doc.order_id ?? ''))} · ${clientName}</div>
+    </div>
+    <div class="card-meta-group">
+      <div class="meta-item">
+        <div class="meta-label">Неделя план</div>
+        <div class="meta-value">${escapeHtmlPrint(formatWeekForPrint(doc.week_start))}</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Дата план</div>
+        <div class="meta-value">${escapeHtmlPrint(planDateStr)}</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Дата факт</div>
+        ${
+          factIso
+            ? `<div class="meta-value">${escapeHtmlPrint(factDateStr)}</div>`
+            : '<span class="meta-line"></span>'
+        }
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Этаж</div>
+        <div class="meta-value">${floorLabel}</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Цех</div>
+        <div class="meta-value">${workshopLabel}</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Статус</div>
+        <div class="meta-value">${statusLabel}</div>
+      </div>
     </div>
   </div>
-  <div class="doc-info">
-    <div class="info-item">
-      <span class="info-label">Клиент</span>
-      <span class="info-value">${clientName}</span>
+  <div class="card-totals">
+    <div>
+      <div class="tot-label">ПЛАН</div>
+      <div class="tot-value">${planTotal} шт</div>
     </div>
-    <div class="info-item">
-      <span class="info-label">Неделя план</span>
-      <span class="info-value">${escapeHtmlPrint(formatWeekForPrint(doc.week_start))}</span>
-    </div>
-    <div class="info-item">
-      <span class="info-label">Дата план</span>
-      <span class="info-value">${escapeHtmlPrint(planDateStr)}</span>
-    </div>
-    <div class="info-item">
-      <span class="info-label">Дата факт</span>
-      <span class="info-value">${escapeHtmlPrint(factDateStr)}</span>
-    </div>
-    <div class="info-item">
-      <span class="info-label">Статус</span>
-      <span class="info-value">${statusLabel}</span>
-    </div>
-    <div class="info-item">
-      <span class="info-label">Цех</span>
-      <span class="info-value">${workshopLabel}</span>
-    </div>
-  </div>
-  <div class="totals-block">
-    <div class="total-item">
-      <span class="total-label">ПЛАН</span>
-      <span class="total-value">${planTotal} шт</span>
-    </div>
-    <div class="total-item">
-      <span class="total-label">ФАКТ</span>
-      <span class="total-value" style="color:${
+    <div>
+      <div class="tot-label">ФАКТ</div>
+      <div class="tot-value" style="color:${
         factTotal >= planTotal ? '#1a7e2e' : factTotal > 0 ? '#b36800' : '#000'
-      }">${factTotal} шт</span>
+      }">${factTotal > 0 ? `${factTotal} шт` : '_____ шт'}</div>
     </div>
-    <div class="total-item">
-      <span class="total-label">ОСТАТОК</span>
-      <span class="total-value" style="color:${
-        planTotal - factTotal < 0 ? '#c00' : planTotal - factTotal === 0 ? '#1a7e2e' : '#000'
-      }">${planTotal - factTotal} шт</span>
+    <div>
+      <div class="tot-label">ОСТАТОК</div>
+      <div class="tot-value">${
+        factTotal > 0 ? `${Math.max(0, planTotal - factTotal)} шт` : '_____ шт'
+      }</div>
     </div>
-    <div class="total-item">
-      <span class="total-label">ВЫПОЛНЕНО</span>
-      <span class="total-value">${planTotal > 0 ? Math.round((factTotal / planTotal) * 100) : 0}%</span>
+    <div>
+      <div class="tot-label">%</div>
+      <div class="tot-value">${planTotal > 0 ? `${Math.round((factTotal / planTotal) * 100)}%` : '—'}</div>
     </div>
   </div>
   <div class="matrix-title">
@@ -470,185 +543,321 @@ function printCuttingDoc(doc) {
   return true;
 }
 
-/** Несколько документов раскроя в одном HTML для печати (текущий отфильтрованный список) */
-function buildPrintAllCuttingHtml(fullDocs) {
+/** TZ — MODEL для печати: без дублирования артикула в начале названия */
+function cuttingPrintDisplayName(order) {
+  const O = order || {};
+  const article = String(O.article || O.tz_code || '').trim();
+  const name = String(O.title || O.model_name || '').trim() || '—';
+  if (article && name.startsWith(article)) return name;
+  if (article) return `${article} — ${name}`;
+  return name;
+}
+
+function groupCuttingPrintDocsByWeek(docs) {
+  const groups = {};
+  for (const doc of docs) {
+    const w = doc.week_start != null && doc.week_start !== '' ? String(doc.week_start) : 'unknown';
+    if (!groups[w]) groups[w] = [];
+    groups[w].push(doc);
+  }
+  return Object.entries(groups).sort(([a], [b]) => {
+    if (a === 'unknown') return 1;
+    if (b === 'unknown') return -1;
+    const ia = chainDateIsoCut(a) || a;
+    const ib = chainDateIsoCut(b) || b;
+    const da = new Date(`${ia}T12:00:00`).getTime();
+    const db = new Date(`${ib}T12:00:00`).getTime();
+    return (Number.isNaN(da) ? 0 : da) - (Number.isNaN(db) ? 0 : db);
+  });
+}
+
+function buildMiniMatrixHtml(doc) {
+  const spec = doc.specification || [];
+  const facts = doc.cutting_facts || [];
+  const colors = [
+    ...new Set(spec.map((s) => String(s.color ?? '').trim()).filter(Boolean)),
+  ].sort((a, b) => a.localeCompare(b, 'ru'));
+  const sizes = [
+    ...new Set(spec.map((s) => String(s.size ?? '').trim()).filter(Boolean)),
+  ].sort((a, b) => a.localeCompare(b, 'ru'));
+  if (!colors.length || !sizes.length) return '';
+
+  const getPlan = (c, sz) => {
+    const row = spec.find(
+      (s) =>
+        String(s.color ?? '').trim() === String(c ?? '').trim() &&
+        String(s.size ?? '').trim() === String(sz ?? '').trim()
+    );
+    return row ? Math.max(0, parseInt(row.quantity, 10) || 0) : 0;
+  };
+  const getFact = (c, sz) => {
+    const f = findCuttingFactForSpec(facts, c, sz);
+    return parseInt(f?.quantity, 10) || 0;
+  };
+
+  const sizeThs = sizes
+    .map(
+      (s) =>
+        `<th style="background:#3949ab;color:#fff;padding:2px 8px;text-align:center;min-width:36px;border:0.5px solid #283593">${escapeHtmlPrint(s)}</th>`
+    )
+    .join('');
+
+  const tbody = colors
+    .map((color) => {
+      const rowPlan = sizes.reduce((s, sz) => s + getPlan(color, sz), 0);
+      const rowFact = sizes.reduce((s, sz) => s + getFact(color, sz), 0);
+      const cells = sizes
+        .map((size) => {
+          const p = getPlan(color, size);
+          const f = getFact(color, size);
+          if (!p) {
+            return `<td style="color:#ddd;text-align:center;padding:2px 4px;border:0.5px solid #eee">—</td>`;
+          }
+          const factCell =
+            f > 0
+              ? `<div style="font-weight:700;color:#1a7e2e">${f}</div>`
+              : `<div style="border-bottom:1px solid #000;width:20px;height:10px;margin:0 auto"></div>`;
+          return `<td style="text-align:center;padding:2px 4px;border:0.5px solid #ddd">
+              <div style="font-size:9px;color:#555">${p}</div>
+              ${factCell}
+            </td>`;
+        })
+        .join('');
+      const totFactCell =
+        rowFact > 0
+          ? `<div style="color:#1a7e2e">${rowFact}</div>`
+          : `<div style="border-bottom:1px solid #000;width:20px;height:10px;margin:0 auto"></div>`;
+      return `<tr style="border-bottom:0.5px solid #ddd">
+          <td style="padding:2px 6px;font-weight:500;background:#f0f0f0;border:0.5px solid #ddd">${escapeHtmlPrint(color)}</td>
+          ${cells}
+          <td style="text-align:center;padding:2px 6px;font-weight:700;background:#f0f0f0;border:0.5px solid #ddd">
+            <div style="font-size:9px;color:#555">${rowPlan}</div>
+            ${totFactCell}
+          </td>
+        </tr>`;
+    })
+    .join('');
+
+  return `<table style="border-collapse:collapse;font-size:9px;margin-top:2px">
+    <thead>
+      <tr>
+        <th style="background:#3949ab;color:#fff;padding:2px 6px;text-align:left;min-width:60px;border:0.5px solid #283593">Цвет</th>
+        ${sizeThs}
+        <th style="background:#1a237e;color:#fff;padding:2px 8px;text-align:center;border:0.5px solid #0d1564">Итого</th>
+      </tr>
+    </thead>
+    <tbody>${tbody}</tbody>
+  </table>`;
+}
+
+/** Печать списка раскроя: альбом, группы по неделям, мини-матрица под строкой */
+function buildPrintAllCuttingSimpleTableHtml(fullDocs) {
   const style = `
     * { margin:0; padding:0; box-sizing:border-box; }
-    body { font-family: Arial, sans-serif; font-size:12px; color:#000; }
-    .page-break { page-break-after: always; }
-    .doc-wrap { padding-bottom: 8px; }
-    .doc-header {
-      display:flex; justify-content:space-between; align-items:flex-start;
-      margin-bottom:12px; padding-bottom:8px; border-bottom:2px solid #000;
+    body {
+      font-family: Arial, sans-serif;
+      font-size: 11px;
+      color: #000;
+      padding: 8mm;
     }
-    .doc-title { font-size:14px; font-weight:700; }
-    .doc-date { font-size:11px; color:#666; margin-top:2px; }
-    .product-block { display:flex; gap:12px; align-items:flex-start; margin-bottom:12px; }
-    .product-photo { width:70px; height:70px; object-fit:cover; border-radius:4px; border:1px solid #ddd; }
-    .product-name { font-size:14px; font-weight:700; }
-    .product-meta { font-size:11px; color:#666; margin-top:2px; }
-    .info-row {
-      display:flex; gap:24px; margin-bottom:12px; padding:8px 12px;
-      background:#f5f5f5; border-radius:4px; flex-wrap:wrap;
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+      padding-bottom: 6px;
+      border-bottom: 2px solid #000;
     }
-    .info-item { display:flex; flex-direction:column; gap:1px; }
-    .info-label { font-size:9px; color:#999; text-transform:uppercase; }
-    .info-value { font-size:12px; font-weight:600; }
-    .totals {
-      display:flex; gap:24px; margin-bottom:12px; padding:8px 12px;
-      border:2px solid #1a237e; border-radius:4px;
+    .page-title { font-size: 14px; font-weight: 700; }
+    .page-meta { font-size: 10px; color: #555; }
+    .signatures {
+      display: flex;
+      gap: 32px;
+      margin-top: 16px;
+      padding-top: 10px;
+      border-top: 1px solid #ccc;
     }
-    .total-label { font-size:9px; color:#999; text-transform:uppercase; }
-    .total-value { font-size:16px; font-weight:700; }
-    .matrix-label { font-size:12px; font-weight:700; margin-bottom:6px; }
-    table { width:100%; border-collapse:collapse; margin-bottom:12px; font-size:11px; }
-    th {
-      background:#1a237e; color:#fff; padding:5px 8px; text-align:center;
-      border:1px solid #0d1564;
+    .sig-line {
+      border-bottom: 1px solid #000;
+      height: 16px;
+      margin-bottom: 2px;
     }
-    th:first-child { text-align:left; }
-    td { padding:5px 8px; border:1px solid #ddd; text-align:center; }
-    td:first-child { text-align:left; font-weight:500; background:#f9f9f9; }
-    tfoot td { font-weight:700; background:#eee; }
-    .cell-plan { font-size:9px; color:#888; }
-    .cell-fact { font-size:12px; font-weight:700; }
-    .fact-done { color:#1a7e2e; }
-    .fact-partial { color:#b36800; }
-    .fact-zero { color:#ccc; }
-    .signatures { display:flex; gap:32px; margin-top:16px; padding-top:12px; border-top:1px solid #ccc; }
-    .sig-line { border-bottom:1px solid #000; height:20px; margin-bottom:3px; }
-    .sig-label { font-size:9px; color:#666; }
-    @media print { @page { margin:10mm; size:A4; } }
+    .sig-label { font-size: 9px; color: #666; }
+    @media print {
+      body { padding: 5mm; }
+      @page { margin: 8mm; size: A4 landscape; }
+    }
   `;
 
-  const sections = fullDocs.map((doc, docIdx) => {
-    const spec = doc.specification || [];
-    const facts = doc.cutting_facts || [];
-    const colors = [
-      ...new Set(spec.map((s) => String(s.color ?? '').trim()).filter(Boolean)),
-    ].sort((a, b) => a.localeCompare(b, 'ru'));
-    const sizes = [
-      ...new Set(spec.map((s) => String(s.size ?? '').trim()).filter(Boolean)),
-    ].sort((a, b) => a.localeCompare(b, 'ru'));
+  const weekBlocks = groupCuttingPrintDocsByWeek(fullDocs)
+    .map(([weekStart, weekDocs]) => {
+      const weekLabel =
+        weekStart === 'unknown'
+          ? '—'
+          : escapeHtmlPrint(formatWeekForPrint(weekStart));
+      const weekPlanSum = weekDocs.reduce((s, d) => {
+        const spec = d.specification || [];
+        return s + spec.reduce((ss, r) => ss + (parseInt(r.quantity, 10) || 0), 0);
+      }, 0);
 
-    const getPlan = (c, sz) => {
-      const row = spec.find(
-        (s) =>
-          String(s.color ?? '').trim() === String(c ?? '').trim() &&
-          String(s.size ?? '').trim() === String(sz ?? '').trim()
-      );
-      return row ? Math.max(0, parseInt(row.quantity, 10) || 0) : 0;
-    };
-    const getFact = (c, sz) => {
-      const f = findCuttingFactForSpec(facts, c, sz);
-      return parseInt(f?.quantity, 10) || 0;
-    };
+      const tbody = weekDocs
+        .map((doc, idx) => {
+          const spec = doc.specification || [];
+          const facts = doc.cutting_facts || [];
+          const planTotal =
+            spec.reduce((s, r) => s + (parseInt(r.quantity, 10) || 0), 0) || 0;
+          const factTotal =
+            facts.reduce((s, f) => s + (parseInt(f.quantity, 10) || 0), 0) || 0;
 
-    const planTotal = spec.reduce((sum, r) => sum + (parseInt(r.quantity, 10) || 0), 0) || 0;
-    const factTotal = facts.reduce((sum, f) => sum + (parseInt(f.quantity, 10) || 0), 0) || 0;
+          const O = doc.Order || {};
+          const photoRaw = firstPhotoSrcCutting(O);
+          const photoB64 =
+            O.photoBase64 != null && typeof O.photoBase64 === 'string' && O.photoBase64.startsWith('data:')
+              ? O.photoBase64
+              : null;
+          const photoUrlOnly = photoB64 ? '' : (photoRaw ? absPhotoUrlForPrint(photoRaw) : '');
+          const rowImgSrc = photoB64 || photoUrlOnly;
+          const rowArt3 = escapeHtmlPrint(
+            String(O.article || O.tz_code || '').trim().slice(0, 3) || '?'
+          );
+          const displayName = escapeHtmlPrint(cuttingPrintDisplayName(O));
+          const clientName = escapeHtmlPrint(O.Client?.name || O.client_name || '—');
+          const weekIso = chainDateIsoCut(doc.week_start);
+          const planDateStr = weekIso
+            ? new Date(`${weekIso}T12:00:00`).toLocaleDateString('ru-RU')
+            : '—';
+          const factIso = chainDateIsoCut(doc.actual_week_start || doc.actual_date);
+          const factDateStr = factIso
+            ? new Date(`${factIso}T12:00:00`).toLocaleDateString('ru-RU')
+            : '';
+          const floorRaw =
+            doc.floor_name != null && String(doc.floor_name).trim() !== ''
+              ? String(doc.floor_name).trim()
+              : resolvePrintFloorName(doc, doc._print_building_floors || []);
+          const floorCell = escapeHtmlPrint(floorRaw);
+          const rowBg = idx % 2 === 0 ? '#fff' : '#f9f9f9';
+          const mini = spec.length > 0 ? buildMiniMatrixHtml(doc) : '';
 
-    const O = doc.Order || {};
-    const photoUrl = absPhotoUrlForPrint(firstPhotoSrcCutting(O));
-    const productName = escapeHtmlPrint(orderTzModelLineCutting(O));
-    const client = escapeHtmlPrint(O.Client?.name || O.client_name || '—');
-    const weekIso = chainDateIsoCut(doc.week_start);
-    const planDate =
-      weekIso && new Date(`${weekIso}T12:00:00`).toLocaleDateString('ru-RU');
-    const factIso = chainDateIsoCut(doc.actual_week_start || doc.actual_date);
-    const factDate =
-      factIso && new Date(`${factIso}T12:00:00`).toLocaleDateString('ru-RU');
-    const st = doc.status || 'pending';
-    const statusText = escapeHtmlPrint(
-      st === 'done' ? 'Раскроено' : st === 'in_progress' ? 'В процессе' : 'Не начато'
-    );
-    const workshop = escapeHtmlPrint(
-      doc.print_workshop_name || doc.workshop_name || doc.section_id || doc.workshop || '—'
-    );
+          const photoTd = rowImgSrc
+            ? photoB64
+              ? `<img src="${escapeHtmlPrint(photoB64)}" alt="" style="width:36px;height:36px;object-fit:cover;border-radius:3px;border:1px solid #ddd">`
+              : `<img src="${escapeHtmlPrint(rowImgSrc)}" crossorigin="anonymous" alt="" style="width:36px;height:36px;object-fit:cover;border-radius:3px;border:1px solid #ddd" onerror="this.style.display='none';if(this.nextElementSibling)this.nextElementSibling.style.display='flex'"><div style="display:none;width:36px;height:36px;background:#e8eaf6;border-radius:3px;align-items:center;justify-content:center;font-size:8px;color:#3949ab;border:1px solid #c5cae9;font-weight:700">${rowArt3}</div>`
+            : `<div style="width:36px;height:36px;background:#e8eaf6;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;color:#3949ab;border:1px solid #c5cae9;font-weight:700">${rowArt3}</div>`;
 
-    const photoHtml = photoUrl
-      ? `<img class="product-photo" src="${escapeHtmlPrint(photoUrl)}" alt="" onerror="this.style.display='none'">`
-      : `<div style="width:70px;height:70px;background:#eee;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:10px;color:#999">Фото</div>`;
+          const mainRow = `
+        <tr style="border-bottom:0.5px solid #ddd;background:${rowBg}">
+          <td style="padding:6px;text-align:center;color:#666;font-size:10px">${idx + 1}</td>
+          <td style="padding:4px 6px">${photoTd}</td>
+          <td style="padding:6px 8px">
+            <div style="font-weight:600;font-size:11px">${displayName}</div>
+            <div style="font-size:9px;color:#999">#${escapeHtmlPrint(String(doc.order_id ?? ''))}</div>
+          </td>
+          <td style="padding:6px 8px;text-align:right;font-weight:700;font-size:12px">${planTotal} шт</td>
+          <td style="padding:6px 8px;text-align:right">
+            ${
+              factTotal > 0
+                ? `<span style="font-weight:700;color:#1a7e2e">${factTotal} шт</span>`
+                : `<span style="border-bottom:1px solid #000;display:inline-block;width:50px;height:12px"></span>`
+            }
+          </td>
+          <td style="padding:6px 8px;font-size:11px;color:#1a237e;font-weight:600">${clientName}</td>
+          <td style="padding:6px 8px;font-size:11px">${escapeHtmlPrint(planDateStr)}</td>
+          <td style="padding:6px 8px">
+            ${
+              factDateStr
+                ? `<span style="font-size:11px">${escapeHtmlPrint(factDateStr)}</span>`
+                : `<span style="border-bottom:1px solid #000;display:inline-block;width:60px;height:12px"></span>`
+            }
+          </td>
+          <td style="padding:6px 8px;font-size:11px">${floorCell}</td>
+        </tr>`;
 
-    let matrixHtml;
-    if (!colors.length || !sizes.length) {
-      matrixHtml = `<p style="margin:8px 0;font-size:11px;color:#666">Нет матрицы цвет × размер.</p>`;
-    } else {
-      const sizeThs = sizes.map((s) => `<th>${escapeHtmlPrint(s)}</th>`).join('');
-      const tbody = colors
-        .map((color) => {
-          const rowFact = sizes.reduce((s, sz) => s + getFact(color, sz), 0);
-          const rowPlan = sizes.reduce((s, sz) => s + getPlan(color, sz), 0);
-          const cells = sizes
-            .map((sz) => {
-              const p = getPlan(color, sz);
-              const f = getFact(color, sz);
-              if (!p) return '<td style="color:#ddd">—</td>';
-              const cls = f >= p ? 'fact-done' : f > 0 ? 'fact-partial' : 'fact-zero';
-              return `<td><div class="cell-plan">${p}</div><div class="cell-fact ${cls}">${f}</div></td>`;
-            })
-            .join('');
-          const rowCls = rowFact >= rowPlan ? 'fact-done' : rowFact > 0 ? 'fact-partial' : 'fact-zero';
-          return `<tr><td>${escapeHtmlPrint(color)}</td>${cells}<td><div class="cell-plan">${rowPlan}</div><div class="cell-fact ${rowCls}">${rowFact}</div></td></tr>`;
+          const matrixRow = mini
+            ? `<tr style="background:${rowBg}">
+          <td colspan="2"></td>
+          <td colspan="7" style="padding:4px 8px 8px">${mini}</td>
+        </tr>`
+            : '';
+
+          return mainRow + matrixRow;
         })
         .join('');
-      const tfootCells = sizes
-        .map((sz) => {
-          const cp = colors.reduce((s, c) => s + getPlan(c, sz), 0);
-          const cf = colors.reduce((s, c) => s + getFact(c, sz), 0);
-          const colCls = cf >= cp ? 'fact-done' : cf > 0 ? 'fact-partial' : 'fact-zero';
-          return `<td><div class="cell-plan">${cp}</div><div class="cell-fact ${colCls}">${cf}</div></td>`;
-        })
-        .join('');
-      const grandCls = factTotal >= planTotal ? 'fact-done' : factTotal > 0 ? 'fact-partial' : 'fact-zero';
-      matrixHtml = `
-        <table>
-          <thead><tr><th>Цвет</th>${sizeThs}<th>Итого</th></tr></thead>
-          <tbody>${tbody}</tbody>
-          <tfoot><tr><td>Итого</td>${tfootCells}<td><div class="cell-plan">${planTotal}</div><div class="cell-fact ${grandCls}">${factTotal}</div></td></tr></tfoot>
-        </table>`;
-    }
 
-    const breakAttr = docIdx < fullDocs.length - 1 ? ' class="page-break doc-wrap"' : ' class="doc-wrap"';
-    return `
-<div${breakAttr}>
-  <div class="doc-header">
+      return `
+  <div style="
+    background:#1a237e;
+    color:#fff;
+    padding:8px 16px;
+    margin:12px 0 6px 0;
+    font-size:13px;
+    font-weight:700;
+    letter-spacing:0.5px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+  ">
+    <span>Неделя раскроя: ${weekLabel}</span>
+    <span style="font-weight:400;font-size:11px;opacity:0.8">
+      ${weekDocs.length} заказов · ${weekPlanSum} шт план
+    </span>
+  </div>
+  <table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:4px">
+    <thead>
+      <tr style="background:#e8eaf6;border-bottom:2px solid #1a237e">
+        <th style="width:30px;padding:5px 6px;text-align:center;color:#333">№</th>
+        <th style="width:50px;padding:5px 6px;color:#333">Фото</th>
+        <th style="padding:5px 8px;text-align:left;color:#333">TZ — MODEL</th>
+        <th style="width:80px;padding:5px 8px;text-align:right;color:#333">План кол-во</th>
+        <th style="width:80px;padding:5px 8px;text-align:right;color:#333">Факт кол-во</th>
+        <th style="width:90px;padding:5px 8px;color:#333">Клиент</th>
+        <th style="width:80px;padding:5px 8px;color:#333">Дата план</th>
+        <th style="width:80px;padding:5px 8px;color:#333">Дата факт</th>
+        <th style="width:90px;padding:5px 8px;color:#333">Этаж</th>
+      </tr>
+    </thead>
+    <tbody>${tbody}</tbody>
+  </table>`;
+    })
+    .join('');
+
+  const printDate = escapeHtmlPrint(new Date().toLocaleDateString('ru-RU'));
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Раскрой</title>
+  <style>${style}</style>
+</head>
+<body>
+  <div class="page-header">
     <div>
-      <div class="doc-title">ДОКУМЕНТ РАСКРОЯ #${escapeHtmlPrint(String(doc.id ?? ''))}</div>
-      <div class="doc-date">Печать: ${escapeHtmlPrint(new Date().toLocaleDateString('ru-RU'))}</div>
+      <div class="page-title">ПЛАН РАСКРОЯ</div>
+      <div class="page-meta">${printDate} · Заказов: ${fullDocs.length}</div>
     </div>
     <div style="font-size:16px;font-weight:700;color:#1a237e">ERDEN</div>
   </div>
-  <div class="product-block">
-    ${photoHtml}
-    <div>
-      <div class="product-name">${productName}</div>
-      <div class="product-meta">Заказ #${escapeHtmlPrint(String(doc.order_id ?? ''))}</div>
+  ${weekBlocks}
+  <div class="signatures">
+    <div style="flex:1">
+      <div class="sig-line"></div>
+      <div class="sig-label">Раскройщик</div>
+    </div>
+    <div style="flex:1">
+      <div class="sig-line"></div>
+      <div class="sig-label">Технолог</div>
+    </div>
+    <div style="flex:1">
+      <div class="sig-line"></div>
+      <div class="sig-label">Проверил</div>
+    </div>
+    <div style="flex:1">
+      <div class="sig-line"></div>
+      <div class="sig-label">Дата</div>
     </div>
   </div>
-  <div class="info-row">
-    <div class="info-item"><span class="info-label">Клиент</span><span class="info-value">${client}</span></div>
-    <div class="info-item"><span class="info-label">Неделя план</span><span class="info-value">${escapeHtmlPrint(formatWeekForPrint(doc.week_start))}</span></div>
-    <div class="info-item"><span class="info-label">Дата план</span><span class="info-value">${escapeHtmlPrint(planDate || '—')}</span></div>
-    <div class="info-item"><span class="info-label">Дата факт</span><span class="info-value">${escapeHtmlPrint(factDate || '—')}</span></div>
-    <div class="info-item"><span class="info-label">Статус</span><span class="info-value">${statusText}</span></div>
-    <div class="info-item"><span class="info-label">Цех</span><span class="info-value">${workshop}</span></div>
-  </div>
-  <div class="totals">
-    <div><div class="total-label">ПЛАН</div><div class="total-value">${planTotal} шт</div></div>
-    <div><div class="total-label">ФАКТ</div><div class="total-value" style="color:${factTotal >= planTotal ? '#1a7e2e' : factTotal > 0 ? '#b36800' : '#000'}">${factTotal} шт</div></div>
-    <div><div class="total-label">ОСТАТОК</div><div class="total-value" style="color:${planTotal - factTotal < 0 ? '#c00' : planTotal - factTotal === 0 ? '#1a7e2e' : '#000'}">${planTotal - factTotal} шт</div></div>
-  </div>
-  <div class="matrix-label">Детализация (план / факт)</div>
-  ${matrixHtml}
-  <div class="signatures">
-    <div style="flex:1"><div class="sig-line"></div><div class="sig-label">Раскройщик</div></div>
-    <div style="flex:1"><div class="sig-line"></div><div class="sig-label">Технолог</div></div>
-    <div style="flex:1"><div class="sig-line"></div><div class="sig-label">Дата</div></div>
-  </div>
-</div>`;
-  });
-
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Раскрой — все документы</title><style>${style}</style></head><body>${sections.join('')}</body></html>`;
+</body>
+</html>`;
 }
 
 function planQtyCuttingOrder(o) {
@@ -672,16 +881,6 @@ const CHAIN_FILTER_INPUT = {
   borderRadius: 6,
   fontSize: 13,
 };
-
-function initialChainDateFrom() {
-  const d = new Date();
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
-}
-
-function initialChainDateTo() {
-  const d = new Date();
-  return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
-}
 
 function escapeRegExpChain(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -716,12 +915,6 @@ function statusColorCutting(status) {
       done: '#c8ff00',
     }[status] || '#666'
   );
-}
-
-function formatDateChain(iso) {
-  if (!iso) return '—';
-  const d = iso.slice(0, 10).split('-');
-  return d[2] && d[1] ? `${d[2]}.${d[1]}.${d[0]}` : iso;
 }
 
 /** Просрочка: фактическая неделя (понедельник) позже конца плановой недели */
@@ -910,17 +1103,28 @@ export function CompleteByFactModal({ task, onClose, onSave, isEditMode }) {
 }
 
 export default function Cutting() {
+  const navigate = useNavigate();
   const { user } = useAuth();
+  const { refresh: refreshOrderProgress } = useOrderProgress();
   const canEditChainDocs = ['admin', 'manager', 'technologist'].includes(user?.role);
   const [workshops, setWorkshops] = useState([]);
+  const [chainBuildingFloors, setChainBuildingFloors] = useState([]);
   const [chainDocs, setChainDocs] = useState([]);
   const [chainLoading, setChainLoading] = useState(false);
   const [chainBanner, setChainBanner] = useState(null);
   const [factModal, setFactModal] = useState(null);
-  const [chainDateFrom, setChainDateFrom] = useState(initialChainDateFrom);
-  const [chainDateTo, setChainDateTo] = useState(initialChainDateTo);
+  const factModalSyncRef = useRef(null);
+  const cuttingFactPersistChainRef = useRef(Promise.resolve());
+
+  useEffect(() => {
+    factModalSyncRef.current = factModal;
+  }, [factModal]);
+  /** Пустые даты = «все периоды», иначе документы вне текущего месяца не попадают в таблицу */
+  const [chainDateFrom, setChainDateFrom] = useState('');
+  const [chainDateTo, setChainDateTo] = useState('');
   const [chainFilterStatus, setChainFilterStatus] = useState('all');
   const [chainFilterSection, setChainFilterSection] = useState('all');
+  const [isPrinting, setIsPrinting] = useState(false);
 
   const setChainQuickRange = (range) => {
     const today = new Date();
@@ -950,15 +1154,46 @@ export default function Cutting() {
 
   const loadChainDocs = useCallback(() => {
     setChainLoading(true);
+    if (import.meta.env.DEV) console.log('[Раскрой] загрузка документов…');
     api.cutting
       .documentsList()
-      .then((data) => setChainDocs(Array.isArray(data) ? data : []))
-      .catch(() => setChainDocs([]))
+      .then((data) => {
+        const list = Array.isArray(data) ? data : [];
+        if (import.meta.env.DEV) {
+          console.log('[Раскрой] документов:', list.length);
+          if (list[0]) console.log('[Раскрой] первый:', list[0]);
+        }
+        setChainDocs(list);
+      })
+      .catch((err) => {
+        if (import.meta.env.DEV) {
+          console.error('[Раскрой] ошибка:', err?.status, err?.message, err);
+        }
+        setChainDocs([]);
+        setChainBanner({
+          type: 'err',
+          text: err?.message || 'Не удалось загрузить документы раскроя',
+        });
+        window.setTimeout(() => setChainBanner(null), 5000);
+      })
       .finally(() => setChainLoading(false));
   }, []);
 
   useEffect(() => {
     api.workshops.list().then(setWorkshops).catch(() => setWorkshops(CHAIN_WORKSHOPS_FALLBACK));
+  }, []);
+
+  useEffect(() => {
+    api.references
+      .buildingFloors(4)
+      .then((data) => setChainBuildingFloors(Array.isArray(data) ? data : []))
+      .catch(() =>
+        setChainBuildingFloors([
+          { id: 2, name: '2 этаж' },
+          { id: 3, name: '3 этаж' },
+          { id: 4, name: '4 этаж' },
+        ])
+      );
   }, []);
 
   useEffect(() => {
@@ -1024,8 +1259,8 @@ export default function Cutting() {
     patchCuttingChainDoc(docId, { actual_week_start: getMonday(dateStr) });
   };
 
-  const updateCuttingStatus = (docId, value) => {
-    patchCuttingChainDoc(docId, { status: value });
+  const handleCuttingStatusChange = (doc, value) => {
+    patchCuttingChainDoc(doc.id, { status: value });
   };
 
   const changeCuttingPlanWeek = (docId, dateStr) => {
@@ -1041,6 +1276,14 @@ export default function Cutting() {
   const updateCuttingSection = (docId, sectionId) => {
     patchCuttingChainDoc(docId, {
       section_id: sectionId === '' ? null : sectionId,
+    });
+  };
+
+  const updateCuttingFloor = (docId, floorId) => {
+    if (!canEditChainDocs) return;
+    const raw = floorId === '' || floorId == null ? null : parseInt(floorId, 10);
+    patchCuttingChainDoc(docId, {
+      floor_id: Number.isFinite(raw) ? raw : null,
     });
   };
 
@@ -1092,25 +1335,66 @@ export default function Cutting() {
   };
 
   const updateFactQty = (color, size, quantity) => {
+    const c = String(color ?? '').trim();
+    const s = String(size ?? '').trim();
     const q = Math.max(0, parseInt(quantity, 10) || 0);
-    setFactModal((prev) => {
-      if (!prev) return prev;
-      const facts = [...(prev.cutting_facts || [])];
-      const idx = facts.findIndex(
-        (f) => String(f.color ?? '').trim() === String(color ?? '').trim() && String(f.size ?? '').trim() === String(size ?? '').trim()
-      );
-      if (idx >= 0) {
-        facts[idx] = { ...facts[idx], quantity: q };
-      } else {
-        facts.push({
-          color: String(color ?? '').trim(),
-          size: String(size ?? '').trim(),
-          quantity: q,
-          isNew: true,
-        });
-      }
-      return { ...prev, cutting_facts: facts };
-    });
+
+    const prev = factModalSyncRef.current;
+    if (!prev || prev._orderSpecLoading) return;
+
+    const facts = [...(prev.cutting_facts || [])];
+    const idx = facts.findIndex(
+      (f) => String(f.color ?? '').trim() === c && String(f.size ?? '').trim() === s
+    );
+    if (idx >= 0) {
+      facts[idx] = { ...facts[idx], quantity: q };
+    } else {
+      facts.push({ color: c, size: s, quantity: q, isNew: true });
+    }
+    const nextModal = { ...prev, cutting_facts: facts };
+    factModalSyncRef.current = nextModal;
+    setFactModal(nextModal);
+
+    const docId = prev.id;
+    cuttingFactPersistChainRef.current = cuttingFactPersistChainRef.current
+      .then(async () => {
+        const cur = factModalSyncRef.current;
+        if (!cur || Number(cur.id) !== Number(docId) || cur._orderSpecLoading) return;
+        const r = (cur.cutting_facts || []).find(
+          (f) => String(f.color ?? '').trim() === c && String(f.size ?? '').trim() === s
+        );
+        const curQ = Math.max(0, parseInt(r?.quantity, 10) || 0);
+        if (curQ !== q) return;
+
+        try {
+          if (r?.id && !r.isNew) {
+            await api.cutting.factPatch(r.id, { quantity: curQ });
+            refreshOrderProgress();
+          } else if (curQ > 0) {
+            const created = await api.cutting.documentFactCreate(docId, {
+              color: c,
+              size: s,
+              quantity: curQ,
+            });
+            const withId = { ...created, isNew: false };
+            setFactModal((p) => {
+              if (!p || Number(p.id) !== Number(docId)) return p;
+              const nf = (p.cutting_facts || []).map((f) =>
+                !f?.id && String(f.color ?? '').trim() === c && String(f.size ?? '').trim() === s
+                  ? { ...withId }
+                  : f
+              );
+              const merged = { ...p, cutting_facts: nf };
+              factModalSyncRef.current = merged;
+              return merged;
+            });
+            refreshOrderProgress();
+          }
+        } catch (err) {
+          console.error('[Раскрой] ошибка сохранения:', err);
+        }
+      })
+      .catch(() => {});
   };
 
   const saveFacts = async () => {
@@ -1118,29 +1402,26 @@ export default function Cutting() {
     const docId = factModal.id;
     const rows = factModal.cutting_facts || [];
     try {
-      const tasks = [];
       for (const f of rows) {
         const q = Math.max(0, parseInt(f.quantity, 10) || 0);
-        if (f.isNew && q > 0) {
-          tasks.push(
-            api.cutting.documentFactCreate(docId, {
-              color: String(f.color ?? '').trim(),
-              size: String(f.size ?? '').trim(),
-              quantity: q,
-            })
-          );
+        if (f.isNew && q > 0 && f.id == null) {
+          await api.cutting.documentFactCreate(docId, {
+            color: String(f.color ?? '').trim(),
+            size: String(f.size ?? '').trim(),
+            quantity: q,
+          });
         } else if (f.id != null && !f.isNew) {
-          tasks.push(api.cutting.factPatch(f.id, { quantity: q }));
+          await api.cutting.factPatch(f.id, { quantity: q });
         }
       }
-      await Promise.all(tasks);
       const refreshed = await api.cutting.documentFactsList(docId);
       setChainDocs((prev) =>
         prev.map((d) => (Number(d.id) === Number(docId) ? { ...d, cutting_facts: refreshed } : d))
       );
-      setChainBanner({ type: 'ok', text: 'Данные раскроя сохранены' });
+      setChainBanner({ type: 'ok', text: 'Факт раскроя сохранён → передан в пошив' });
       window.setTimeout(() => setChainBanner(null), 3500);
       setFactModal(null);
+      refreshOrderProgress();
     } catch (e) {
       setChainBanner({ type: 'err', text: e?.message || 'Ошибка сохранения' });
       window.setTimeout(() => setChainBanner(null), 4000);
@@ -1172,12 +1453,28 @@ export default function Cutting() {
           doc.workshop ||
           String(sectionKey || '') ||
           '—';
+        const printFloorName = resolvePrintFloorName(doc, chainBuildingFloors);
+        const mergedOrder = {
+          ...(doc.Order || {}),
+          ...orderRes,
+          Client: orderRes.Client || doc.Order?.Client,
+        };
+        const photoRawForPrint = firstPhotoSrcCutting(mergedOrder);
+        const photoBase64 =
+          photoRawForPrint != null && photoRawForPrint !== ''
+            ? await cuttingPhotoUrlToDataUrl(photoRawForPrint)
+            : null;
         const ok = printCuttingDoc({
           ...doc,
-          Order: { ...(doc.Order || {}), ...orderRes, Client: orderRes.Client || doc.Order?.Client },
+          Order: {
+            ...mergedOrder,
+            ...(photoBase64 ? { photoBase64 } : {}),
+          },
           specification,
           cutting_facts: Array.isArray(factsRes) ? factsRes : [],
           print_workshop_name: workshopLabel,
+          print_floor_name: printFloorName,
+          _print_building_floors: chainBuildingFloors,
         });
         if (!ok) {
           setChainBanner({ type: 'err', text: 'Браузер заблокировал окно печати' });
@@ -1188,7 +1485,7 @@ export default function Cutting() {
         window.setTimeout(() => setChainBanner(null), 4000);
       }
     },
-    [workshops]
+    [workshops, chainBuildingFloors]
   );
 
   const printAllCuttingDocs = useCallback(async () => {
@@ -1205,32 +1502,42 @@ export default function Cutting() {
             const orderId = doc.order_id ?? doc.Order?.id;
             if (!orderId) return null;
             const [orderRes, factsRes] = await Promise.all([
-              api.orders.get(orderId),
-              api.cutting.documentFactsList(doc.id),
+              api.orders.get(orderId).catch(() => null),
+              api.cutting.documentFactsList(doc.id).catch(() => []),
             ]);
-            const specification = (orderRes.variants || []).map((v) => ({
-              color: v.color != null ? String(v.color).trim() : '',
-              size: v.size != null ? String(v.size).trim() : '',
-              quantity: Math.max(0, parseInt(v.quantity, 10) || 0),
-            }));
-            const sectionKey = effectiveChainSectionKey(doc);
-            const workshopLabel =
-              workshops.find((w) => String(w.id) === String(sectionKey))?.name ||
-              LEGACY_SECTION_LABELS[sectionKey] ||
-              doc.workshop ||
-              String(sectionKey || '') ||
-              '—';
+            const specification = orderRes?.variants
+              ? (orderRes.variants || []).map((v) => ({
+                  color: v.color != null ? String(v.color).trim() : '',
+                  size: v.size != null ? String(v.size).trim() : '',
+                  quantity: Math.max(0, parseInt(v.quantity, 10) || 0),
+                }))
+              : [];
+            const cutting_facts = Array.isArray(factsRes) ? factsRes : [];
+            const floorHit = chainBuildingFloors.find(
+              (f) => String(f.id) === String(doc.floor_id)
+            );
+            const floor_name =
+              floorHit?.name || resolvePrintFloorName(doc, chainBuildingFloors);
+            const mergedOrder = orderRes
+              ? { ...(doc.Order || {}), ...orderRes, Client: orderRes.Client || doc.Order?.Client }
+              : doc.Order || {};
+            const photoRawForPrint = firstPhotoSrcCutting(mergedOrder);
+            const photoBase64 =
+              photoRawForPrint != null && photoRawForPrint !== ''
+                ? await cuttingPhotoUrlToDataUrl(photoRawForPrint)
+                : null;
             return {
               ...doc,
-              Order: { ...(doc.Order || {}), ...orderRes, Client: orderRes.Client || doc.Order?.Client },
+              Order: { ...mergedOrder, ...(photoBase64 ? { photoBase64 } : {}) },
               specification,
-              cutting_facts: Array.isArray(factsRes) ? factsRes : [],
-              print_workshop_name: workshopLabel,
+              cutting_facts,
+              floor_name,
+              _print_building_floors: chainBuildingFloors,
             };
           })
         )
       ).filter(Boolean);
-      const html = buildPrintAllCuttingHtml(fullDocs);
+      const html = buildPrintAllCuttingSimpleTableHtml(fullDocs);
       const win = window.open('', '_blank');
       if (!win) {
         setChainBanner({ type: 'err', text: 'Браузер заблокировал окно печати' });
@@ -1240,12 +1547,12 @@ export default function Cutting() {
       win.document.write(html);
       win.document.close();
       win.focus();
-      window.setTimeout(() => win.print(), 800);
+      window.setTimeout(() => win.print(), 600);
     } catch (e) {
       setChainBanner({ type: 'err', text: e?.message || 'Не удалось подготовить печать списка' });
       window.setTimeout(() => setChainBanner(null), 4000);
     }
-  }, [filteredChainDocs, workshops]);
+  }, [filteredChainDocs, chainBuildingFloors]);
 
   return (
     <div>
@@ -1253,11 +1560,19 @@ export default function Cutting() {
         <h1 className="text-xl md:text-2xl lg:text-3xl font-bold text-[#ECECEC] dark:text-dark-text">Раскрой</h1>
         <button
           type="button"
-          onClick={() => printAllCuttingDocs()}
-          className="no-print inline-flex items-center gap-1.5 sm:absolute sm:top-0 sm:right-0 px-[18px] py-2 rounded-md text-[13px] font-semibold text-white border-0 cursor-pointer shrink-0"
+          onClick={async () => {
+            setIsPrinting(true);
+            try {
+              await printAllCuttingDocs();
+            } finally {
+              setIsPrinting(false);
+            }
+          }}
+          disabled={isPrinting}
+          className="no-print inline-flex items-center gap-1.5 sm:absolute sm:top-0 sm:right-0 px-[18px] py-2 rounded-md text-[13px] font-semibold text-white border-0 cursor-pointer shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
           style={{ background: '#1a237e' }}
         >
-          🖨 Печать
+          {isPrinting ? '⏳ Подготовка...' : '🖨 Печать'}
         </button>
       </div>
 
@@ -1366,6 +1681,32 @@ export default function Cutting() {
                 >
                   Все периоды
                 </button>
+                {import.meta.env.DEV ? (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const data = await api.cutting.syncToSewing();
+                        const n = data?.synced ?? 0;
+                        window.alert(`Синхронизировано: ${n} строк`);
+                        loadChainDocs();
+                      } catch (e) {
+                        window.alert(e?.message || 'Ошибка синхронизации');
+                      }
+                    }}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: 6,
+                      fontSize: 12,
+                      border: '0.5px solid #888',
+                      background: 'transparent',
+                      color: '#888',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    [DEV] Синхронизировать с пошивом
+                  </button>
+                ) : null}
               </div>
               <select
                 value={chainFilterStatus}
@@ -1454,8 +1795,7 @@ export default function Cutting() {
                         const st = doc.status || 'pending';
                         const weekS = chainDateIsoCut(doc.week_start);
                         const origWeek = chainDateIsoCut(doc.original_week_start);
-                        const factW =
-                          chainDateIsoCut(doc.actual_week_start) || chainDateIsoCut(doc.week_start) || '';
+                        const factW = chainDateIsoCut(doc.actual_week_start) || '';
                         const sectionVal = effectiveCuttingSectionId(doc);
                         const overdue = isOverdueCuttingFactWeek(doc.week_start, doc.actual_week_start);
                         const doneRow = st === 'done';
@@ -1587,7 +1927,7 @@ export default function Cutting() {
                                 }}
                               />
                             </td>
-                            <td style={{ padding: '8px 12px', verticalAlign: 'top' }}>
+                            <td style={{ padding: '4px 8px', verticalAlign: 'top', minWidth: 130 }}>
                               <input
                                 type="date"
                                 value={factW}
@@ -1595,25 +1935,50 @@ export default function Cutting() {
                                 onChange={(e) => saveCuttingFactWeek(doc.id, e.target.value)}
                                 style={{
                                   background: 'transparent',
-                                  border: '0.5px solid #333',
-                                  color: '#fff',
+                                  border: factW ? '0.5px solid #c8ff00' : '0.5px solid #333',
+                                  color: factW ? '#c8ff00' : '#555',
                                   padding: '4px 8px',
                                   borderRadius: 4,
                                   fontSize: 12,
                                   cursor: canEditChainDocs ? 'pointer' : 'not-allowed',
+                                  width: 130,
                                 }}
                               />
-                              {factW ? (
-                                <div style={{ fontSize: 11, color: '#c8ff00', marginTop: 2 }}>
-                                  ✓ {formatDateChain(factW)}
-                                </div>
-                              ) : null}
+                            </td>
+                            <td style={{ padding: '4px 8px', verticalAlign: 'top' }}>
+                              <select
+                                value={doc.floor_id != null && doc.floor_id !== '' ? String(doc.floor_id) : ''}
+                                disabled={!canEditChainDocs}
+                                onChange={(e) => updateCuttingFloor(doc.id, e.target.value)}
+                                style={{
+                                  background: '#1a1a1a',
+                                  border: doc.floor_id ? '0.5px solid #c8ff00' : '0.5px solid #333',
+                                  color: doc.floor_id ? '#fff' : '#555',
+                                  padding: '4px 8px',
+                                  borderRadius: 4,
+                                  fontSize: 12,
+                                  minWidth: 110,
+                                  cursor: canEditChainDocs ? 'pointer' : 'not-allowed',
+                                }}
+                              >
+                                <option value="">— Этаж —</option>
+                                {chainBuildingFloors.map((f) => (
+                                  <option key={f.id} value={String(f.id)}>
+                                    {f.name}
+                                  </option>
+                                ))}
+                                {doc.floor_id != null &&
+                                doc.floor_id !== '' &&
+                                !chainBuildingFloors.some((f) => String(f.id) === String(doc.floor_id)) ? (
+                                  <option value={String(doc.floor_id)}>Этаж #{doc.floor_id}</option>
+                                ) : null}
+                              </select>
                             </td>
                             <td style={{ padding: '8px 12px', verticalAlign: 'top' }}>
                               <select
                                 value={st}
                                 disabled={!canEditChainDocs}
-                                onChange={(e) => updateCuttingStatus(doc.id, e.target.value)}
+                                onChange={(e) => handleCuttingStatusChange(doc, e.target.value)}
                                 style={{
                                   background: '#1a1a1a',
                                   border: '0.5px solid #333',
@@ -1627,6 +1992,25 @@ export default function Cutting() {
                                 <option value="in_progress">В процессе</option>
                                 <option value="done">Раскроено</option>
                               </select>
+                              {doc.sewing_doc?.id ? (
+                                <div
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={() => navigate('/sewing')}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') navigate('/sewing');
+                                  }}
+                                  style={{
+                                    fontSize: 10,
+                                    color: '#4a9eff',
+                                    cursor: 'pointer',
+                                    marginTop: 4,
+                                    textDecoration: 'underline',
+                                  }}
+                                >
+                                  → Пошив #{doc.sewing_doc.id}
+                                </div>
+                              ) : null}
                             </td>
                             <td style={{ padding: '8px 12px', verticalAlign: 'top' }}>
                               <select
@@ -1781,6 +2165,23 @@ export default function Cutting() {
                 </button>
               </div>
 
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  marginBottom: 12,
+                  padding: '8px 12px',
+                  background: 'rgba(200,255,0,0.08)',
+                  border: '0.5px solid rgba(200,255,0,0.3)',
+                  borderRadius: 6,
+                  fontSize: 12,
+                  color: '#c8ff00',
+                }}
+              >
+                ⚡ Данные автоматически передаются в Пошив
+              </div>
+
               {factModal._orderSpecLoading ? (
                 <div style={{ padding: '24px 0', textAlign: 'center', fontSize: 13, color: '#888' }}>
                   Загрузка спецификации заказа…
@@ -1816,11 +2217,20 @@ export default function Cutting() {
                   const getRowTotal = (color) =>
                     sizes.reduce((sum, size) => sum + getFactQty(color, size), 0);
 
+                  const getRowPlan = (color) =>
+                    sizes.reduce((sum, size) => sum + getPlanQty(color, size), 0);
+
                   const getColTotal = (size) =>
                     colors.reduce((sum, color) => sum + getFactQty(color, size), 0);
 
+                  const getColPlan = (size) =>
+                    colors.reduce((sum, color) => sum + getPlanQty(color, size), 0);
+
                   const getGrandTotal = () =>
                     colors.reduce((sum, color) => sum + getRowTotal(color), 0);
+
+                  const getGrandPlan = () =>
+                    colors.reduce((sum, color) => sum + getRowPlan(color), 0);
 
                   return (
                     <div style={{ overflowX: 'auto' }}>
@@ -1880,7 +2290,6 @@ export default function Cutting() {
                                   const factQty = getFactQty(color, size);
                                   const over = planQty > 0 && factQty > planQty;
                                   const complete = planQty > 0 && factQty === planQty;
-                                  const partial = planQty > 0 && factQty > 0 && factQty < planQty;
 
                                   return (
                                     <td key={size} style={{ padding: '6px 8px', textAlign: 'center' }}>
@@ -1889,34 +2298,34 @@ export default function Cutting() {
                                           <input
                                             type="number"
                                             min={0}
-                                            max={planQty}
                                             value={numInputValue(factQty)}
                                             onChange={(e) => {
                                               const raw = e.target.value;
                                               const n =
                                                 raw === '' ? 0 : Math.max(0, parseInt(raw, 10) || 0);
-                                              updateFactQty(color, size, Math.min(planQty, n));
+                                              updateFactQty(color, size, n);
                                             }}
                                             style={{
                                               width: 72,
                                               textAlign: 'center',
-                                              background: over
-                                                ? 'rgba(255,68,68,0.12)'
-                                                : complete
-                                                  ? 'rgba(200,255,0,0.1)'
-                                                  : partial
-                                                    ? 'rgba(245,158,11,0.1)'
-                                                    : '#1a1a1a',
+                                              background:
+                                                factQty > planQty
+                                                  ? 'rgba(255,68,68,0.15)'
+                                                  : factQty === planQty && planQty > 0
+                                                    ? 'rgba(200,255,0,0.1)'
+                                                    : factQty > 0
+                                                      ? 'rgba(245,158,11,0.1)'
+                                                      : '#1a1a1a',
                                               border: `0.5px solid ${
-                                                over
-                                                  ? '#ff6b6b'
-                                                  : complete
+                                                factQty > planQty
+                                                  ? '#ff4444'
+                                                  : factQty === planQty && planQty > 0
                                                     ? '#c8ff00'
-                                                    : partial
+                                                    : factQty > 0
                                                       ? '#F59E0B'
                                                       : '#333'
                                               }`,
-                                              color: complete ? '#c8ff00' : '#fff',
+                                              color: factQty > planQty ? '#ff6b6b' : '#fff',
                                               padding: '6px 8px',
                                               borderRadius: 6,
                                               fontSize: 13,
@@ -1929,7 +2338,11 @@ export default function Cutting() {
                                               display: 'inline-block',
                                               minWidth: 72,
                                               textAlign: 'center',
-                                              color: complete ? '#c8ff00' : '#fff',
+                                              color: over
+                                                ? '#ff6b6b'
+                                                : complete
+                                                  ? '#c8ff00'
+                                                  : '#fff',
                                               fontWeight: 600,
                                             }}
                                           >
@@ -1948,11 +2361,42 @@ export default function Cutting() {
                                     textAlign: 'right',
                                     fontSize: 14,
                                     fontWeight: 700,
-                                    color: '#fff',
                                     borderLeft: '0.5px solid #333',
                                   }}
                                 >
-                                  {getRowTotal(color)}
+                                  {(() => {
+                                    const rowFact = getRowTotal(color);
+                                    const rowPlan = getRowPlan(color);
+                                    return (
+                                      <>
+                                        <div
+                                          style={{
+                                            color:
+                                              rowFact > rowPlan
+                                                ? '#ff6b6b'
+                                                : rowFact === rowPlan
+                                                  ? '#c8ff00'
+                                                  : '#fff',
+                                          }}
+                                        >
+                                          {rowFact}
+                                        </div>
+                                        {rowFact !== rowPlan && rowPlan > 0 ? (
+                                          <div
+                                            style={{
+                                              fontSize: 10,
+                                              color: rowFact > rowPlan ? '#ff6b6b' : '#888',
+                                              marginTop: 2,
+                                            }}
+                                          >
+                                            {rowFact > rowPlan
+                                              ? `+${rowFact - rowPlan} сверх`
+                                              : `−${rowPlan - rowFact} остаток`}
+                                          </div>
+                                        ) : null}
+                                      </>
+                                    );
+                                  })()}
                                 </td>
                               </tr>
                             ))}
@@ -1967,33 +2411,73 @@ export default function Cutting() {
                                   color: '#888',
                                 }}
                               >
-                                Итого
+                                Итого:
                               </td>
-                              {sizes.map((size) => (
-                                <td
-                                  key={size}
-                                  style={{
-                                    padding: '10px 8px',
-                                    textAlign: 'center',
-                                    fontSize: 14,
-                                    fontWeight: 700,
-                                    color: '#aaa',
-                                  }}
-                                >
-                                  {getColTotal(size)}
-                                </td>
-                              ))}
+                              {sizes.map((size) => {
+                                const colFact = getColTotal(size);
+                                const colPlan = getColPlan(size);
+                                return (
+                                  <td
+                                    key={size}
+                                    style={{
+                                      padding: '10px 8px',
+                                      textAlign: 'center',
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        fontSize: 14,
+                                        fontWeight: 700,
+                                        color:
+                                          colFact > colPlan
+                                            ? '#ff6b6b'
+                                            : colFact === colPlan
+                                              ? '#c8ff00'
+                                              : '#aaa',
+                                      }}
+                                    >
+                                      {colFact}
+                                    </div>
+                                    <div style={{ fontSize: 10, color: '#555' }}>план: {colPlan}</div>
+                                  </td>
+                                );
+                              })}
                               <td
                                 style={{
                                   padding: '10px 12px',
                                   textAlign: 'right',
-                                  fontSize: 15,
-                                  fontWeight: 700,
-                                  color: '#c8ff00',
                                   borderLeft: '0.5px solid #333',
                                 }}
                               >
-                                {getGrandTotal()}
+                                {(() => {
+                                  const gt = getGrandTotal();
+                                  const gp = getGrandPlan();
+                                  return (
+                                    <>
+                                      <div
+                                        style={{
+                                          fontSize: 15,
+                                          fontWeight: 700,
+                                          color:
+                                            gt > gp ? '#ff6b6b' : gt === gp ? '#c8ff00' : '#fff',
+                                        }}
+                                      >
+                                        {gt}
+                                      </div>
+                                      <div style={{ fontSize: 10, color: '#555' }}>план: {gp}</div>
+                                      {gt !== gp ? (
+                                        <div
+                                          style={{
+                                            fontSize: 10,
+                                            color: gt > gp ? '#ff6b6b' : '#888',
+                                          }}
+                                        >
+                                          {gt > gp ? `+${gt - gp}` : `−${gp - gt}`}
+                                        </div>
+                                      ) : null}
+                                    </>
+                                  );
+                                })()}
                               </td>
                             </tr>
                           </tfoot>
@@ -2034,45 +2518,92 @@ export default function Cutting() {
                   planTotal = planQtyCuttingNumber(factModal.Order);
                   factTotal = getTotalFact(factModal);
                 }
-                const percent =
-                  planTotal > 0 ? Math.min(100, Math.round((factTotal / planTotal) * 100)) : 0;
-                const barBg = matrixReady
-                  ? percent >= 100
-                    ? '#c8ff00'
-                    : '#F59E0B'
-                  : '#c8ff00';
+                const percentRaw =
+                  planTotal > 0 ? Math.round((factTotal / planTotal) * 100) : 0;
+                const barWidthPct = Math.min(100, Math.max(0, percentRaw));
+                const barBg = !matrixReady
+                  ? '#c8ff00'
+                  : percentRaw > 100
+                    ? '#ff4444'
+                    : percentRaw === 100
+                      ? '#c8ff00'
+                      : '#F59E0B';
                 const trackBg = matrixReady ? '#222' : '#333';
                 return (
                   <div style={{ marginTop: 16 }}>
                     <div
                       style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        fontSize: 12,
-                        color: '#666',
-                        marginBottom: matrixReady ? 6 : 4,
+                        position: 'relative',
+                        background: trackBg,
+                        borderRadius: 4,
+                        height: 6,
                       }}
                     >
-                      <span>{matrixReady ? `Выполнено ${percent}%` : 'Выполнено'}</span>
-                      <span
-                        style={{
-                          color:
-                            matrixReady && factTotal >= planTotal ? '#c8ff00' : matrixReady ? '#aaa' : undefined,
-                        }}
-                      >
-                        {factTotal} / {matrixReady ? planTotal : planQtyCuttingOrder(factModal.Order)} шт
-                      </span>
-                    </div>
-                    <div style={{ background: trackBg, borderRadius: 4, height: 6 }}>
                       <div
                         style={{
                           background: barBg,
                           borderRadius: 4,
                           height: 6,
-                          width: `${percent}%`,
+                          width: `${barWidthPct}%`,
                           transition: 'width 0.3s ease',
                         }}
                       />
+                      {matrixReady && percentRaw > 100 ? (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            top: -2,
+                            left: '100%',
+                            transform: 'translateX(-1px)',
+                            width: 2,
+                            height: 10,
+                            background: '#ff4444',
+                            borderRadius: 1,
+                          }}
+                        />
+                      ) : null}
+                    </div>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        fontSize: 12,
+                        marginTop: 4,
+                      }}
+                    >
+                      <span
+                        style={{
+                          color: !matrixReady
+                            ? '#888'
+                            : percentRaw > 100
+                              ? '#ff6b6b'
+                              : percentRaw === 100
+                                ? '#c8ff00'
+                                : '#888',
+                        }}
+                      >
+                        {matrixReady
+                          ? `Выполнено ${percentRaw}%${
+                              percentRaw > 100 ? ' (перевыполнение)' : ''
+                            }`
+                          : 'Выполнено'}
+                      </span>
+                      <span
+                        style={{
+                          color: !matrixReady
+                            ? undefined
+                            : percentRaw > 100
+                              ? '#ff6b6b'
+                              : percentRaw === 100
+                                ? '#c8ff00'
+                                : '#aaa',
+                        }}
+                      >
+                        {factTotal} / {matrixReady ? planTotal : planQtyCuttingOrder(factModal.Order)} шт
+                        {matrixReady && factTotal > planTotal
+                          ? ` (+${factTotal - planTotal})`
+                          : ''}
+                      </span>
                     </div>
                   </div>
                 );

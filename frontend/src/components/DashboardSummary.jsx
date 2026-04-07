@@ -3,42 +3,54 @@
  * Карточки: Всего, Активные, Выполненные, % выполнения
  */
 
+import { useNavigate } from 'react-router-dom';
+
 const CARD_CONFIG = [
   {
     key: 'totalOrders',
     label: 'Всего',
     icon: '📋',
-    color: 'from-[#84934A] to-[#656D3F] dark:from-dark-2 dark:to-dark-3 shadow-md',
+    background: '#0d2137',
+    border: 'rgba(74, 158, 255, 0.25)',
+    path: '/orders',
   },
   {
     key: 'activeOrders',
     label: 'Активные',
     icon: '⚡',
-    color: 'from-[#656D3F] to-[#492828] dark:from-dark-2 dark:to-dark-1 shadow-md',
+    background: '#0d1a2e',
+    border: 'rgba(245, 158, 11, 0.25)',
+    path: '/board',
   },
   {
     key: 'completedOrders',
     label: 'Выполненные',
     icon: '✅',
-    color: 'from-[#492828] to-[#84934A] dark:from-dark-3 dark:to-dark-2 shadow-md',
+    background: '#0d2620',
+    border: 'rgba(29, 158, 117, 0.25)',
+    path: '/board?filter=done',
   },
   {
     key: 'completionPercent',
     label: '% выполнения',
     icon: '📊',
     suffix: '%',
-    color: 'from-[#84934A] to-[#492828] dark:from-dark-2 dark:to-dark-3 shadow-md',
+    background: '#1a1a2e',
+    border: 'rgba(200, 255, 0, 0.2)',
+    path: '/production-dashboard',
   },
 ];
 
 export default function DashboardSummary({ data, loading }) {
+  const navigate = useNavigate();
+
   if (loading) {
     return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-4 md:mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-4 md:mb-6 relative z-[1]">
         {[1, 2, 3, 4].map((i) => (
           <div
             key={i}
-            className="rounded-xl bg-accent-1/30 dark:bg-dark-800 p-4 animate-pulse h-20"
+            className="rounded-xl p-4 animate-pulse h-20 bg-white/5 border border-white/10"
           />
         ))}
       </div>
@@ -48,12 +60,20 @@ export default function DashboardSummary({ data, loading }) {
   if (!data) return null;
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-      {CARD_CONFIG.map(({ key, label, icon, suffix = '', color }, i) => (
-        <div
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 mb-6 relative z-[1]">
+      {CARD_CONFIG.map(({ key, label, icon, suffix = '', background, border, path }) => (
+        <button
           key={key}
-          className={`rounded-xl bg-gradient-to-br ${color} p-4 shadow-lg shadow-black/5 dark:shadow-black/20 animate-slide-up animate-stagger transition-block hover:scale-[1.015] hover:shadow-xl`}
-          style={{ animationDelay: `${i * 80}ms` }}
+          type="button"
+          onClick={() => navigate(path)}
+          className="rounded-xl p-4 text-left transition-colors hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#c8ff00]/50"
+          style={{
+            background,
+            border: `1px solid ${border}`,
+            cursor: 'pointer',
+            position: 'relative',
+            zIndex: 1,
+          }}
         >
           <div className="flex items-center gap-2 mb-1">
             <span className="text-xl opacity-90">{icon}</span>
@@ -63,7 +83,7 @@ export default function DashboardSummary({ data, loading }) {
             {data[key] ?? 0}
             {suffix}
           </div>
-        </div>
+        </button>
       ))}
     </div>
   );

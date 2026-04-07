@@ -79,6 +79,244 @@ async function getSewingFloorIds() {
   return SEWING_FLOOR_IDS_DEFAULT;
 }
 
+const SEWING_CHAIN_DOC_STATUSES = new Set(['pending', 'in_progress', 'done']);
+
+function normalizeSewingDateOnly(v) {
+  const s = String(v || '').trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  return s;
+}
+
+function parseSewingChainDocIdParam(req) {
+  const id = parseInt(req.params.id, 10);
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
+
+const sewingChainDocumentInclude = [
+  {
+    model: db.Order,
+    attributes: [
+      'id',
+      'title',
+      'tz_code',
+      'model_name',
+      'article',
+      'client_id',
+      'photos',
+      'quantity',
+      'total_quantity',
+    ],
+    include: [{ model: db.Client, attributes: ['id', 'name'] }],
+  },
+  {
+    model: db.CuttingDocument,
+    attributes: ['id', 'status', 'week_start', 'actual_week_start'],
+  },
+  {
+    model: db.SewingFactDetail,
+    as: 'sewing_facts',
+    required: false,
+    attributes: ['id', 'color', 'size', 'cutting_quantity', 'sewing_quantity'],
+  },
+];
+
+/**
+ * Синхронизация факта пошива с планом ОТК (без ожидания завершения пошива).
+ */
+async function syncSewingFactToOtkPlan(sewingFactRow) {
+  try {
+    const sewingDoc = await db.SewingDocument.findByPk(sewingFactRow.sewing_document_id);
+    if (!sewingDoc) return;
+
+    let otkDoc = await db.OtkDocument.findOne({
+      where: { sewing_document_id: sewingDoc.id },
+    });
+
+    if (!otkDoc) {
+      otkDoc = await db.OtkDocument.create({
+        sewing_document_id: sewingDoc.id,
+        cutting_document_id: sewingDoc.cutting_document_id,
+        order_id: sewingDoc.order_id,
+        section_id: sewingDoc.section_id,
+        floor_id:
+          sewingDoc.floor_id != null && sewingDoc.floor_id !== ''
+            ? String(sewingDoc.floor_id)
+            : null,
+        week_start: sewingDoc.week_start,
+        status: 'pending',
+      });
+      console.log('[sewing→otk] создан документ ОТК:', otkDoc.id);
+    }
+
+    const sewQty = Math.max(0, parseInt(sewingFactRow.sewing_quantity, 10) || 0);
+    const [otkFact, created] = await db.OtkFactDetail.findOrCreate({
+      where: {
+        otk_document_id: otkDoc.id,
+        color: sewingFactRow.color,
+        size: sewingFactRow.size,
+      },
+      defaults: {
+        sewing_quantity: sewQty,
+        otk_passed: 0,
+        otk_rejected: 0,
+      },
+    });
+
+    if (!created) {
+      await otkFact.update({ sewing_quantity: sewQty });
+    }
+
+    console.log(
+      '[sewing→otk] синхронизировано:',
+      sewingFactRow.color,
+      sewingFactRow.size,
+      '→',
+      sewQty
+    );
+  } catch (err) {
+    console.error('[sewing→otk] ошибка:', err.message);
+  }
+}
+
+/**
+ * GET /api/sewing/documents — задания на пошив из завершённого раскроя (план цеха)
+ */
+router.get('/documents', async (req, res, next) => {
+  try {
+    const docs = await db.SewingDocument.findAll({
+      include: sewingChainDocumentInclude,
+      order: [
+        ['week_start', 'ASC'],
+        ['id', 'ASC'],
+      ],
+    });
+    res.json(docs.map((d) => d.toJSON()));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/sewing/documents/:id/facts
+ */
+router.get('/documents/:id/facts', async (req, res, next) => {
+  try {
+    const docId = parseSewingChainDocIdParam(req);
+    if (!docId) return res.status(400).json({ error: 'Неверный id' });
+    const doc = await db.SewingDocument.findByPk(docId);
+    if (!doc) return res.status(404).json({ error: 'Не найдено' });
+    const facts = await db.SewingFactDetail.findAll({
+      where: { sewing_document_id: docId },
+      order: [['id', 'ASC']],
+      attributes: ['id', 'color', 'size', 'cutting_quantity', 'sewing_quantity'],
+    });
+    res.json(facts.map((f) => f.toJSON()));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/sewing/sync-to-otk — синхронизация существующих фактов пошива в план ОТК
+ */
+router.post('/sync-to-otk', async (req, res, next) => {
+  try {
+    const allFacts = await db.SewingFactDetail.findAll({
+      where: { sewing_quantity: { [Op.gt]: 0 } },
+    });
+    let synced = 0;
+    for (const fact of allFacts) {
+      await syncSewingFactToOtkPlan(fact);
+      synced += 1;
+    }
+    console.log('[sync-to-otk] синхронизировано:', synced);
+    res.json({ synced, total: allFacts.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PATCH /api/sewing/documents/:id
+ */
+router.patch('/documents/:id', async (req, res, next) => {
+  try {
+    const id = parseSewingChainDocIdParam(req);
+    if (!id) return res.status(400).json({ error: 'Неверный id' });
+    const row = await db.SewingDocument.findByPk(id);
+    if (!row) return res.status(404).json({ error: 'Не найдено' });
+    const patch = {};
+    if (req.body.status !== undefined) {
+      const v = String(req.body.status).trim();
+      if (!SEWING_CHAIN_DOC_STATUSES.has(v)) {
+        return res.status(400).json({ error: 'Недопустимый status' });
+      }
+      patch.status = v;
+    }
+    if (req.body.actual_date !== undefined) {
+      if (req.body.actual_date == null || req.body.actual_date === '') {
+        patch.actual_date = null;
+      } else {
+        const d = normalizeSewingDateOnly(req.body.actual_date);
+        if (!d) return res.status(400).json({ error: 'Некорректная actual_date' });
+        patch.actual_date = d;
+      }
+    }
+    if (req.body.comment !== undefined) {
+      patch.comment = req.body.comment == null ? null : String(req.body.comment).slice(0, 5000);
+    }
+    if (req.body.floor_id !== undefined) {
+      if (req.body.floor_id == null || req.body.floor_id === '') {
+        patch.floor_id = null;
+      } else {
+        patch.floor_id = String(req.body.floor_id).trim().slice(0, 50) || null;
+      }
+    }
+    if (req.body.week_start !== undefined) {
+      const raw = normalizeSewingDateOnly(req.body.week_start);
+      if (!raw) return res.status(400).json({ error: 'Некорректная week_start' });
+      patch.week_start = getWeekStart(raw);
+    }
+    if (req.body.section_id !== undefined) {
+      if (req.body.section_id == null || req.body.section_id === '') {
+        patch.section_id = null;
+      } else {
+        patch.section_id = String(req.body.section_id).trim().slice(0, 50) || null;
+      }
+    }
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ error: 'Нет полей для обновления' });
+    }
+    await row.update(patch);
+    const full = await db.SewingDocument.findByPk(id, { include: sewingChainDocumentInclude });
+    res.json(full.toJSON());
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PATCH /api/sewing/facts/:factId — факт пошива по ячейке цвет×размер
+ */
+router.patch('/facts/:factId', async (req, res, next) => {
+  try {
+    const factId = parseInt(req.params.factId, 10);
+    if (!factId) return res.status(400).json({ error: 'Неверный id' });
+    const row = await db.SewingFactDetail.findByPk(factId);
+    if (!row) return res.status(404).json({ error: 'Не найдено' });
+    if (req.body.sewing_quantity === undefined) {
+      return res.status(400).json({ error: 'Укажите sewing_quantity' });
+    }
+    const q = Math.max(0, parseInt(req.body.sewing_quantity, 10) || 0);
+    await row.update({ sewing_quantity: q });
+    await row.reload();
+    await syncSewingFactToOtkPlan(row);
+    res.json(row.toJSON());
+  } catch (err) {
+    next(err);
+  }
+});
+
 /**
  * GET /api/sewing/facts-by-order
  * Сумма fact_qty из sewing_fact по заказу (этажи пошива), ключ — order_id — для черновика планирования.

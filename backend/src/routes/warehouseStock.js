@@ -1020,4 +1020,114 @@ router.post('/shipments/:id/complete', async (req, res, next) => {
   }
 });
 
+// ————— Склад по документам ОТК (otk_warehouse_items) —————
+
+function deriveOtkChainWarehouseStatus(qty, shippedQty) {
+  const q = Math.max(0, parseInt(qty, 10) || 0);
+  const s = Math.max(0, parseInt(shippedQty, 10) || 0);
+  if (q <= 0) return 'in_stock';
+  if (s >= q) return 'shipped';
+  if (s > 0) return 'partial';
+  return 'in_stock';
+}
+
+const otkChainOrderInclude = {
+  model: db.Order,
+  attributes: [
+    'id',
+    'title',
+    'article',
+    'tz_code',
+    'model_name',
+    'photos',
+    'quantity',
+    'total_quantity',
+    'workshop_id',
+  ],
+  required: false,
+  include: [{ model: db.Client, attributes: ['id', 'name'], required: false }],
+};
+
+/** GET /api/warehouse-stock/otk-chain/items */
+router.get('/otk-chain/items', async (req, res, next) => {
+  try {
+    const items = await db.OtkWarehouseItem.findAll({
+      include: [otkChainOrderInclude],
+      order: [
+        ['received_at', 'DESC'],
+        ['id', 'DESC'],
+      ],
+    });
+    res.json(items.map((i) => i.toJSON()));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** GET /api/warehouse-stock/otk-chain/summary — группировка по заказу */
+router.get('/otk-chain/summary', async (req, res, next) => {
+  try {
+    const items = await db.OtkWarehouseItem.findAll({
+      include: [otkChainOrderInclude],
+      order: [
+        ['order_id', 'ASC'],
+        ['color', 'ASC'],
+        ['size', 'ASC'],
+      ],
+    });
+    const grouped = {};
+    for (const row of items) {
+      const key = row.order_id != null ? String(row.order_id) : `noid_${row.id}`;
+      const j = row.toJSON();
+      if (!grouped[key]) {
+        grouped[key] = {
+          order_id: row.order_id,
+          Order: j.Order,
+          items: [],
+          total_quantity: 0,
+          total_shipped: 0,
+        };
+      }
+      grouped[key].items.push(j);
+      grouped[key].total_quantity += Math.max(0, parseInt(row.quantity, 10) || 0);
+      grouped[key].total_shipped += Math.max(0, parseInt(row.shipped_qty, 10) || 0);
+    }
+    res.json(Object.values(grouped));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** PATCH /api/warehouse-stock/otk-chain/items/:id — отгрузка / комментарий */
+router.patch('/otk-chain/items/:id', async (req, res, next) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).json({ error: 'Неверный id' });
+    const item = await db.OtkWarehouseItem.findByPk(id);
+    if (!item) return res.status(404).json({ error: 'Не найдено' });
+    const qty = Math.max(0, parseInt(item.quantity, 10) || 0);
+    let shipped = Math.max(0, parseInt(item.shipped_qty, 10) || 0);
+    if (req.body.shipped_qty !== undefined) {
+      shipped = Math.max(0, parseInt(req.body.shipped_qty, 10) || 0);
+    }
+    shipped = Math.min(shipped, qty);
+    const note =
+      req.body.note !== undefined
+        ? req.body.note == null
+          ? null
+          : String(req.body.note).slice(0, 5000)
+        : undefined;
+    const patch = {
+      shipped_qty: shipped,
+      status: deriveOtkChainWarehouseStatus(qty, shipped),
+    };
+    if (note !== undefined) patch.note = note;
+    await item.update(patch);
+    const full = await db.OtkWarehouseItem.findByPk(id, { include: [otkChainOrderInclude] });
+    res.json(full.toJSON());
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

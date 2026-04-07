@@ -18,10 +18,13 @@ export function AuthProvider({ children }) {
       setLoading(false);
       return;
     }
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 10000);
     // Проверяем токен на сервере — иначе без логина заходило
     fetch(`${API_URL}/api/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
       cache: 'no-store',
+      signal: controller.signal,
     })
       .then((res) => {
         if (!res.ok) {
@@ -35,12 +38,22 @@ export function AuthProvider({ children }) {
       .then((data) => {
         if (data?.user) setUser(data.user);
       })
-      .catch(() => {
+      .catch((e) => {
+        if (e?.name === 'AbortError') {
+          try {
+            const u = JSON.parse(storedUser);
+            if (u && typeof u === 'object') setUser(u);
+          } catch (_) {}
+          return;
+        }
         sessionStorage.removeItem('token');
         sessionStorage.removeItem('user');
         setUser(null);
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        window.clearTimeout(timeoutId);
+        setLoading(false);
+      });
   }, []);
 
   const login = (data) => {

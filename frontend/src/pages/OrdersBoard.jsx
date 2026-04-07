@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
+import { useOrderProgress } from '../context/OrderProgressContext';
 import { Chip, NeonButton, NeonCard, NeonInput, NeonSelect } from '../components/ui';
 import PrintButton from '../components/PrintButton';
 
@@ -48,16 +49,6 @@ const STATUS_STYLE = {
   DELAY: 'bg-red-500/25 text-red-300 border-red-400/50 shadow-[0_0_0_1px_rgba(248,113,113,0.3)]',
 };
 
-// Индикаторы: ✓ DONE (зелёный), ⏳ IN_PROGRESS (синий), ○ NOT_STARTED (серый)
-const STAGE_INDICATOR = {
-  DONE: { icon: '✓', className: 'text-emerald-400' },
-  IN_PROGRESS: { icon: '⏳', className: 'text-blue-400' },
-  NOT_STARTED: { icon: '○', className: 'text-slate-500' },
-  PENDING: { icon: '○', className: 'text-slate-500' },
-  OVERDUE: { icon: '!', className: 'text-red-400' },
-  DELAY: { icon: '!', className: 'text-red-400' },
-};
-
 // Производственная цепочка: Закуп → Планирование → Раскрой → Пошив → ОТК → Склад → Отгрузка
 const STAGE_COLUMNS = [
   { key: 'procurement', title: 'ЗАКУП' },
@@ -81,6 +72,25 @@ const COL_WIDTHS = {
 const GRID_TEMPLATE = `${COL_WIDTHS.client}px ${COL_WIDTHS.priority}px ${COL_WIDTHS.created}px repeat(${STAGE_COLUMNS.length}, ${COL_WIDTHS.stage}px) ${COL_WIDTHS.forecast}px ${COL_WIDTHS.deadline}px`;
 const GRID_MIN_WIDTH = COL_WIDTHS.client + COL_WIDTHS.priority + COL_WIDTHS.created + STAGE_COLUMNS.length * COL_WIDTHS.stage + COL_WIDTHS.forecast + COL_WIDTHS.deadline;
 const UNIFIED_BOX_CLASS = 'w-full min-h-full rounded-lg border border-white/15 bg-slate-900/45 p-2.5 text-sm';
+
+/** Превью заказа: строка из photos[0], объекта с url или image_url */
+function boardOrderThumbSrc(orderRow) {
+  const p = orderRow.photos?.[0];
+  if (typeof p === 'string' && p.trim()) return p.trim();
+  if (p && typeof p === 'object' && typeof p.url === 'string' && p.url.trim()) return p.url.trim();
+  if (typeof orderRow.image_url === 'string' && orderRow.image_url.trim()) return orderRow.image_url.trim();
+  return null;
+}
+
+/** Компактные бейджи цепочки (ключи как в orderProgress.progress) */
+const BOARD_COMPACT_STAGES = [
+  { progressKey: 'purchase', label: 'Закуп', stageKey: 'procurement' },
+  { progressKey: 'cutting', label: 'Раскрой', stageKey: 'cutting' },
+  { progressKey: 'sewing', label: 'Пошив', stageKey: 'sewing' },
+  { progressKey: 'otk', label: 'ОТК', stageKey: 'qc' },
+  { progressKey: 'warehouse', label: 'Склад', stageKey: 'warehouse' },
+  { progressKey: 'shipping', label: 'Отгрузка', stageKey: 'shipping' },
+];
 
 function formatDate(value) {
   if (!value) return '—';
@@ -134,7 +144,7 @@ function getStageUrl(orderId, stageKey) {
     case 'sewing':
       return `/sewing?order_id=${orderId}`;
     case 'qc':
-      return `/qc?order_id=${orderId}`;
+      return `/otk?order_id=${orderId}`;
     case 'warehouse':
       return `/warehouse?order_id=${orderId}`;
     case 'shipping':
@@ -364,74 +374,121 @@ function BoardHeader({
   );
 }
 
-function BoardRow({ orderRow, viewMode, onOpenOrder, onOpenStage }) {
+function BoardRow({ orderRow, viewMode, onOpenOrder, onOpenStage, orderProgress }) {
   const rowBase = 'border-b border-white/10';
   const stickyLeft = 'sticky z-10 bg-slate-950/95';
   const stickyRight = 'sticky z-10 bg-slate-950/95';
+  const rowMinH = 'min-h-[80px]';
+  const thumbSrc = boardOrderThumbSrc(orderRow);
+  const totalPct = Math.min(
+    100,
+    orderProgress?.total_progress ??
+      orderRow.done_percent_total ??
+      (orderRow.production_stages?.length
+        ? Math.round(
+            (orderRow.production_stages.filter((s) => s.status === 'DONE').length /
+              orderRow.production_stages.length) *
+              100
+          )
+        : 0)
+  );
 
   return (
     <div
-      className={`${rowBase} grid min-h-[104px] cursor-pointer`}
+      className={`${rowBase} grid ${rowMinH} cursor-pointer`}
       style={{ gridTemplateColumns: GRID_TEMPLATE }}
       onClick={() => onOpenOrder(orderRow.id)}
     >
-      <div className={`${stickyLeft} left-0 border-r border-white/10 px-0 flex flex-col min-h-[104px]`}>
-        <UnifiedCellBox className="flex flex-1 items-center gap-2 min-h-0">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-700 text-xs font-semibold text-slate-100">
-            {(orderRow.client_name || '?').slice(0, 2).toUpperCase()}
+      <div className={`${stickyLeft} left-0 border-r border-white/10 px-0 flex flex-col ${rowMinH}`}>
+        <UnifiedCellBox className="flex flex-1 items-start gap-2.5 py-2 min-h-0 !p-2">
+          <div className="relative h-[52px] w-[52px] shrink-0">
+            {thumbSrc ? (
+              <img
+                src={thumbSrc}
+                alt=""
+                className="h-[52px] w-[52px] rounded-md object-cover border border-[#333]/80"
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                  const next = e.currentTarget.nextElementSibling;
+                  if (next instanceof HTMLElement) next.style.display = 'flex';
+                }}
+              />
+            ) : null}
+            <div
+              className="absolute inset-0 flex h-[52px] w-[52px] items-center justify-center rounded-md border border-[#222] bg-[#111] text-[9px] text-[#333]"
+              style={{ display: thumbSrc ? 'none' : 'flex' }}
+            >
+              фото
+            </div>
           </div>
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold">{orderRow.client_name || '—'}</div>
-            {orderRow.workshop_name && orderRow.workshop_name !== '—' && (
-              <div className="truncate text-[11px] font-medium text-amber-300/95 bg-amber-500/20 inline-block px-1.5 py-0.5 rounded mt-0.5">
-                {orderRow.workshop_name}
+            <div className="mb-0.5 flex min-w-0 items-center gap-1.5">
+              {orderRow.workshop_name && orderRow.workshop_name !== '—' && (
+                <span className="shrink-0 rounded px-1 py-px text-[10px] bg-[#1a1a2e] text-[#4a9eff]">
+                  {orderRow.workshop_name}
+                </span>
+              )}
+              <div className="min-w-0 truncate text-xs font-semibold text-white">
+                {orderRow.total_quantity != null && orderRow.total_quantity > 0 && (
+                  <span className="text-slate-300">{orderRow.total_quantity} — </span>
+                )}
+                {orderRow.article ? `${orderRow.article} — ` : ''}
+                {orderRow.model_name || '—'}
+                {orderRow.display_index != null && (
+                  <span className="ml-1 text-slate-500">№{orderRow.display_index}</span>
+                )}
               </div>
-            )}
-            <div className="truncate text-xs text-slate-400 mt-0.5">
-              {orderRow.total_quantity != null && orderRow.total_quantity > 0 && (
-                <span className="text-slate-300 font-medium">{orderRow.total_quantity} — </span>
-              )}
-              {orderRow.model_name || '—'}
-              {orderRow.display_index != null && (
-                <span className="text-slate-500 ml-1">№{orderRow.display_index}</span>
-              )}
             </div>
-            {orderRow.production_stages && orderRow.production_stages.length > 0 && (
-              <div className="mt-1">
-                <div className="h-1 w-full rounded-full bg-slate-700 overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-emerald-500/80"
+            <div
+              className="mb-0.5 flex flex-nowrap gap-0.5 overflow-hidden"
+              style={{ marginTop: 4 }}
+            >
+              {BOARD_COMPACT_STAGES.map((stage) => {
+                const stageRow = (orderRow.stages || []).find((s) => s.stage_key === stage.stageKey);
+                const pct =
+                  orderProgress?.progress?.[stage.progressKey] ??
+                  (typeof stageRow?.percent === 'number' ? stageRow.percent : 0);
+                const done = stageRow?.status === 'DONE' || pct >= 100;
+                const inProgress = !done && stageRow?.status === 'IN_PROGRESS';
+                const started = pct > 0 || inProgress;
+                const mark = done ? '✓' : inProgress ? '⏳' : '○';
+                return (
+                  <span
+                    key={stage.progressKey}
+                    className="whitespace-nowrap rounded px-[5px] py-0.5 text-[10px] leading-tight border border-solid"
                     style={{
-                      width: `${Math.round(
-                        (orderRow.production_stages.filter((s) => s.status === 'DONE').length /
-                          orderRow.production_stages.length) * 100
-                      )}%`,
+                      background: done
+                        ? 'rgba(200,255,0,0.12)'
+                        : started
+                          ? 'rgba(74,158,255,0.1)'
+                          : 'rgba(255,255,255,0.04)',
+                      color: done ? '#c8ff00' : started ? '#4a9eff' : '#444',
+                      borderColor: done
+                        ? 'rgba(200,255,0,0.2)'
+                        : started
+                          ? 'rgba(74,158,255,0.15)'
+                          : '#222',
                     }}
-                  />
-                </div>
-              </div>
-            )}
-            {orderRow.production_stages && orderRow.production_stages.length > 0 && (
-              <div className="mt-0.5 flex flex-wrap items-center gap-x-0.5 text-[10px] leading-tight">
-                {orderRow.production_stages.map((s, i) => {
-                  const ind = STAGE_INDICATOR[s.status] || STAGE_INDICATOR.NOT_STARTED;
-                  return (
-                    <span key={s.key} className="inline-flex items-center shrink-0">
-                      {i > 0 && <span className="mx-0.5 text-slate-600">—</span>}
-                      <span className={`${ind.className}`} title={`${s.label}: ${s.status}`}>
-                        {ind.icon}
-                      </span>
-                      <span className="ml-0.5 text-slate-500">{s.label}</span>
-                    </span>
-                  );
-                })}
-              </div>
-            )}
+                  >
+                    {mark} {stage.label}
+                  </span>
+                );
+              })}
+            </div>
+            <div className="h-[3px] w-full overflow-hidden rounded-sm bg-[#1a1a1a]">
+              <div
+                className="h-[3px] rounded-sm transition-[width] duration-500"
+                style={{
+                  width: `${totalPct}%`,
+                  background: totalPct >= 100 ? '#c8ff00' : '#4a9eff',
+                }}
+              />
+            </div>
           </div>
         </UnifiedCellBox>
       </div>
 
-      <div className={`${stickyLeft} border-r border-white/10 px-0 flex flex-col min-h-[104px]`} style={{ left: `${COL_WIDTHS.client}px` }}>
+      <div className={`${stickyLeft} border-r border-white/10 px-0 flex flex-col ${rowMinH}`} style={{ left: `${COL_WIDTHS.client}px` }}>
         <UnifiedCellBox className="flex flex-1 items-center justify-center min-h-0">
           <div className={`w-full flex items-center justify-center rounded-md py-1 text-xs font-semibold ${priorityBadge(orderRow.priority)}`}>
             {priorityNum(orderRow.priority)}
@@ -439,7 +496,7 @@ function BoardRow({ orderRow, viewMode, onOpenOrder, onOpenStage }) {
         </UnifiedCellBox>
       </div>
 
-      <div className={`${stickyLeft} border-r border-white/10 px-0 flex flex-col min-h-[104px]`} style={{ left: `${COL_WIDTHS.client + COL_WIDTHS.priority}px` }}>
+      <div className={`${stickyLeft} border-r border-white/10 px-0 flex flex-col ${rowMinH}`} style={{ left: `${COL_WIDTHS.client + COL_WIDTHS.priority}px` }}>
         <UnifiedCellBox className="flex flex-1 items-center justify-center text-center text-xs text-slate-300 min-h-0">
           {formatDate(orderRow.created_at)}
         </UnifiedCellBox>
@@ -450,7 +507,7 @@ function BoardRow({ orderRow, viewMode, onOpenOrder, onOpenStage }) {
         return (
           <div
             key={`${orderRow.id}-${stageCol.key}`}
-            className="border-r border-white/10 p-0 relative min-h-[104px]"
+            className={`border-r border-white/10 p-0 relative ${rowMinH}`}
           >
             {stage ? (
               <StageCell
@@ -468,7 +525,7 @@ function BoardRow({ orderRow, viewMode, onOpenOrder, onOpenStage }) {
         );
       })}
 
-      <div className={`${stickyRight} border-l border-white/10 px-0 flex flex-col min-h-[104px]`} style={{ right: `${COL_WIDTHS.deadline}px` }}>
+      <div className={`${stickyRight} border-l border-white/10 px-0 flex flex-col ${rowMinH}`} style={{ right: `${COL_WIDTHS.deadline}px` }}>
         <UnifiedCellBox className="flex flex-1 items-center justify-center flex-col text-center min-h-0">
           <div className="text-[10px] text-slate-400">Прогноз</div>
           <div
@@ -481,7 +538,7 @@ function BoardRow({ orderRow, viewMode, onOpenOrder, onOpenStage }) {
         </UnifiedCellBox>
       </div>
 
-      <div className={`${stickyRight} right-0 border-l border-white/10 px-0 flex flex-col min-h-[104px]`}>
+      <div className={`${stickyRight} right-0 border-l border-white/10 px-0 flex flex-col ${rowMinH}`}>
         <UnifiedCellBox className="flex flex-1 items-center justify-center flex-col text-center min-h-0">
           <div className="text-[10px] text-slate-400">Сдача</div>
           <div
@@ -502,6 +559,12 @@ function BoardRow({ orderRow, viewMode, onOpenOrder, onOpenStage }) {
 
 export default function OrdersBoard() {
   const navigate = useNavigate();
+  const { ordersProgress } = useOrderProgress();
+  const progressByOrderId = useMemo(() => {
+    const m = new Map();
+    (ordersProgress || []).forEach((p) => m.set(Number(p.id), p));
+    return m;
+  }, [ordersProgress]);
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
   const [workshops, setWorkshops] = useState([]);
@@ -638,6 +701,7 @@ export default function OrdersBoard() {
                     viewMode={viewMode}
                     onOpenOrder={onOpenOrder}
                     onOpenStage={onOpenStage}
+                    orderProgress={progressByOrderId.get(Number(orderRow.id))}
                   />
                 ))}
               </div>

@@ -46,9 +46,11 @@ function killPortUnix(port) {
 
 function bindServer(port) {
   const server = http.createServer(app);
+  // Railway/Docker: слушать все интерфейсы (иначе healthcheck и прокси могут не достучаться)
+  const host = process.env.BIND_HOST || '0.0.0.0';
 
-  server.listen(port, () => {
-    console.log(`Сервер запущен на порту ${port}`);
+  server.listen(port, host, () => {
+    console.log(`Сервер запущен на http://${host}:${port}`);
   });
 
   server.on('error', (err) => {

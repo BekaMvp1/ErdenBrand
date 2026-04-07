@@ -14,9 +14,9 @@ const db = require('../src/models');
       attributes: ['id', 'email', 'role', 'name'],
     });
     if (u) {
-      console.log('User:', u.email, u.role, u.name || '');
+      console.log(`✓ Пользователь найден: ${u.email} role: ${u.role}`);
     } else {
-      console.log('User: (not found) — выполните сиды: npm run db:seed');
+      console.log('✗ Пользователь не найден — выполните: railway run npm run db:seed');
     }
     await db.sequelize.close();
     process.exit(0);

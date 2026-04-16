@@ -18,6 +18,7 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       unique: true,
     },
+    /** В БД колонка password_hash; открытый пароль не хранится */
     password_hash: {
       type: DataTypes.STRING(255),
       allowNull: false,

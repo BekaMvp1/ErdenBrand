@@ -203,6 +203,14 @@ router.patch('/facts/:factId', async (req, res, next) => {
   try {
     const factId = parseInt(req.params.factId, 10);
     if (!factId) return res.status(400).json({ error: 'Неверный id' });
+    console.log(
+      '[cutting/facts/patch] id:',
+      factId,
+      'quantity:',
+      req.body?.quantity,
+      'time:',
+      new Date().toISOString()
+    );
     const row = await db.CuttingFactDetail.findByPk(factId);
     if (!row) return res.status(404).json({ error: 'Не найдено' });
     const patch = {};

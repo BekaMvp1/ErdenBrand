@@ -340,14 +340,16 @@ export default function CreateOrder() {
               <svg className="w-4 h-4 text-[#ECECEC]/70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10m-11 9h12a2 2 0 002-2V7a2 2 0 00-2-2H6a2 2 0 00-2 2v11a2 2 0 002 2z" />
               </svg>
-              Поступление заказа
+              Дата поступления заказа
             </label>
             <NeonInput
               type="date"
-              min={today}
               value={form.start_date}
               onChange={(e) => setForm({ ...form, start_date: e.target.value })}
             />
+            <p className="mt-2 text-xs text-[#ECECEC]/55 dark:text-dark-text/50">
+              Можно указать дату в прошлом
+            </p>
           </div>
           <div className="rounded-xl border-[0.5px] border-white/20 bg-accent-2/20 p-3">
             <label className="flex items-center gap-2 text-sm text-[#ECECEC] dark:text-dark-text/90 mb-2">

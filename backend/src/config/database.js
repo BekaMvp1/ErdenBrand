@@ -19,17 +19,27 @@ function ensureDatabaseUrlFromParts() {
 
 ensureDatabaseUrlFromParts();
 
-if (process.env.NODE_ENV === 'production' && process.env.DATABASE_URL) {
+/** Лог цели подключения (пароль не выводим — только факт наличия) */
+function logDatabaseUrlTarget(label) {
+  if (!process.env.DATABASE_URL) return;
   try {
     const { parsePostgresUrl } = require('../utils/parseDatabaseUrl');
     const c = parsePostgresUrl(process.env.DATABASE_URL);
+    const pwd =
+      c.password != null && String(c.password).length > 0 ? '(password set)' : '(password empty)';
     console.log(
-      'PRODUCTION DB target:',
-      `${c.username}@${c.host}:${c.port}/${c.database}`
+      label,
+      `host=${c.host} port=${c.port} database=${c.database} username=${c.username} ${pwd}`
     );
-  } catch {
-    console.log('PRODUCTION: DATABASE_URL задан, но не удалось разобрать (проверьте формат)');
+  } catch (e) {
+    console.warn(`${label} DATABASE_URL не разобран:`, e.message);
   }
+}
+
+if (process.env.NODE_ENV === 'production' && process.env.DATABASE_URL) {
+  logDatabaseUrlTarget('PRODUCTION DB target:');
+} else if (process.env.DATABASE_URL) {
+  logDatabaseUrlTarget('DATABASE_URL (non-production):');
 }
 
 const dbUrl = process.env.DATABASE_URL || '';

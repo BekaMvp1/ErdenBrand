@@ -113,8 +113,9 @@ router.post('/login', async (req, res) => {
       },
     });
   } catch (err) {
-    console.error('[login] ОШИБКА 500:', err.message);
-    console.error('[login] stack:', err.stack);
+    console.error('[login] ОШИБКА:', err);
+    console.error('[login] message:', err?.message);
+    console.error('[login] stack:', err?.stack);
     res.status(500).json({
       error: err.message || 'Внутренняя ошибка сервера',
       stack: process.env.NODE_ENV !== 'production' ? err.stack : undefined,

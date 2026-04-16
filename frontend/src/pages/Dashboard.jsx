@@ -39,6 +39,22 @@ function orderStatusName(order) {
   return order.OrderStatus?.name || '';
 }
 
+/** Колонка «Дата поступления»: receipt_date, иначе дата создания записи */
+function formatOrderReceiptColumn(order) {
+  const raw = order?.receipt_date || order?.created_at;
+  if (!raw) return '—';
+  const s = String(raw).slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const [y, m, d] = s.split('-');
+    return `${d}.${m}.${y}`;
+  }
+  try {
+    return new Date(raw).toLocaleDateString('ru-RU');
+  } catch {
+    return '—';
+  }
+}
+
 function isOrderDoneByStatus(order) {
   const n = String(orderStatusName(order)).trim();
   return n === 'Готов';
@@ -624,7 +640,7 @@ export default function Dashboard() {
                   <td className="px-4 py-3 text-neon-muted">{order.Client?.name}</td>
                   <td className="px-4 py-3 text-neon-muted">{order.quantity}</td>
                   <td className="px-4 py-3 text-neon-muted whitespace-nowrap hidden md:table-cell">
-                    {order.receipt_date ? String(order.receipt_date).slice(0, 10) : (order.created_at ? String(order.created_at).slice(0, 10) : '—')}
+                    {formatOrderReceiptColumn(order)}
                   </td>
                   <td className="px-4 py-3 text-neon-muted whitespace-nowrap hidden md:table-cell">{order.deadline || '—'}</td>
                   <td className="px-4 py-3">

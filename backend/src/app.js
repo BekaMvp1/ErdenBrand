@@ -325,8 +325,13 @@ app.use((req, res) => {
 
 // Обработка ошибок
 app.use((err, req, res, next) => {
+  console.error(err);
   console.error("Ошибка:", err?.name, err?.message, err?.errors);
-  const status = err.status || 500;
+  const status =
+    err.status ||
+    err.statusCode ||
+    (err.type === "entity.parse.failed" ? 400 : null) ||
+    500;
   let errorMsg = err.message || "Внутренняя ошибка сервера";
   if (err.name === "SequelizeValidationError" && err.errors?.length) {
     errorMsg = err.errors.map((e) => e.message || `${e.path}: ${e.value}`).join("; ");

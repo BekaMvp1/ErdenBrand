@@ -1114,11 +1114,22 @@ export default function Cutting() {
   const [chainBanner, setChainBanner] = useState(null);
   const [factModal, setFactModal] = useState(null);
   const factModalSyncRef = useRef(null);
-  const cuttingFactPersistChainRef = useRef(Promise.resolve());
+  /** Debounce автосохранения фактов по ячейке (цвет+размер) */
+  const saveCuttingFactTimerRef = useRef({});
+  const isSavingFactsRef = useRef(false);
 
   useEffect(() => {
     factModalSyncRef.current = factModal;
   }, [factModal]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(saveCuttingFactTimerRef.current).forEach((t) => {
+        if (t) clearTimeout(t);
+      });
+      saveCuttingFactTimerRef.current = {};
+    };
+  }, [factModal?.id]);
   /** Пустые даты = «все периоды», иначе документы вне текущего месяца не попадают в таблицу */
   const [chainDateFrom, setChainDateFrom] = useState('');
   const [chainDateTo, setChainDateTo] = useState('');
@@ -1356,49 +1367,68 @@ export default function Cutting() {
     setFactModal(nextModal);
 
     const docId = prev.id;
-    cuttingFactPersistChainRef.current = cuttingFactPersistChainRef.current
-      .then(async () => {
-        const cur = factModalSyncRef.current;
-        if (!cur || Number(cur.id) !== Number(docId) || cur._orderSpecLoading) return;
-        const r = (cur.cutting_facts || []).find(
-          (f) => String(f.color ?? '').trim() === c && String(f.size ?? '').trim() === s
-        );
-        const curQ = Math.max(0, parseInt(r?.quantity, 10) || 0);
-        if (curQ !== q) return;
+    const timerKey = `${c}\u0000${s}`;
+    const timers = saveCuttingFactTimerRef.current;
+    if (timers[timerKey]) {
+      clearTimeout(timers[timerKey]);
+    }
+    const expectedQ = q;
 
-        try {
-          if (r?.id && !r.isNew) {
-            await api.cutting.factPatch(r.id, { quantity: curQ });
-            refreshOrderProgress();
-          } else if (curQ > 0) {
-            const created = await api.cutting.documentFactCreate(docId, {
-              color: c,
-              size: s,
-              quantity: curQ,
-            });
-            const withId = { ...created, isNew: false };
-            setFactModal((p) => {
-              if (!p || Number(p.id) !== Number(docId)) return p;
-              const nf = (p.cutting_facts || []).map((f) =>
-                !f?.id && String(f.color ?? '').trim() === c && String(f.size ?? '').trim() === s
-                  ? { ...withId }
-                  : f
-              );
-              const merged = { ...p, cutting_facts: nf };
-              factModalSyncRef.current = merged;
-              return merged;
-            });
-            refreshOrderProgress();
-          }
-        } catch (err) {
-          console.error('[Раскрой] ошибка сохранения:', err);
+    timers[timerKey] = setTimeout(async () => {
+      delete saveCuttingFactTimerRef.current[timerKey];
+      const cur = factModalSyncRef.current;
+      if (!cur || Number(cur.id) !== Number(docId) || cur._orderSpecLoading) return;
+      const r = (cur.cutting_facts || []).find(
+        (f) => String(f.color ?? '').trim() === c && String(f.size ?? '').trim() === s
+      );
+      const curQ = Math.max(0, parseInt(r?.quantity, 10) || 0);
+      if (curQ !== expectedQ) return;
+
+      try {
+        if (r?.id && !r.isNew) {
+          await api.cutting.factPatch(r.id, { quantity: curQ });
+          console.log('[Cutting] автосохранено:', c, s, curQ);
+          refreshOrderProgress();
+        } else if (curQ > 0) {
+          const created = await api.cutting.documentFactCreate(docId, {
+            color: c,
+            size: s,
+            quantity: curQ,
+          });
+          const withId = { ...created, isNew: false };
+          setFactModal((p) => {
+            if (!p || Number(p.id) !== Number(docId)) return p;
+            const nf = (p.cutting_facts || []).map((f) =>
+              !f?.id && String(f.color ?? '').trim() === c && String(f.size ?? '').trim() === s
+                ? { ...withId }
+                : f
+            );
+            const merged = { ...p, cutting_facts: nf };
+            factModalSyncRef.current = merged;
+            return merged;
+          });
+          console.log('[Cutting] автосохранено (создан факт):', c, s, curQ);
+          refreshOrderProgress();
         }
-      })
-      .catch(() => {});
+      } catch (err) {
+        console.error('[Cutting] ошибка автосохранения:', err);
+      }
+    }, 800);
   };
 
   const saveFacts = async () => {
     if (!factModal || factModal._orderSpecLoading) return;
+    if (isSavingFactsRef.current) {
+      console.log('[Cutting] saveFacts уже выполняется, пропуск');
+      return;
+    }
+    isSavingFactsRef.current = true;
+
+    Object.values(saveCuttingFactTimerRef.current).forEach((t) => {
+      if (t) clearTimeout(t);
+    });
+    saveCuttingFactTimerRef.current = {};
+
     const docId = factModal.id;
     const rows = factModal.cutting_facts || [];
     try {
@@ -1410,10 +1440,16 @@ export default function Cutting() {
             size: String(f.size ?? '').trim(),
             quantity: q,
           });
-        } else if (f.id != null && !f.isNew) {
-          await api.cutting.factPatch(f.id, { quantity: q });
         }
       }
+      const toPatch = rows.filter((f) => f.id != null);
+      await Promise.all(
+        toPatch.map((f) =>
+          api.cutting.factPatch(f.id, {
+            quantity: Math.max(0, parseInt(f.quantity, 10) || 0),
+          })
+        )
+      );
       const refreshed = await api.cutting.documentFactsList(docId);
       setChainDocs((prev) =>
         prev.map((d) => (Number(d.id) === Number(docId) ? { ...d, cutting_facts: refreshed } : d))
@@ -1425,6 +1461,8 @@ export default function Cutting() {
     } catch (e) {
       setChainBanner({ type: 'err', text: e?.message || 'Ошибка сохранения' });
       window.setTimeout(() => setChainBanner(null), 4000);
+    } finally {
+      isSavingFactsRef.current = false;
     }
   };
 

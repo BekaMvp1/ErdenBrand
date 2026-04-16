@@ -23,6 +23,22 @@ function addDaysToIso(isoDate, days) {
   return d.toISOString().slice(0, 10);
 }
 
+/** Дата поступления (DATEONLY): пусто — null; иначе YYYY-MM-DD или 400 */
+function parseReceiptDateInput(value) {
+  if (value === undefined || value === null || value === '') {
+    return { ok: true, iso: null };
+  }
+  const s = String(value).trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    return { ok: false, error: 'Неверный формат даты поступления' };
+  }
+  const t = Date.parse(`${s}T12:00:00`);
+  if (Number.isNaN(t)) {
+    return { ok: false, error: 'Неверный формат даты поступления' };
+  }
+  return { ok: true, iso: s };
+}
+
 /**
  * Нормализация строки для поиска по ключевым словам
  */
@@ -185,6 +201,18 @@ router.post('/', async (req, res, next) => {
     if (!planned_month) {
       return res.status(400).json({ error: 'Укажите planned_month (месяц плана)' });
     }
+
+    const receiptRaw =
+      receipt_date != null && receipt_date !== ''
+        ? receipt_date
+        : start_date != null && start_date !== ''
+          ? start_date
+          : null;
+    const receiptParsed = parseReceiptDateInput(receiptRaw);
+    if (!receiptParsed.ok) {
+      return res.status(400).json({ error: receiptParsed.error });
+    }
+
     let effectiveWorkshopId = workshop_id ? parseInt(workshop_id, 10) : null;
     if (!effectiveWorkshopId && floor_id) {
       const floor = await db.Floor.findByPk(parseInt(floor_id, 10));
@@ -299,7 +327,7 @@ router.post('/', async (req, res, next) => {
           quantity: qty,
           total_quantity: qty,
           deadline,
-          receipt_date: receipt_date ? String(receipt_date).slice(0, 10) : null,
+          receipt_date: receiptParsed.iso,
           comment: comment || null,
           planned_month: String(planned_month).trim(),
           workshop_id: effectiveWorkshopId,
@@ -1521,7 +1549,15 @@ router.put('/:id', async (req, res, next) => {
     }
     if (article !== undefined) updates.article = article ? String(article).trim() : null;
     if (deadline != null) updates.deadline = deadline;
-    if (receipt_date !== undefined) updates.receipt_date = receipt_date ? String(receipt_date).slice(0, 10) : null;
+    if (receipt_date !== undefined) {
+      const parsed = parseReceiptDateInput(
+        receipt_date === null || receipt_date === '' ? '' : receipt_date
+      );
+      if (!parsed.ok) {
+        return res.status(400).json({ error: parsed.error });
+      }
+      updates.receipt_date = parsed.iso;
+    }
     if (comment !== undefined) updates.comment = comment ? String(comment).trim() : null;
     if (planned_month !== undefined) updates.planned_month = planned_month ? String(planned_month).trim() : null;
     if (floor_id !== undefined) updates.floor_id = floor_id ? parseInt(floor_id, 10) : null;

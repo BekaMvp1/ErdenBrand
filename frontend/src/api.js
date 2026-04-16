@@ -250,6 +250,11 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify(body),
       }),
+    chainSyncDocuments: (chain_ids) =>
+      request('/api/planning/chain/sync-documents', {
+        method: 'POST',
+        body: JSON.stringify({ chain_ids }),
+      }),
   },
   orderOperations: {
     floorTasks: (floorId) =>
@@ -349,6 +354,19 @@ export const api = {
         method: 'POST',
       }),
     // ensure-batch удалён: партия создаётся только через complete (Завершить пошив → ОТК)
+  },
+  shipping: {
+    documentsList: () => request('/api/shipping/documents'),
+    documentPatch: (id, body) =>
+      request(`/api/shipping/documents/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    documentsFromChain: (chain_ids) =>
+      request('/api/shipping/documents/from-chain', {
+        method: 'POST',
+        body: JSON.stringify({ chain_ids }),
+      }),
   },
   otk: {
     documentsList: () => request('/api/otk/documents'),

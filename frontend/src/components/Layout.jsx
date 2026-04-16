@@ -159,6 +159,7 @@ export default function Layout() {
     '/finance': 'Финансы',
     '/warehouse': 'Склад',
     '/otk': 'ОТК',
+    '/shipping-plan': 'План отгрузки',
     '/qc': 'ОТК (партии)',
     '/shipments': 'Отгрузка',
     '/cutting': 'Раскрой',
@@ -243,6 +244,7 @@ export default function Layout() {
         { type: 'item', to: '/cutting', label: 'Раскрой', icon: 'cutting' },
         { type: 'item', to: '/sewing', label: 'Пошив', icon: 'floorTasks' },
         { type: 'item', to: '/otk', label: 'ОТК', icon: 'qc' },
+        { type: 'item', to: '/shipping-plan', label: 'План отгрузки', icon: 'shipments' },
         { type: 'item', to: '/warehouse', label: 'Склад', icon: 'warehouse' },
         { type: 'item', to: '/shipments', label: 'Отгрузка', icon: 'shipments' },
       ]

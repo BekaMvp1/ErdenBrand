@@ -37,6 +37,7 @@ const sizesRoutes = require("./routes/sizes");
 const boardRoutes = require("./routes/boardRoutes");
 const sewingRoutes = require("./routes/sewing");
 const otkRoutes = require("./routes/otk");
+const shippingDocumentsRoutes = require("./routes/shippingDocuments");
 const analyticsRoutes = require("./modules/analytics/analytics.routes");
 const assistantRoutes = require("./modules/assistant/assistant.routes");
 const plannerRoutes = require("./modules/planner/planner.routes");
@@ -298,6 +299,13 @@ app.use(
   requireRole("admin", "manager", "technologist", "operator"),
   technologistFloorOnly,
   otkRoutes,
+);
+app.use(
+  "/api/shipping",
+  authenticate,
+  requireRole("admin", "manager", "technologist", "operator"),
+  technologistFloorOnly,
+  shippingDocumentsRoutes,
 );
 app.use(
   "/api/analytics",

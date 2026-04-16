@@ -39,6 +39,30 @@ function parseReceiptDateInput(value) {
   return { ok: true, iso: s };
 }
 
+const SIZE_GRID_NUMS = [38, 40, 42, 44, 46, 48, 50, 52, 54, 56];
+
+function normalizeSizeGridNumeric(val) {
+  if (!Array.isArray(val)) return [];
+  return [
+    ...new Set(
+      val
+        .map((n) => parseInt(n, 10))
+        .filter((n) => Number.isFinite(n) && SIZE_GRID_NUMS.includes(n))
+    ),
+  ].sort((a, b) => a - b);
+}
+
+function normalizeSizeGridQuantities(val) {
+  if (val == null || typeof val !== 'object' || Array.isArray(val)) return {};
+  const out = {};
+  for (const [k, v] of Object.entries(val)) {
+    const n = parseInt(k, 10);
+    if (!Number.isFinite(n) || !SIZE_GRID_NUMS.includes(n)) continue;
+    out[String(n)] = Math.max(0, parseInt(v, 10) || 0);
+  }
+  return out;
+}
+
 /**
  * Нормализация строки для поиска по ключевым словам
  */
@@ -189,6 +213,8 @@ router.post('/', async (req, res, next) => {
       start_date,
       model_type,
       kit_parts,
+      size_grid_numeric,
+      size_grid_quantities,
     } = req.body;
 
     const nameFields = resolveOrderNameFields({ title, tz_code, model_name });
@@ -313,6 +339,12 @@ router.post('/', async (req, res, next) => {
       }
     }
 
+    let gridNums = normalizeSizeGridNumeric(size_grid_numeric);
+    if (gridNums.length === 0 && sizes && Array.isArray(sizes)) {
+      gridNums = normalizeSizeGridNumeric(sizes.map((s) => parseInt(s, 10)));
+    }
+    const gridQtys = normalizeSizeGridQuantities(size_grid_quantities);
+
     const t = await db.sequelize.transaction();
     let order;
     try {
@@ -338,6 +370,8 @@ router.post('/', async (req, res, next) => {
           status_id: statusAccepted.id,
           photos: photosArr,
           model_type: (model_type === 'set' ? 'set' : 'regular') || 'regular',
+          size_grid_numeric: gridNums.length ? gridNums : null,
+          size_grid_quantities: gridQtys,
         },
         { transaction: t }
       );
@@ -1529,6 +1563,8 @@ router.put('/:id', async (req, res, next) => {
       sizes,
       variants,
       model_type,
+      size_grid_numeric,
+      size_grid_quantities,
     } = req.body;
 
     const updates = {};
@@ -1570,6 +1606,13 @@ router.put('/:id', async (req, res, next) => {
     }
     if (model_type !== undefined) {
       updates.model_type = model_type === 'set' ? 'set' : 'regular';
+    }
+    if (size_grid_numeric !== undefined) {
+      const a = normalizeSizeGridNumeric(size_grid_numeric);
+      updates.size_grid_numeric = a.length ? a : null;
+    }
+    if (size_grid_quantities !== undefined) {
+      updates.size_grid_quantities = normalizeSizeGridQuantities(size_grid_quantities);
     }
 
     const { order_height_type, order_height_value } = req.body;
@@ -1909,6 +1952,15 @@ router.get('/:id', async (req, res, next) => {
     const variants = plain.OrderVariants || [];
     const sizes = [...new Set(variants.map((v) => v.Size?.name).filter(Boolean))].sort();
     const colors = [...new Set(variants.map((v) => v.color).filter(Boolean))].sort();
+    const size_grid = {
+      numeric: Array.isArray(plain.size_grid_numeric) ? plain.size_grid_numeric : [],
+      quantities:
+        plain.size_grid_quantities &&
+        typeof plain.size_grid_quantities === 'object' &&
+        !Array.isArray(plain.size_grid_quantities)
+          ? plain.size_grid_quantities
+          : {},
+    };
 
     const orderParts = (plain.OrderParts || []).map((p) => ({
       id: p.id,
@@ -1935,6 +1987,7 @@ router.get('/:id', async (req, res, next) => {
       })),
       sizes,
       colors,
+      size_grid,
       photos: plain.photos || [],
       order_comments: orderComments,
       order_parts: orderParts,

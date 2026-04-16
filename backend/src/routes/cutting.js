@@ -36,6 +36,8 @@ const cuttingDocumentInclude = [
       'photos',
       'quantity',
       'total_quantity',
+      'size_grid_numeric',
+      'size_grid_quantities',
     ],
     include: [{ model: db.Client, attributes: ['id', 'name'] }],
   },

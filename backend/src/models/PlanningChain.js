@@ -31,6 +31,14 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.DATEONLY,
         allowNull: false,
       },
+      otk_week_start: {
+        type: DataTypes.DATEONLY,
+        allowNull: true,
+      },
+      shipping_week_start: {
+        type: DataTypes.DATEONLY,
+        allowNull: true,
+      },
       purchase_status: {
         type: DataTypes.STRING(16),
         allowNull: false,
@@ -43,6 +51,16 @@ module.exports = (sequelize, DataTypes) => {
       },
       sewing_status: {
         type: DataTypes.STRING(16),
+        allowNull: false,
+        defaultValue: 'pending',
+      },
+      otk_status: {
+        type: DataTypes.STRING(20),
+        allowNull: false,
+        defaultValue: 'pending',
+      },
+      shipping_status: {
+        type: DataTypes.STRING(20),
         allowNull: false,
         defaultValue: 'pending',
       },

@@ -177,7 +177,13 @@ function badgeMeta(mondayIso, status, todayMonday) {
 
 function rowMatchesStatusFilter(row, filter) {
   if (filter === 'all') return true;
-  const sts = [row.purchase_status, row.cutting_status, row.sewing_status];
+  const sts = [
+    row.purchase_status,
+    row.cutting_status,
+    row.sewing_status,
+    row.otk_status,
+    row.shipping_status,
+  ];
   if (filter === 'done') return sts.every((s) => s === 'done');
   if (filter === 'in_progress') return sts.some((s) => s === 'in_progress');
   if (filter === 'pending') return sts.some((s) => s === 'pending');
@@ -381,11 +387,24 @@ export default function ProductionChain() {
     if (!docId || !newIso) return;
     if (import.meta.env.DEV) console.log('[Move]', docType, docId, chainRowId, newIso);
     try {
-      const updated =
+      let updated;
+      if (docType === 'purchase') {
+        updated = await api.purchase.documentPatch(docId, { actual_week_start: newIso });
+      } else if (docType === 'cutting') {
+        updated = await api.cutting.documentPatch(docId, { actual_week_start: newIso });
+      } else if (docType === 'otk') {
+        updated = await api.otk.documentPatch(docId, { actual_week_start: newIso });
+      } else {
+        updated = await api.shipping.documentPatch(docId, { actual_week_start: newIso });
+      }
+      const key =
         docType === 'purchase'
-          ? await api.purchase.documentPatch(docId, { actual_week_start: newIso })
-          : await api.cutting.documentPatch(docId, { actual_week_start: newIso });
-      const key = docType === 'purchase' ? 'purchase_doc' : 'cutting_doc';
+          ? 'purchase_doc'
+          : docType === 'cutting'
+            ? 'cutting_doc'
+            : docType === 'otk'
+              ? 'otk_doc'
+              : 'shipping_doc';
       const nid = Number(chainRowId);
       setRows((prev) =>
         prev.map((x) =>
@@ -417,6 +436,22 @@ export default function ProductionChain() {
             Number(x.id) === nid ? { ...x, cutting_doc: { ...(x.cutting_doc || {}), ...updated } } : x
           )
         );
+      } else if (docId && docType === 'otk') {
+        const updated = await api.otk.documentPatch(docId, { status: value });
+        setRows((prev) =>
+          prev.map((x) =>
+            Number(x.id) === nid ? { ...x, otk_doc: { ...(x.otk_doc || {}), ...updated } } : x
+          )
+        );
+      } else if (docId && docType === 'shipping') {
+        const updated = await api.shipping.documentPatch(docId, { status: value });
+        setRows((prev) =>
+          prev.map((x) =>
+            Number(x.id) === nid
+              ? { ...x, shipping_doc: { ...(x.shipping_doc || {}), ...updated } }
+              : x
+          )
+        );
       } else {
         const updated = await api.planning.chainPatch(chainRowId, { [field]: value });
         if (import.meta.env.DEV) console.log('[Status] chain:', updated);
@@ -430,8 +465,12 @@ export default function ProductionChain() {
               purchase_status: updated?.purchase_status ?? x.purchase_status,
               cutting_status: updated?.cutting_status ?? x.cutting_status,
               sewing_status: updated?.sewing_status ?? x.sewing_status,
+              otk_status: updated?.otk_status ?? x.otk_status,
+              shipping_status: updated?.shipping_status ?? x.shipping_status,
               purchase_doc: updated?.purchase_doc ?? x.purchase_doc,
               cutting_doc: updated?.cutting_doc ?? x.cutting_doc,
+              otk_doc: updated?.otk_doc ?? x.otk_doc,
+              shipping_doc: updated?.shipping_doc ?? x.shipping_doc,
             };
           })
         );
@@ -470,6 +509,8 @@ export default function ProductionChain() {
       ['purchase_week_start', 'purchase_status'],
       ['cutting_week_start', 'cutting_status'],
       ['sewing_week_start', 'sewing_status'],
+      ['otk_week_start', 'otk_status'],
+      ['shipping_week_start', 'shipping_status'],
     ];
     return triple.some(([wk, sk]) => {
       if (row[sk] !== 'pending') return false;
@@ -668,7 +709,7 @@ export default function ProductionChain() {
                     />
                   </th>
                 ))}
-                {['Закуп', 'Раскрой', 'Пошив'].map((title, si) => (
+                {['Закуп', 'Раскрой', 'Пошив', 'ОТК', 'Отгрузка'].map((title, si) => (
                   <th
                     key={title}
                     colSpan={1}
@@ -693,7 +734,7 @@ export default function ProductionChain() {
             <tbody>
               {filteredRows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-4" style={{ color: 'var(--muted)' }}>
+                  <td colSpan={10} className="p-4" style={{ color: 'var(--muted)' }}>
                     {rows.length === 0
                       ? 'Нет записей в цепочке — сформируйте план в «Планирование месяц»'
                       : rowsWithSewingInNavMonth.length === 0
@@ -771,6 +812,26 @@ export default function ProductionChain() {
                         const stS = row.sewing_status;
                         const metaS = badgeMeta(monS, stS, todayMonday);
                         const badgeS = chainBadgeClassName(monS, stS, todayMonday);
+                        const od = row.otk_doc;
+                        const planO = chainDateIso(row.otk_week_start);
+                        const actO =
+                          chainDateIso(od?.actual_week_start) ||
+                          chainDateIso(od?.week_start) ||
+                          planO;
+                        const movedO = !!(od && planO && actO && planO !== actO);
+                        const stO = od?.status ?? row.otk_status;
+                        const metaO = badgeMeta(planO, stO, todayMonday);
+                        const badgeO = chainBadgeClassName(planO, stO, todayMonday);
+                        const sd = row.shipping_doc;
+                        const planSh = chainDateIso(row.shipping_week_start);
+                        const actSh =
+                          chainDateIso(sd?.actual_week_start) ||
+                          chainDateIso(sd?.week_start) ||
+                          planSh;
+                        const movedSh = !!(sd && planSh && actSh && planSh !== actSh);
+                        const stSh = sd?.status ?? row.shipping_status;
+                        const metaSh = badgeMeta(planSh, stSh, todayMonday);
+                        const badgeSh = chainBadgeClassName(planSh, stSh, todayMonday);
                         return (
                           <>
                             <td
@@ -917,6 +978,134 @@ export default function ProductionChain() {
                                 }}
                               >
                                 {metaS.label}
+                              </button>
+                            </td>
+                            <td
+                              className="pc-chain-cell border px-1 py-1"
+                              style={{
+                                borderColor: 'var(--border)',
+                                borderLeft: '1px solid #1a1a1a',
+                                width: colWidths.stage * 2,
+                              }}
+                            >
+                              <div className="pc-mini-label">План:</div>
+                              <div
+                                className="pc-chain-week"
+                                style={
+                                  movedO
+                                    ? { textDecoration: 'line-through', color: '#64748b' }
+                                    : undefined
+                                }
+                              >
+                                {planO ? formatChainWeekRange(planO) : '—'}
+                              </div>
+                              {od ? (
+                                <>
+                                  <div className="pc-mini-label mt-0.5">Факт:</div>
+                                  <select
+                                    className="pc-week-select"
+                                    value={actO}
+                                    disabled={!canPatch}
+                                    onChange={(e) =>
+                                      moveDocWeek('otk', od.id, row.id, e.target.value)
+                                    }
+                                  >
+                                    {selectableWeeks.map((w) => (
+                                      <option key={w.start} value={w.start}>
+                                        {w.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {movedO ? (
+                                    <div className="mt-0.5 text-[10px]" style={{ color: '#f59e0b' }}>
+                                      ↗ перенесено · {formatChainWeekRange(actO)}
+                                    </div>
+                                  ) : null}
+                                </>
+                              ) : null}
+                              <button
+                                type="button"
+                                disabled={!canPatch}
+                                className={badgeO}
+                                onClick={(e) => {
+                                  if (!canPatch) return;
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  setDropdown({
+                                    chainRowId: row.id,
+                                    field: 'otk_status',
+                                    current: stO,
+                                    docId: od?.id ?? null,
+                                    docType: od ? 'otk' : null,
+                                    left: rect.left,
+                                    top: rect.bottom + 4,
+                                  });
+                                }}
+                              >
+                                {metaO.label}
+                              </button>
+                            </td>
+                            <td
+                              className="pc-chain-cell border px-1 py-1"
+                              style={{
+                                borderColor: 'var(--border)',
+                                borderLeft: '1px solid #1a1a1a',
+                                width: colWidths.stage * 2,
+                              }}
+                            >
+                              <div className="pc-mini-label">План:</div>
+                              <div
+                                className="pc-chain-week"
+                                style={
+                                  movedSh
+                                    ? { textDecoration: 'line-through', color: '#64748b' }
+                                    : undefined
+                                }
+                              >
+                                {planSh ? formatChainWeekRange(planSh) : '—'}
+                              </div>
+                              {sd ? (
+                                <>
+                                  <div className="pc-mini-label mt-0.5">Факт:</div>
+                                  <select
+                                    className="pc-week-select"
+                                    value={actSh}
+                                    disabled={!canPatch}
+                                    onChange={(e) =>
+                                      moveDocWeek('shipping', sd.id, row.id, e.target.value)
+                                    }
+                                  >
+                                    {selectableWeeks.map((w) => (
+                                      <option key={w.start} value={w.start}>
+                                        {w.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {movedSh ? (
+                                    <div className="mt-0.5 text-[10px]" style={{ color: '#f59e0b' }}>
+                                      ↗ перенесено · {formatChainWeekRange(actSh)}
+                                    </div>
+                                  ) : null}
+                                </>
+                              ) : null}
+                              <button
+                                type="button"
+                                disabled={!canPatch}
+                                className={badgeSh}
+                                onClick={(e) => {
+                                  if (!canPatch) return;
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  setDropdown({
+                                    chainRowId: row.id,
+                                    field: 'shipping_status',
+                                    current: stSh,
+                                    docId: sd?.id ?? null,
+                                    docType: sd ? 'shipping' : null,
+                                    left: rect.left,
+                                    top: rect.bottom + 4,
+                                  });
+                                }}
+                              >
+                                {metaSh.label}
                               </button>
                             </td>
                           </>

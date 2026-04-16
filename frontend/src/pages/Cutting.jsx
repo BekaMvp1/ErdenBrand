@@ -18,6 +18,15 @@ import {
   docMatchesChainSectionFilter,
   effectiveChainSectionKey,
 } from '../utils/planChainWorkshops';
+import {
+  getSizeLetter,
+  FACT_HEAD_COLOR_TOP,
+  FACT_HEAD_COLOR_BOTTOM,
+  FACT_HEAD_TOTAL_TOP,
+  FACT_HEAD_TOTAL_BOTTOM,
+  factMatrixHeadNumStyle,
+  factMatrixHeadLetterStyle,
+} from '../utils/sizeGridHeader';
 
 function chainDateIsoCut(v) {
   if (v == null || v === '') return '';
@@ -1327,13 +1336,26 @@ export default function Cutting() {
         size: v.size != null ? String(v.size).trim() : '',
         quantity: Math.max(0, parseInt(v.quantity, 10) || 0),
       }));
+      const gridNums = orderRes.size_grid?.numeric || orderRes.size_grid_numeric || [];
+      const factsFromApi = (factsRes || []).map((f) => ({ ...f }));
+      let cutting_facts = factsFromApi;
+      if (factsFromApi.length === 0 && Array.isArray(gridNums) && gridNums.length > 0) {
+        const defaultColor =
+          (specification.find((s) => String(s.color || '').trim()) || {}).color?.trim() || 'Основной';
+        cutting_facts = gridNums.map((num) => ({
+          color: defaultColor,
+          size: String(num),
+          quantity: 0,
+          isNew: true,
+        }));
+      }
       setFactModal((prev) =>
         prev && Number(prev.id) === Number(doc.id)
           ? {
               ...prev,
               Order: orderRes,
               specification,
-              cutting_facts: factsRes.map((f) => ({ ...f })),
+              cutting_facts,
               _orderSpecLoading: false,
             }
           : prev
@@ -2270,6 +2292,8 @@ export default function Cutting() {
                   const getGrandPlan = () =>
                     colors.reduce((sum, color) => sum + getRowPlan(color), 0);
 
+                  const orderForHead = factModal.Order;
+
                   return (
                     <div style={{ overflowX: 'auto' }}>
                         <table
@@ -2280,43 +2304,23 @@ export default function Cutting() {
                           }}
                         >
                           <thead>
-                            <tr style={{ borderBottom: '1px solid #333' }}>
-                              <th
-                                style={{
-                                  textAlign: 'left',
-                                  padding: '10px 12px',
-                                  color: '#666',
-                                  fontWeight: 500,
-                                  minWidth: 120,
-                                }}
-                              >
-                                Цвет
-                              </th>
+                            <tr>
+                              <th style={FACT_HEAD_COLOR_TOP}>Цвет</th>
                               {sizes.map((size) => (
-                                <th
-                                  key={size}
-                                  style={{
-                                    textAlign: 'center',
-                                    padding: '10px 16px',
-                                    color: '#aaa',
-                                    fontWeight: 500,
-                                    minWidth: 80,
-                                  }}
-                                >
+                                <th key={size} style={factMatrixHeadNumStyle(size, orderForHead)}>
                                   {size}
                                 </th>
                               ))}
-                              <th
-                                style={{
-                                  textAlign: 'right',
-                                  padding: '10px 12px',
-                                  color: '#888',
-                                  fontWeight: 500,
-                                  minWidth: 80,
-                                }}
-                              >
-                                Итого
-                              </th>
+                              <th style={FACT_HEAD_TOTAL_TOP}>Итого</th>
+                            </tr>
+                            <tr style={{ borderBottom: '1px solid #333' }}>
+                              <th style={FACT_HEAD_COLOR_BOTTOM} aria-hidden />
+                              {sizes.map((size) => (
+                                <th key={`letter-${size}`} style={factMatrixHeadLetterStyle(size, orderForHead)}>
+                                  {getSizeLetter(size)}
+                                </th>
+                              ))}
+                              <th style={FACT_HEAD_TOTAL_BOTTOM} aria-hidden />
                             </tr>
                           </thead>
                           <tbody>

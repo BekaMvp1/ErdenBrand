@@ -26,6 +26,7 @@ import Warehouse from "./pages/Warehouse";
 import Qc from "./pages/Qc";
 import Otk from "./pages/Otk";
 import Shipments from "./pages/Shipments";
+import Shipping from "./pages/Shipping";
 import References from "./pages/References";
 import Finance2026 from "./pages/Finance2026";
 import Settings from "./pages/Settings";
@@ -78,6 +79,7 @@ export default function App() {
                 <Route path="otk" element={<Otk />} />
                 <Route path="qc" element={<Qc />} />
                 <Route path="shipments" element={<Shipments />} />
+                <Route path="shipping-plan" element={<Shipping />} />
                 <Route path="finance" element={<Finance2026 />} />
                 <Route path="references" element={<References />} />
                 <Route path="settings" element={<Settings />} />

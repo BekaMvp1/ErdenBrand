@@ -2295,6 +2295,38 @@ function normalizeChainIsoDate(v) {
   return s;
 }
 
+/** Понедельник через `weeks` полных календарных недель от понедельника `mondayIso`. */
+function addWeeksToMondayIso(mondayIso, weeks) {
+  if (!mondayIso || !Number.isFinite(weeks) || weeks <= 0) return mondayIso;
+  const d = new Date(`${mondayIso}T12:00:00`);
+  d.setDate(d.getDate() + weeks * 7);
+  return getWeekStart(d.toISOString().slice(0, 10));
+}
+
+/**
+ * Недели ОТК и отгрузки: из тела запроса или из настроек цикла (после пошива / после ОТК).
+ */
+function resolveChainOtkShippingWeeks(sewingMondayIso, bodyItem, settingsRow) {
+  let otkWs = normalizeChainIsoDate(bodyItem.otk_week_start);
+  let shipWs = normalizeChainIsoDate(bodyItem.shipping_week_start);
+  const otkRaw = settingsRow?.otk_lead_weeks;
+  const shipRaw = settingsRow?.shipping_lead_weeks;
+  const otkN = Math.min(4, Math.max(0, Number.isFinite(Number(otkRaw)) ? Number(otkRaw) : 1));
+  const shipN = Math.min(4, Math.max(0, Number.isFinite(Number(shipRaw)) ? Number(shipRaw) : 0));
+  const fallbackOtk = otkN > 0 ? addWeeksToMondayIso(sewingMondayIso, otkN) : sewingMondayIso;
+  if (!otkWs) {
+    otkWs = fallbackOtk;
+  } else {
+    otkWs = getWeekStart(otkWs);
+  }
+  if (!shipWs) {
+    shipWs = shipN > 0 ? addWeeksToMondayIso(otkWs, shipN) : otkWs;
+  } else {
+    shipWs = getWeekStart(shipWs);
+  }
+  return { otkWs, shipWs };
+}
+
 const chainOrderInclude = {
   model: db.Order,
   attributes: [
@@ -2325,6 +2357,8 @@ const chainRowIncludes = [
   chainOrderInclude,
   { model: db.PurchaseDocument, as: 'purchase_doc', required: false },
   { model: db.CuttingDocument, as: 'cutting_doc', required: false },
+  { model: db.OtkDocument, as: 'otk_doc', required: false },
+  { model: db.ShippingDocument, as: 'shipping_doc', required: false },
 ];
 
 /**
@@ -2346,7 +2380,7 @@ router.get('/chain', async (req, res, next) => {
 
 /**
  * POST /api/planning/chain
- * Тело: массив [{ order_id, section_id, purchase_week_start, cutting_week_start, sewing_week_start }]
+ * Тело: массив [{ order_id, section_id, purchase_week_start, cutting_week_start, sewing_week_start, otk_week_start?, shipping_week_start? }]
  * Только admin / manager.
  */
 router.post('/chain', async (req, res, next) => {
@@ -2360,6 +2394,7 @@ router.post('/chain', async (req, res, next) => {
     }
     const out = [];
     const rowErrors = [];
+    const settingsRow = await db.ProductionCycleSettings.findOne({ order: [['id', 'ASC']] });
     for (const it of items.slice(0, 500)) {
       try {
         const orderId = parseInt(it.order_id, 10);
@@ -2368,6 +2403,7 @@ router.post('/chain', async (req, res, next) => {
         const cs = normalizeChainIsoDate(it.cutting_week_start);
         const ss = normalizeChainIsoDate(it.sewing_week_start);
         if (!orderId || !sectionId || !ps || !cs || !ss) continue;
+        const { otkWs, shipWs } = resolveChainOtkShippingWeeks(ss, it, settingsRow);
         const order = await db.Order.findByPk(orderId);
         if (!order) continue;
         const [rec, created] = await db.PlanningChain.findOrCreate({
@@ -2378,9 +2414,13 @@ router.post('/chain', async (req, res, next) => {
             purchase_week_start: ps,
             cutting_week_start: cs,
             sewing_week_start: ss,
+            otk_week_start: otkWs,
+            shipping_week_start: shipWs,
             purchase_status: 'pending',
             cutting_status: 'pending',
             sewing_status: 'pending',
+            otk_status: 'pending',
+            shipping_status: 'pending',
           },
         });
         if (!created) {
@@ -2388,6 +2428,8 @@ router.post('/chain', async (req, res, next) => {
             purchase_week_start: ps,
             cutting_week_start: cs,
             sewing_week_start: ss,
+            otk_week_start: otkWs,
+            shipping_week_start: shipWs,
           });
         }
         out.push(rec.toJSON());
@@ -2428,8 +2470,27 @@ router.post('/chain', async (req, res, next) => {
 });
 
 /**
+ * POST /api/planning/chain/sync-documents
+ * Создать/обновить документы закупа, раскроя, ОТК и отгрузки по id цепочек.
+ */
+router.post('/chain/sync-documents', async (req, res, next) => {
+  try {
+    if (!['admin', 'manager'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Только admin/manager' });
+    }
+    const chainIds = Array.isArray(req.body?.chain_ids) ? req.body.chain_ids : [];
+    await syncDocumentsForChainIds(chainIds);
+    await logAudit(req.user.id, 'SYNC', 'planning_chain_documents', chainIds.length);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[planning/chain/sync-documents]', err.message, err.stack);
+    next(err);
+  }
+});
+
+/**
  * PATCH /api/planning/chain/:id
- * body: { purchase_status?, cutting_status?, sewing_status? }
+ * body: статусы и/или даты недель этапов
  */
 router.patch('/chain/:id', async (req, res, next) => {
   try {
@@ -2441,13 +2502,35 @@ router.patch('/chain/:id', async (req, res, next) => {
     const row = await db.PlanningChain.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Не найдено' });
     const patch = {};
-    for (const k of ['purchase_status', 'cutting_status', 'sewing_status']) {
+    for (const k of [
+      'purchase_status',
+      'cutting_status',
+      'sewing_status',
+      'otk_status',
+      'shipping_status',
+    ]) {
       if (req.body[k] !== undefined) {
         const v = String(req.body[k]).trim();
         if (!CHAIN_STATUSES.has(v)) {
           return res.status(400).json({ error: `Недопустимый ${k}` });
         }
         patch[k] = v;
+      }
+    }
+    const weekKeys = [
+      'purchase_week_start',
+      'cutting_week_start',
+      'sewing_week_start',
+      'otk_week_start',
+      'shipping_week_start',
+    ];
+    for (const k of weekKeys) {
+      if (req.body[k] !== undefined) {
+        const raw = normalizeChainIsoDate(req.body[k]);
+        if (!raw) {
+          return res.status(400).json({ error: `Некорректная дата ${k}` });
+        }
+        patch[k] = getWeekStart(raw);
       }
     }
     if (Object.keys(patch).length === 0) {

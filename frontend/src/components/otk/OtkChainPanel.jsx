@@ -18,6 +18,13 @@ import {
   docMatchesChainSectionFilter,
   effectiveChainSectionKey,
 } from '../../utils/planChainWorkshops';
+import {
+  getSizeLetter,
+  FACT_HEAD_COLOR_TOP,
+  FACT_HEAD_COLOR_BOTTOM,
+  factMatrixHeadNumStyle,
+  factMatrixHeadLetterStyle,
+} from '../../utils/sizeGridHeader';
 
 function chainDateIso(v) {
   if (v == null || v === '') return '';
@@ -488,19 +495,24 @@ export default function OtkChainPanel() {
             <tbody>
               {docsByWeek.map(([weekKey, weekDocs]) => (
                 <Fragment key={weekKey}>
-                  <tr style={{ background: '#1a1a24' }}>
+                  <tr>
                     <td
                       colSpan={11}
                       style={{
-                        padding: '8px 12px',
-                        fontSize: 13,
-                        fontWeight: 600,
-                        color: '#94a3b8',
+                        background: '#1a237e',
+                        color: '#fff',
+                        padding: '6px 12px',
+                        fontSize: 12,
+                        fontWeight: 700,
                         borderBottom: '1px solid #2a2a2a',
                       }}
                     >
-                      Неделя: {weekKey === '__none' ? '—' : formatWeekRangeLabel(weekKey)} — {weekDocs.length}{' '}
-                      заказов
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>Неделя ОТК: {weekKey === '__none' ? '—' : formatWeekRangeLabel(weekKey)}</span>
+                        <span style={{ opacity: 0.85, fontWeight: 400 }}>
+                          {weekDocs.length} заказов
+                        </span>
+                      </div>
                     </td>
                   </tr>
                   {weekDocs.map((doc) => {
@@ -791,15 +803,24 @@ export default function OtkChainPanel() {
                   const sizes = [...new Set(facts.map((f) => String(f.size ?? '').trim()).filter(Boolean))].sort(
                     (a, b) => a.localeCompare(b, 'ru')
                   );
+                  const orderForHead = modal.Order;
                   return (
                     <div style={{ overflowX: 'auto' }}>
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                         <thead>
-                          <tr style={{ borderBottom: '1px solid #333' }}>
-                            <th style={{ textAlign: 'left', padding: 8, color: '#888' }}>Цвет</th>
+                          <tr>
+                            <th style={FACT_HEAD_COLOR_TOP}>Цвет</th>
                             {sizes.map((sz) => (
-                              <th key={sz} style={{ textAlign: 'center', padding: 8, color: '#aaa', minWidth: 100 }}>
+                              <th key={sz} style={factMatrixHeadNumStyle(sz, orderForHead)}>
                                 {sz}
+                              </th>
+                            ))}
+                          </tr>
+                          <tr style={{ borderBottom: '1px solid #333' }}>
+                            <th style={FACT_HEAD_COLOR_BOTTOM} aria-hidden />
+                            {sizes.map((sz) => (
+                              <th key={`letter-${sz}`} style={factMatrixHeadLetterStyle(sz, orderForHead)}>
+                                {getSizeLetter(sz)}
                               </th>
                             ))}
                           </tr>

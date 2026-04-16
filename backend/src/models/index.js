@@ -118,6 +118,7 @@ const db = {
   OtkDocument: require('./OtkDocument')(sequelize, Sequelize.DataTypes),
   OtkFactDetail: require('./OtkFactDetail')(sequelize, Sequelize.DataTypes),
   OtkWarehouseItem: require('./OtkWarehouseItem')(sequelize, Sequelize.DataTypes),
+  ShippingDocument: require('./ShippingDocument')(sequelize, Sequelize.DataTypes),
 };
 
 // Связи
@@ -154,6 +155,12 @@ db.PurchaseDocument.belongsTo(db.Order, { foreignKey: 'order_id' });
 
 db.PlanningChain.hasOne(db.CuttingDocument, { foreignKey: 'chain_id', as: 'cutting_doc' });
 db.CuttingDocument.belongsTo(db.PlanningChain, { foreignKey: 'chain_id' });
+
+db.PlanningChain.hasOne(db.OtkDocument, { foreignKey: 'chain_id', as: 'otk_doc' });
+db.PlanningChain.hasOne(db.ShippingDocument, { foreignKey: 'chain_id', as: 'shipping_doc' });
+db.ShippingDocument.belongsTo(db.PlanningChain, { foreignKey: 'chain_id' });
+db.Order.hasMany(db.ShippingDocument, { foreignKey: 'order_id' });
+db.ShippingDocument.belongsTo(db.Order, { foreignKey: 'order_id' });
 db.Order.hasMany(db.CuttingDocument, { foreignKey: 'order_id' });
 db.CuttingDocument.belongsTo(db.Order, { foreignKey: 'order_id' });
 

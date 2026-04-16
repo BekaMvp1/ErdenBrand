@@ -7,7 +7,7 @@ import { createPortal } from 'react-dom';
 import { api } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { useOrderProgress } from '../context/OrderProgressContext';
-import { subtractWeeksMonday, formatWeekRangeShort } from '../utils/cycleWeekLabels';
+import { subtractWeeksMonday, addWeeksMonday, formatWeekRangeShort } from '../utils/cycleWeekLabels';
 import { toBase64, formatWeek } from '../utils/printUtils';
 import {
   buildPlanningMonthPrintHtml,
@@ -364,7 +364,16 @@ function getFirstPlannedWeekMonday(cells) {
  * Строки для POST /api/planning/chain из дерева черновика.
  * @returns {{ rows: Array, skippedNoPlan: number, ordersInTable: number }}
  */
-function collectProductionChainRows(sectionTree, orders, allWeeks, weekSliceStart, purchaseLead, cuttingLead) {
+function collectProductionChainRows(
+  sectionTree,
+  orders,
+  allWeeks,
+  weekSliceStart,
+  purchaseLead,
+  cuttingLead,
+  otkLead,
+  shippingLead
+) {
   let skippedNoPlan = 0;
   let ordersInTable = 0;
   const rows = [];
@@ -390,12 +399,18 @@ function collectProductionChainRows(sectionTree, orders, allWeeks, weekSliceStar
         const order = orders[r.orderIdx];
         const cuttingMonday = subtractWeeksMonday(sewingMonday, cuttingLead);
         const purchaseMonday = subtractWeeksMonday(sewingMonday, purchaseLead);
+        const otkMonday =
+          otkLead > 0 ? addWeeksMonday(sewingMonday, otkLead) : sewingMonday;
+        const shippingMonday =
+          shippingLead > 0 ? addWeeksMonday(otkMonday, shippingLead) : otkMonday;
         rows.push({
           order_id: order.id,
           section_id: sectionId,
           purchase_week_start: purchaseMonday,
           cutting_week_start: cuttingMonday,
           sewing_week_start: sewingMonday,
+          otk_week_start: otkMonday,
+          shipping_week_start: shippingMonday,
           orderLabel: orderDisplayName(order),
         });
       }
@@ -410,6 +425,8 @@ function buildDevTestChainPayload(sectionTree, orders, limit = 3) {
     sewing_week_start: '2026-04-13',
     cutting_week_start: '2026-03-30',
     purchase_week_start: '2026-03-23',
+    otk_week_start: '2026-04-13',
+    shipping_week_start: '2026-04-13',
   };
   const out = [];
   for (const sec of sectionTree || []) {
@@ -1971,6 +1988,10 @@ export default function PlanningDraft({ viewMode = 'month' }) {
       if (import.meta.env.DEV) console.log('[Chain] настройки:', cfg);
       const p = Math.min(8, Math.max(1, Number(cfg.purchaseLeadWeeks) || 3));
       const c = Math.min(6, Math.max(1, Number(cfg.cuttingLeadWeeks) || 2));
+      const otkN = Number(cfg.otkLeadWeeks);
+      const o = Math.min(4, Math.max(0, Number.isFinite(otkN) ? otkN : 1));
+      const shipN = Number(cfg.shippingLeadWeeks);
+      const sh = Math.min(4, Math.max(0, Number.isFinite(shipN) ? shipN : 0));
       const tree = sectionTreeRef.current;
       const ord = ordersRef.current;
       if (import.meta.env.DEV) {
@@ -1983,7 +2004,9 @@ export default function PlanningDraft({ viewMode = 'month' }) {
         weeks,
         weekSliceRef.current,
         p,
-        c
+        c,
+        o,
+        sh
       );
       if (import.meta.env.DEV) {
         console.log('[Chain] вычисленная цепочка:', rows);
@@ -2027,6 +2050,8 @@ export default function PlanningDraft({ viewMode = 'month' }) {
         purchase_week_start: r.purchase_week_start,
         cutting_week_start: r.cutting_week_start,
         sewing_week_start: r.sewing_week_start,
+        otk_week_start: r.otk_week_start,
+        shipping_week_start: r.shipping_week_start,
       }));
       if (import.meta.env.DEV) {
         console.log('[Chain] отправляем:', payload);
@@ -2036,14 +2061,9 @@ export default function PlanningDraft({ viewMode = 'month' }) {
       if (import.meta.env.DEV) console.log('[Chain] ответ сохранения:', res);
       const ids = Array.isArray(res?.ids) ? res.ids : [];
       if (ids.length > 0) {
-        await Promise.all([
-          api.purchase.documentsFromChain(ids).catch((e) => {
-            if (import.meta.env.DEV) console.warn('[Chain] purchase documents/from-chain:', e);
-          }),
-          api.cutting.documentsFromChain(ids).catch((e) => {
-            if (import.meta.env.DEV) console.warn('[Chain] cutting documents/from-chain:', e);
-          }),
-        ]);
+        await api.planning.chainSyncDocuments(ids).catch((e) => {
+          if (import.meta.env.DEV) console.warn('[Chain] sync-documents:', e);
+        });
       }
       setChainModalOpen(false);
       setChainPreviewRows([]);
@@ -4067,6 +4087,12 @@ export default function PlanningDraft({ viewMode = 'month' }) {
                       <th className="border px-2 py-2 text-left" style={{ borderColor: 'var(--border)' }}>
                         Пошив
                       </th>
+                      <th className="border px-2 py-2 text-left" style={{ borderColor: 'var(--border)' }}>
+                        ОТК
+                      </th>
+                      <th className="border px-2 py-2 text-left" style={{ borderColor: 'var(--border)' }}>
+                        Отгрузка
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -4083,6 +4109,12 @@ export default function PlanningDraft({ viewMode = 'month' }) {
                         </td>
                         <td className="border px-2 py-1.5" style={{ borderColor: 'var(--border)' }}>
                           {formatWeekRangeShort(r.sewing_week_start)}
+                        </td>
+                        <td className="border px-2 py-1.5" style={{ borderColor: 'var(--border)' }}>
+                          {formatWeekRangeShort(r.otk_week_start)}
+                        </td>
+                        <td className="border px-2 py-1.5" style={{ borderColor: 'var(--border)' }}>
+                          {formatWeekRangeShort(r.shipping_week_start)}
                         </td>
                       </tr>
                     ))}

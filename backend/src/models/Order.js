@@ -118,6 +118,16 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: 'regular',
       comment: 'regular | set — Обычная | Комплект (двойка, тройка)',
     },
+    /** Размеры сетки 38–56 (дублирует выбор в UI, не заменяет OrderVariant) */
+    size_grid_numeric: {
+      type: DataTypes.ARRAY(DataTypes.INTEGER),
+      allowNull: true,
+    },
+    size_grid_quantities: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+      defaultValue: {},
+    },
   }, {
     tableName: 'orders',
     timestamps: true,

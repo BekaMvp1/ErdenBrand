@@ -53,11 +53,18 @@ router.get('/production-cycle', async (req, res, next) => {
     }
     const row = await db.ProductionCycleSettings.findOne({ order: [['id', 'ASC']] });
     if (!row) {
-      return res.json({ purchaseLeadWeeks: 3, cuttingLeadWeeks: 2 });
+      return res.json({
+        purchaseLeadWeeks: 3,
+        cuttingLeadWeeks: 2,
+        otkLeadWeeks: 1,
+        shippingLeadWeeks: 0,
+      });
     }
     res.json({
       purchaseLeadWeeks: row.purchase_lead_weeks,
       cuttingLeadWeeks: row.cutting_lead_weeks,
+      otkLeadWeeks: row.otk_lead_weeks ?? 1,
+      shippingLeadWeeks: row.shipping_lead_weeks ?? 0,
     });
   } catch (err) {
     console.error('[settings/production-cycle GET]', err.message);
@@ -67,7 +74,7 @@ router.get('/production-cycle', async (req, res, next) => {
 
 /**
  * POST /api/settings/production-cycle
- * body: { purchaseLeadWeeks, cuttingLeadWeeks }
+ * body: { purchaseLeadWeeks, cuttingLeadWeeks, otkLeadWeeks?, shippingLeadWeeks? }
  */
 router.post('/production-cycle', async (req, res, next) => {
   try {
@@ -76,21 +83,35 @@ router.post('/production-cycle', async (req, res, next) => {
     }
     const p = Math.min(8, Math.max(1, parseInt(req.body?.purchaseLeadWeeks, 10) || 3));
     const c = Math.min(6, Math.max(1, parseInt(req.body?.cuttingLeadWeeks, 10) || 2));
+    const otkRaw = parseInt(req.body?.otkLeadWeeks, 10);
+    const shipRaw = parseInt(req.body?.shippingLeadWeeks, 10);
+    const o = Math.min(4, Math.max(0, Number.isFinite(otkRaw) ? otkRaw : 1));
+    const s = Math.min(4, Math.max(0, Number.isFinite(shipRaw) ? shipRaw : 0));
     let row = await db.ProductionCycleSettings.findByPk(1);
     if (!row) {
       row = await db.ProductionCycleSettings.create({
         purchase_lead_weeks: p,
         cutting_lead_weeks: c,
+        otk_lead_weeks: o,
+        shipping_lead_weeks: s,
         updated_by: req.user.id,
       });
     } else {
-      await row.update({ purchase_lead_weeks: p, cutting_lead_weeks: c, updated_by: req.user.id });
+      await row.update({
+        purchase_lead_weeks: p,
+        cutting_lead_weeks: c,
+        otk_lead_weeks: o,
+        shipping_lead_weeks: s,
+        updated_by: req.user.id,
+      });
     }
     await row.reload();
     await logAudit(req.user.id, 'UPDATE', 'production_cycle_settings', row.id);
     res.json({
       purchaseLeadWeeks: row.purchase_lead_weeks,
       cuttingLeadWeeks: row.cutting_lead_weeks,
+      otkLeadWeeks: row.otk_lead_weeks ?? 1,
+      shippingLeadWeeks: row.shipping_lead_weeks ?? 0,
     });
   } catch (err) {
     console.error('[settings/production-cycle POST]', err.message);

@@ -10,6 +10,7 @@ import { api } from '../api';
 import { useRefreshOnVisible } from '../hooks/useRefreshOnVisible';
 import { NeonButton, NeonCard, NeonInput, NeonSelect } from '../components/ui';
 import ModelPhoto from '../components/ModelPhoto';
+import { SIZE_GRID_MAP } from '../components/SizeGrid';
 
 const STATUS_COLORS = {
   Принят: 'bg-gray-500/20 text-gray-900 dark:text-gray-100',
@@ -53,6 +54,27 @@ function formatOrderReceiptColumn(order) {
   } catch {
     return '—';
   }
+}
+
+function OrderSizeGridChips({ order }) {
+  const nums = order.size_grid_numeric || order.size_grid?.numeric;
+  if (!Array.isArray(nums) || nums.length === 0) return null;
+  return (
+    <div className="mt-1 flex flex-wrap gap-1 max-w-[220px]">
+      {nums.map((num) => {
+        const row = SIZE_GRID_MAP.find((r) => r.num === Number(num));
+        const letter = row?.letter || '?';
+        return (
+          <span
+            key={num}
+            className="text-[10px] leading-tight px-1 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/25"
+          >
+            {num}/{letter}
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 function isOrderDoneByStatus(order) {
@@ -631,11 +653,14 @@ export default function Dashboard() {
                     className="px-4 py-3 text-neon-text"
                     onClick={selectMode ? (e) => e.stopPropagation() : undefined}
                   >
-                    <ModelPhoto
-                      photo={order.photos?.[0]}
-                      modelName={order.title}
-                      size={48}
-                    />
+                    <div>
+                      <ModelPhoto
+                        photo={order.photos?.[0]}
+                        modelName={order.title}
+                        size={48}
+                      />
+                      <OrderSizeGridChips order={order} />
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-neon-muted">{order.Client?.name}</td>
                   <td className="px-4 py-3 text-neon-muted">{order.quantity}</td>

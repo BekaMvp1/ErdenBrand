@@ -16,10 +16,38 @@ import ProcurementViewModal from '../components/procurement/ProcurementViewModal
 import ProcurementPlanModal from '../components/procurement/ProcurementPlanModal';
 import { useGridNavigation } from '../hooks/useGridNavigation';
 import { numInputValue } from '../utils/numInput';
+import SizeGrid, { SIZE_GRID_MAP, sizeGridNumericFromSelection } from '../components/SizeGrid';
 
 const LETTER_SIZES = ['S', 'M', 'L', 'XL', 'XXL', '3XL', '4XL', '5XL'];
 const NUMERIC_SIZES = ['38', '40', '42', '44', '46', '48', '50', '52', '54', '56'];
 const DEFAULT_SIZES = [...LETTER_SIZES, ...NUMERIC_SIZES];
+
+const GRID_NUM_SET = new Set(SIZE_GRID_MAP.map((r) => r.num));
+
+function sortSizesForDisplay(a, b) {
+  const sa = String(a).trim();
+  const sb = String(b).trim();
+  const na = parseInt(sa, 10);
+  const nb = parseInt(sb, 10);
+  if (!Number.isNaN(na) && String(na) === sa && !Number.isNaN(nb) && String(nb) === sb) {
+    return na - nb;
+  }
+  return sa.localeCompare(sb, 'ru');
+}
+
+function buildSizeGridQuantitiesEdit(selectedSizes, colorList, matrix) {
+  const o = {};
+  for (const size of selectedSizes) {
+    const n = parseInt(size, 10);
+    if (String(n) !== String(size).trim() || !GRID_NUM_SET.has(n)) continue;
+    let sum = 0;
+    (colorList || []).forEach((color) => {
+      sum += parseInt(matrix[`${color}|${size}`], 10) || 0;
+    });
+    o[n] = sum;
+  }
+  return o;
+}
 
 const STATUS_COLORS = {
   Принят: 'bg-gray-500/20 text-gray-900 dark:text-gray-100',
@@ -398,6 +426,8 @@ export default function OrderDetails() {
         workshop_id: editForm.workshop_id ? parseInt(editForm.workshop_id, 10) : undefined,
         sizes: editSelectedSizes,
         variants,
+        size_grid_numeric: sizeGridNumericFromSelection(editSelectedSizes),
+        size_grid_quantities: buildSizeGridQuantitiesEdit(editSelectedSizes, editColors, editMatrix),
         order_height_type: editForm.order_height_type === 'CUSTOM' ? 'CUSTOM' : 'PRESET',
         order_height_value: editForm.order_height_type === 'CUSTOM'
           ? Math.min(220, Math.max(120, parseInt(editForm.order_height_value, 10) || 170))
@@ -1748,6 +1778,26 @@ export default function OrderDetails() {
                 <h3 className="text-sm font-semibold text-[#ECECEC] dark:text-dark-text mb-3">Цвета и размеры</h3>
                 <div className="mb-3">
                   <label className="block text-sm text-[#ECECEC]/80 dark:text-dark-text/80 mb-2">Размеры</label>
+                  <p className="text-xs text-[#ECECEC]/55 dark:text-dark-text/50 mb-2">Размерная сетка 38–56: подсветка выбранных; число и буква — один размер.</p>
+                  <div className="rounded-xl border border-white/20 bg-accent-2/15 p-3 mb-4 overflow-x-auto">
+                    <SizeGrid
+                      value={sizeGridNumericFromSelection(editSelectedSizes)}
+                      showQuantity={false}
+                      onChange={(nums) => {
+                        const keep = editSelectedSizes.filter((s) => {
+                          const t = String(s).trim();
+                          const n = parseInt(t, 10);
+                          if (!Number.isNaN(n) && String(n) === t && GRID_NUM_SET.has(n)) return false;
+                          const row = SIZE_GRID_MAP.find((m) => m.letter.toUpperCase() === t.toUpperCase());
+                          if (row) return false;
+                          if (t.toUpperCase() === '3XL') return false;
+                          return true;
+                        });
+                        const merged = [...new Set([...keep, ...nums.map(String)])].sort(sortSizesForDisplay);
+                        setEditSelectedSizes(merged);
+                      }}
+                    />
+                  </div>
                   <div className="flex flex-wrap gap-2 items-center mb-2">
                     <span className="text-[#ECECEC]/60 dark:text-dark-text/60 text-xs mr-1">Цифровые:</span>
                     {[...NUMERIC_SIZES, ...editSelectedSizes.filter((s) => /^\d+$/.test(s) && !NUMERIC_SIZES.includes(s))].map((name) => (

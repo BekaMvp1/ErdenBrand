@@ -108,6 +108,8 @@ const otkChainDocumentInclude = [
       'photos',
       'quantity',
       'total_quantity',
+      'size_grid_numeric',
+      'size_grid_quantities',
     ],
     include: [{ model: db.Client, attributes: ['id', 'name'] }],
   },
@@ -218,6 +220,15 @@ router.patch('/documents/:id', async (req, res, next) => {
       const raw = normalizeOtkDateOnly(req.body.week_start);
       if (!raw) return res.status(400).json({ error: 'Некорректная week_start' });
       patch.week_start = getWeekStart(raw);
+    }
+    if (req.body.actual_week_start !== undefined) {
+      if (req.body.actual_week_start == null || req.body.actual_week_start === '') {
+        patch.actual_week_start = null;
+      } else {
+        const aw = normalizeOtkDateOnly(req.body.actual_week_start);
+        if (!aw) return res.status(400).json({ error: 'Некорректная actual_week_start' });
+        patch.actual_week_start = getWeekStart(aw);
+      }
     }
     if (req.body.section_id !== undefined) {
       if (req.body.section_id == null || req.body.section_id === '') {

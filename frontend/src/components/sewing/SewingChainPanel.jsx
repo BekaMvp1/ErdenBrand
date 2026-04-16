@@ -17,6 +17,13 @@ import {
   docMatchesChainSectionFilter,
   effectiveChainSectionKey,
 } from '../../utils/planChainWorkshops';
+import {
+  getSizeLetter,
+  FACT_HEAD_COLOR_TOP,
+  FACT_HEAD_COLOR_BOTTOM,
+  factMatrixHeadNumStyle,
+  factMatrixHeadLetterStyle,
+} from '../../utils/sizeGridHeader';
 
 function chainDateIso(v) {
   if (v == null || v === '') return '';
@@ -825,15 +832,24 @@ export default function SewingChainPanel() {
                   const sizes = [...new Set(facts.map((f) => String(f.size ?? '').trim()).filter(Boolean))].sort(
                     (a, b) => a.localeCompare(b, 'ru')
                   );
+                  const orderForHead = modal.Order;
                   return (
                     <div style={{ overflowX: 'auto' }}>
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                         <thead>
-                          <tr style={{ borderBottom: '1px solid #333' }}>
-                            <th style={{ textAlign: 'left', padding: 8, color: '#888' }}>Цвет</th>
+                          <tr>
+                            <th style={FACT_HEAD_COLOR_TOP}>Цвет</th>
                             {sizes.map((sz) => (
-                              <th key={sz} style={{ textAlign: 'center', padding: 8, color: '#aaa', minWidth: 88 }}>
+                              <th key={sz} style={factMatrixHeadNumStyle(sz, orderForHead)}>
                                 {sz}
+                              </th>
+                            ))}
+                          </tr>
+                          <tr style={{ borderBottom: '1px solid #333' }}>
+                            <th style={FACT_HEAD_COLOR_BOTTOM} aria-hidden />
+                            {sizes.map((sz) => (
+                              <th key={`letter-${sz}`} style={factMatrixHeadLetterStyle(sz, orderForHead)}>
+                                {getSizeLetter(sz)}
                               </th>
                             ))}
                           </tr>

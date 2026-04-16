@@ -11,6 +11,7 @@ import { useGridNavigation } from '../hooks/useGridNavigation';
 import { numInputValue } from '../utils/numInput';
 import { NeonButton, NeonInput, NeonSelect } from '../components/ui';
 import PrintButton from '../components/PrintButton';
+import SizeGrid, { SIZE_GRID_MAP, sizeGridNumericFromSelection } from '../components/SizeGrid';
 
 const ROSTOVKI = [
   { id: '165', name: '165' },
@@ -20,6 +21,33 @@ const ROSTOVKI = [
 
 const LETTER_SIZES = ['S', 'M', 'L', 'XL', 'XXL', '3XL', '4XL', '5XL'];
 const NUMERIC_SIZES = ['38', '40', '42', '44', '46', '48', '50', '52', '54', '56'];
+
+const GRID_NUM_SET = new Set(SIZE_GRID_MAP.map((r) => r.num));
+
+function buildSizeGridQuantities(selectedSizes, colorList, matrix) {
+  const o = {};
+  for (const size of selectedSizes) {
+    const n = parseInt(size, 10);
+    if (String(n) !== String(size).trim() || !GRID_NUM_SET.has(n)) continue;
+    let sum = 0;
+    (colorList || []).forEach((color) => {
+      sum += parseInt(matrix[`${color}|${size}`], 10) || 0;
+    });
+    o[n] = sum;
+  }
+  return o;
+}
+
+function sortSizesForDisplay(a, b) {
+  const sa = String(a).trim();
+  const sb = String(b).trim();
+  const na = parseInt(sa, 10);
+  const nb = parseInt(sb, 10);
+  if (!Number.isNaN(na) && String(na) === sa && !Number.isNaN(nb) && String(nb) === sb) {
+    return na - nb;
+  }
+  return sa.localeCompare(sb, 'ru');
+}
 
 export default function CreateOrder() {
   const navigate = useNavigate();
@@ -221,6 +249,8 @@ export default function CreateOrder() {
           if (q > 0) variants.push({ color, size, quantity: q });
         });
       });
+      const size_grid_numeric = sizeGridNumericFromSelection(selectedSizes);
+      const size_grid_quantities = buildSizeGridQuantities(selectedSizes, colors, matrix);
       const order = await api.orders.create({
         client_id: parseInt(form.client_id, 10),
         tz_code: form.tz_code,
@@ -241,6 +271,8 @@ export default function CreateOrder() {
           : undefined,
         sizes: selectedSizes,
         variants,
+        size_grid_numeric,
+        size_grid_quantities,
         photos: orderPhotos,
       });
       if ((form.comment || '').trim() || commentPhotos.length > 0) {
@@ -506,6 +538,27 @@ export default function CreateOrder() {
 
           <div className="mb-4">
             <label className="block text-sm text-[#ECECEC] dark:text-dark-text/90 mb-2">Размеры</label>
+            <p className="text-xs text-[#ECECEC]/60 dark:text-dark-text/50 mb-2">Размерная сетка (38–56): число и буква — один размер; жёлтая подсветка — выбрано.</p>
+            <div className="rounded-xl border border-white/20 bg-accent-2/15 p-3 mb-4 overflow-x-auto">
+              <SizeGrid
+                value={sizeGridNumericFromSelection(selectedSizes)}
+                readOnly={false}
+                showQuantity={false}
+                onChange={(nums) => {
+                  const keep = selectedSizes.filter((s) => {
+                    const t = String(s).trim();
+                    const n = parseInt(t, 10);
+                    if (!Number.isNaN(n) && String(n) === t && GRID_NUM_SET.has(n)) return false;
+                    const row = SIZE_GRID_MAP.find((m) => m.letter.toUpperCase() === t.toUpperCase());
+                    if (row) return false;
+                    if (t.toUpperCase() === '3XL') return false;
+                    return true;
+                  });
+                  const merged = [...new Set([...keep, ...nums.map(String)])].sort(sortSizesForDisplay);
+                  setSelectedSizes(merged);
+                }}
+              />
+            </div>
             <div className="flex flex-wrap gap-2 items-center mb-2">
               <span className="text-[#ECECEC]/60 text-xs mr-1">Цифровые:</span>
               {[...NUMERIC_SIZES, ...selectedSizes.filter((s) => /^\d+$/.test(s) && !NUMERIC_SIZES.includes(s))].map((name) => (

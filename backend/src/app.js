@@ -56,6 +56,7 @@ const allowedOrigins = [
   "https://erden-brand.vercel.app",
   "https://erden-brand-git-main.vercel.app",
   /\.vercel\.app$/,
+  /\.onrender\.com$/,
   "http://localhost:5173",
   "http://localhost:3000",
   frontendUrl,

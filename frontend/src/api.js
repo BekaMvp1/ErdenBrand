@@ -8,7 +8,15 @@ function getToken() {
   return sessionStorage.getItem('token');
 }
 
+function isLikelyNetworkError(err) {
+  if (!err) return false;
+  if (err.name === 'TypeError') return true;
+  const m = String(err.message || '');
+  return m.includes('Failed to fetch') || m.includes('NetworkError') || m.includes('Load failed');
+}
+
 async function request(path, options = {}) {
+  const maxRetries = 3;
   const token = getToken();
   const headers = {
     'Content-Type': 'application/json',
@@ -16,32 +24,68 @@ async function request(path, options = {}) {
     ...options.headers,
   };
 
-  const res = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers,
-    mode: "cors",
-    credentials: "include",
-    cache: "no-store",
-  });
-  const data = await res.json().catch(() => ({}));
+  let lastError;
 
-  if (!res.ok) {
-    if (res.status === 401) {
-      sessionStorage.removeItem('token');
-      sessionStorage.removeItem('user');
-      window.location.href = '/login';
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetch(`${API_URL}${path}`, {
+        ...options,
+        headers,
+        mode: 'cors',
+        credentials: 'include',
+        cache: 'no-store',
+      });
+
+      if (res.status === 502) {
+        console.log(`[API] 502 попытка ${attempt}/${maxRetries}, ждём…`);
+        if (attempt < maxRetries) {
+          await new Promise((r) => setTimeout(r, attempt * 2000));
+          continue;
+        }
+        const err502 = new Error('Сервер временно недоступен (502)');
+        err502.status = 502;
+        throw err502;
+      }
+
+      const data = await res.json().catch(() => ({}));
+
+      if (res.status === 401) {
+        sessionStorage.removeItem('token');
+        sessionStorage.removeItem('user');
+        window.location.href = '/login';
+        const err = new Error(data.error || 'Требуется вход');
+        err.status = 401;
+        throw err;
+      }
+
+      if (!res.ok) {
+        const errMsg = data.error || `Ошибка ${res.status}`;
+        const err = new Error(errMsg);
+        err.status = res.status;
+        err.details = data.stack || data.details;
+        err.problematic = data.problematic;
+        err.received = data.received;
+        err.error = data.error;
+        throw err;
+      }
+
+      return data;
+    } catch (err) {
+      lastError = err;
+      if (err && err.status === 401) throw err;
+      if (err && typeof err.status === 'number' && err.status !== 502 && err.status >= 400) {
+        throw err;
+      }
+      if (attempt < maxRetries && isLikelyNetworkError(err)) {
+        console.log(`[API] сеть попытка ${attempt}/${maxRetries}:`, err?.message || err);
+        await new Promise((r) => setTimeout(r, attempt * 1000));
+        continue;
+      }
+      throw err;
     }
-    const errMsg = data.error || `Ошибка ${res.status}`;
-    const err = new Error(errMsg);
-    err.status = res.status;
-    err.details = data.stack || data.details;
-    err.problematic = data.problematic;
-    err.received = data.received; // для 400 от /fact/bulk и др.
-    err.error = data.error; // текст ошибки с бэкенда (например /sewing/complete)
-    throw err;
   }
 
-  return data;
+  throw lastError || new Error('Сеть недоступна');
 }
 
 export const api = {

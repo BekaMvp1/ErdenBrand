@@ -115,6 +115,8 @@ export default function Layout() {
   const [cuttingOpen, setCuttingOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [serverOk, setServerOk] = useState(true);
+  /** 'waking' — 502 / сеть (часто Render засыпает); 'offline' — остальные ошибки API */
+  const [serverIssueMode, setServerIssueMode] = useState(null);
   const [sidebarHovered, setSidebarHovered] = useState(false);
   const [sidebarLocked, setSidebarLocked] = useState(() => {
     try { return sessionStorage.getItem(SIDEBAR_LOCK_KEY) === '1'; } catch { return false; }
@@ -188,8 +190,17 @@ export default function Layout() {
     try {
       await api.health();
       setServerOk(true);
-    } catch {
+      setServerIssueMode(null);
+    } catch (e) {
       setServerOk(false);
+      const msg = String(e?.message || '');
+      const waking =
+        e?.status === 502 ||
+        /502/i.test(msg) ||
+        msg.includes('Failed to fetch') ||
+        msg.includes('Сервер временно недоступен') ||
+        e?.name === 'TypeError';
+      setServerIssueMode(waking ? 'waking' : 'offline');
     }
   }, []);
 
@@ -405,27 +416,45 @@ export default function Layout() {
             <div
               className="no-print mb-4 flex flex-wrap items-center gap-2"
               style={{
-                background: 'rgba(200, 0, 0, 0.15)',
-                border: '1px solid #ff4444',
+                background:
+                  serverIssueMode === 'waking'
+                    ? 'rgba(200, 100, 0, 0.15)'
+                    : 'rgba(200, 0, 0, 0.15)',
+                border: serverIssueMode === 'waking' ? '1px solid #F59E0B' : '1px solid #ff4444',
                 padding: '12px 16px',
                 borderRadius: 6,
                 fontSize: 13,
               }}
             >
-              <span style={{ color: '#ff6b6b', fontWeight: 600 }}>Сервер не отвечает.</span>
-              <span style={{ color: '#aaa', marginLeft: 8 }}>Запустите backend:</span>
-              <code
+              <span
                 style={{
-                  background: '#1a1a1a',
-                  color: '#c8ff00',
-                  padding: '2px 8px',
-                  borderRadius: 4,
-                  marginLeft: 8,
-                  fontSize: 12,
+                  color: serverIssueMode === 'waking' ? '#F59E0B' : '#ff6b6b',
+                  fontWeight: 600,
                 }}
               >
-                cd backend && npm run dev
-              </code>
+                {serverIssueMode === 'waking'
+                  ? '⏳ Сервер просыпается…'
+                  : '🔴 Сервер не отвечает.'}
+              </span>
+              <span style={{ color: '#aaa', marginLeft: 8, fontSize: 13 }}>
+                {serverIssueMode === 'waking'
+                  ? 'Render Free засыпает при бездействии. Подождите 30–60 секунд.'
+                  : 'Запустите backend:'}
+              </span>
+              {serverIssueMode !== 'waking' ? (
+                <code
+                  style={{
+                    background: '#1a1a1a',
+                    color: '#c8ff00',
+                    padding: '2px 8px',
+                    borderRadius: 4,
+                    marginLeft: 8,
+                    fontSize: 12,
+                  }}
+                >
+                  cd backend && npm run dev
+                </code>
+              ) : null}
               <button
                 type="button"
                 onClick={() => checkServer()}
@@ -433,8 +462,8 @@ export default function Layout() {
                   marginLeft: 16,
                   padding: '4px 12px',
                   background: 'transparent',
-                  border: '0.5px solid #666',
-                  color: '#888',
+                  border: `0.5px solid ${serverIssueMode === 'waking' ? '#F59E0B' : '#666'}`,
+                  color: serverIssueMode === 'waking' ? '#F59E0B' : '#888',
                   borderRadius: 4,
                   cursor: 'pointer',
                   fontSize: 12,

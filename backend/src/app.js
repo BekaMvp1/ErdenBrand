@@ -88,15 +88,32 @@ const isLocalNetwork = (origin) => {
   }
 };
 
+function originAllowed(origin) {
+  if (!origin || typeof origin !== "string") return false;
+  const fromList = allowedOrigins.some((o) =>
+    typeof o === "string" ? o === origin : o.test(origin)
+  );
+  if (fromList) return true;
+  if (isNetlify(origin)) return true;
+  if (isLocalNetwork(origin)) return true;
+  return false;
+}
+
+/** CORS для JSON-ответов из обработчиков ошибок / 404 (когда цепочка cors не выставила заголовки). */
+function setCorsHeadersForRequest(req, res) {
+  const origin = req.headers.origin;
+  if (origin && originAllowed(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,X-Requested-With");
+  }
+}
+
 const corsOptions = {
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
-    const fromList = allowedOrigins.some((o) =>
-      typeof o === "string" ? o === origin : o.test(origin)
-    );
-    if (fromList) return callback(null, true);
-    if (isNetlify(origin)) return callback(null, true);
-    if (isLocalNetwork(origin)) return callback(null, true);
+    if (originAllowed(origin)) return callback(null, true);
     console.warn("[CORS] заблокирован origin:", origin);
     callback(null, false);
   },
@@ -329,11 +346,13 @@ app.use(
 
 // 404
 app.use((req, res) => {
+  setCorsHeadersForRequest(req, res);
   res.status(404).json({ error: "Маршрут не найден" });
 });
 
 // Обработка ошибок
 app.use((err, req, res, next) => {
+  setCorsHeadersForRequest(req, res);
   console.error(err);
   console.error("Ошибка:", err?.name, err?.message, err?.errors);
   const status =

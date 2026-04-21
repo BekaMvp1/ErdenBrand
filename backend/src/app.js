@@ -3,6 +3,7 @@
  */
 
 const express = require("express");
+const compression = require("compression");
 const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
@@ -43,6 +44,7 @@ const assistantRoutes = require("./modules/assistant/assistant.routes");
 const plannerRoutes = require("./modules/planner/planner.routes");
 
 const app = express();
+app.use(compression());
 
 // CORS: Vercel (erden-brand + preview *.vercel.app), Netlify, Railway/Render фронт через FRONTEND_URL, локальная сеть
 // Render / Railway: proxy HTTPS (x-forwarded-proto)
@@ -141,10 +143,20 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// Отключить кэш для API — чтобы заказы всегда подгружались свежие
+// Кэш API: справочники / настройки / цеха — короткий public-кэш для GET; остальное — без кэша
 app.use("/api", (req, res, next) => {
-  res.set("Cache-Control", "no-store, no-cache, must-revalidate");
-  res.set("Pragma", "no-cache");
+  const path = (req.originalUrl || req.url || "").split("?")[0];
+  const cacheableGet =
+    req.method === "GET" &&
+    (path.startsWith("/api/references") ||
+      path.startsWith("/api/settings") ||
+      path.startsWith("/api/workshops"));
+  if (cacheableGet) {
+    res.set("Cache-Control", "public, max-age=60");
+  } else {
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate");
+    res.set("Pragma", "no-cache");
+  }
   next();
 });
 

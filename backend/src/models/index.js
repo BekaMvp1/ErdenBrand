@@ -3,7 +3,6 @@
  */
 
 const { Sequelize } = require('sequelize');
-require('dotenv').config();
 const config = require('../config/database.js');
 const { parsePostgresUrl } = require('../utils/parseDatabaseUrl');
 
@@ -12,7 +11,10 @@ const dbConfig = config[env];
 
 const dbUrl = dbConfig.use_env_variable ? process.env[dbConfig.use_env_variable] : dbConfig;
 if (!dbUrl || (typeof dbUrl === 'string' && !dbUrl.trim())) {
-  throw new Error('DATABASE_URL не задан. Создайте файл backend/.env и укажите DATABASE_URL (см. .env.example)');
+  throw new Error(
+    'DATABASE_URL не задан. В Render/Railway/Docker задайте переменную DATABASE_URL (или POSTGRES_URL / DB_HOST+DB_USER+DB_NAME+DB_PASS). ' +
+      'Локально: файл backend/.env — см. backend/.env.example'
+  );
 }
 
 const conn = typeof dbUrl === 'string' ? parsePostgresUrl(dbUrl) : null;

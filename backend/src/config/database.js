@@ -2,6 +2,9 @@
  * Конфигурация подключения к PostgreSQL
  */
 
+const path = require('path');
+// При запуске из корня репозитория или Docker (cwd=/app) dotenv по умолчанию ищет .env в cwd, а не в backend/
+require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 require('dotenv').config();
 
 /** Собрать DATABASE_URL из DB_* (Railway/Neon без одной строки в UI) */
@@ -18,6 +21,26 @@ function ensureDatabaseUrlFromParts() {
 }
 
 ensureDatabaseUrlFromParts();
+
+/** Некоторые платформы отдают URL под другим именем переменной */
+function ensureDatabaseUrlFromAliases() {
+  if (String(process.env.DATABASE_URL || '').trim()) return;
+  const aliases = [
+    'POSTGRES_URL',
+    'RAILWAY_DATABASE_URL',
+    'DATABASE_PRIVATE_URL',
+    'SUPABASE_DB_URL',
+  ];
+  for (const key of aliases) {
+    const v = String(process.env[key] || '').trim();
+    if (v) {
+      process.env.DATABASE_URL = v;
+      return;
+    }
+  }
+}
+
+ensureDatabaseUrlFromAliases();
 
 /** Лог цели подключения (пароль не выводим — только факт наличия) */
 function logDatabaseUrlTarget(label) {

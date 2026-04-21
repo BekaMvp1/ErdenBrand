@@ -15,9 +15,9 @@ if (import.meta.env.PROD && API_URL) {
 
 async function wakeUpServer() {
   if (!import.meta.env.PROD) return
-  const raw = (import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '')
-  if (!raw) return
-  const health = `${raw}/api/health`
+  const base = (API_URL || '').trim().replace(/\/$/, '')
+  if (!base) return
+  const health = `${base}/api/health`
   console.log('[App] будим сервер…')
   const fetchWithTimeout = (url, ms = 10000) => {
     const ctrl = new AbortController()

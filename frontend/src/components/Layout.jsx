@@ -221,9 +221,10 @@ export default function Layout() {
 
   useEffect(() => {
     checkServer();
-    const interval = setInterval(checkServer, 5000);
+    const ms = serverOk ? 5000 : 20000;
+    const interval = setInterval(checkServer, ms);
     return () => clearInterval(interval);
-  }, [checkServer]);
+  }, [checkServer, serverOk]);
 
   useEffect(() => {
     if (serverOk && shouldShowSummary) {

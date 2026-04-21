@@ -6,6 +6,15 @@
  */
 const raw = (import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
 
+/**
+ * Если VITE_API_URL не попал в билд (например, не задан в Vercel), относительные
+ * запросы уходят на origin фронта — «Failed to fetch» / ложный CORS.
+ * Явный URL в Vercel по-прежнему предпочтителен; фолбэк — последняя известная прод-среда.
+ */
+const PRODUCTION_API_FALLBACK =
+  (import.meta.env.VITE_API_FALLBACK_URL || '').trim().replace(/\/$/, '') ||
+  'https://erdenbrand.onrender.com';
+
 function devShouldUseProxy() {
   if (!import.meta.env.DEV) return false;
   if (!raw) return true;
@@ -18,11 +27,13 @@ function devShouldUseProxy() {
   }
 }
 
-/** В dev при proxy — ''; иначе VITE_API_URL; в production без переменной — пусто (ошибка в консоли). */
+/** В dev при proxy — ''; иначе VITE_API_URL; в production без переменной — фолбэк на API-хост. */
 export const API_URL = devShouldUseProxy()
   ? ''
-  : raw || (import.meta.env.DEV ? 'http://localhost:3001' : '');
+  : raw || (import.meta.env.DEV ? 'http://localhost:3001' : PRODUCTION_API_FALLBACK);
 
-if (!import.meta.env.DEV && !API_URL) {
-  console.error('VITE_API_URL is not defined');
+if (!import.meta.env.DEV && !raw && API_URL) {
+  console.warn(
+    'VITE_API_URL не задан в окружении сборки; используется фолбэк API_URL. Задайте VITE_API_URL в Vercel для явного URL.',
+  );
 }

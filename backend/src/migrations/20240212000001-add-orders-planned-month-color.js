@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: добавление planned_month и color в orders
  * floor_id уже есть в orders
@@ -7,19 +16,19 @@
 
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.addColumn('orders', 'planned_month', {
+    await addColumnIfMissing(queryInterface, 'orders', 'planned_month', {
       type: Sequelize.STRING(7),
       allowNull: true,
     });
-    await queryInterface.addColumn('orders', 'color', {
+    await addColumnIfMissing(queryInterface, 'orders', 'color', {
       type: Sequelize.STRING(100),
       allowNull: true,
     });
-    await queryInterface.addColumn('orders', 'comment', {
+    await addColumnIfMissing(queryInterface, 'orders', 'comment', {
       type: Sequelize.TEXT,
       allowNull: true,
     });
-    await queryInterface.addIndex('orders', ['planned_month']);
+    await safeAddIndex(queryInterface, 'orders', ['planned_month']);
   },
 
   async down(queryInterface) {

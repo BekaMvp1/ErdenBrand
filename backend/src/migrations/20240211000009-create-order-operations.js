@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: операции заказа (распределение по швеям)
  */
@@ -67,10 +76,10 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('order_operations', ['order_id']);
-    await queryInterface.addIndex('order_operations', ['operation_id']);
-    await queryInterface.addIndex('order_operations', ['sewer_id']);
-    await queryInterface.addIndex('order_operations', ['planned_date']);
+    await safeAddIndex(queryInterface, 'order_operations', ['order_id']);
+    await safeAddIndex(queryInterface, 'order_operations', ['operation_id']);
+    await safeAddIndex(queryInterface, 'order_operations', ['sewer_id']);
+    await safeAddIndex(queryInterface, 'order_operations', ['planned_date']);
   },
 
   async down(queryInterface) {

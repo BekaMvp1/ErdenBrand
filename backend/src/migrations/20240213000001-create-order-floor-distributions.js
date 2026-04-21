@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: распределение заказов по этажам (цехам пошива)
  * Отдельная таблица для журнала распределений
@@ -45,8 +54,8 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('order_floor_distributions', ['order_id']);
-    await queryInterface.addIndex('order_floor_distributions', ['floor_id']);
+    await safeAddIndex(queryInterface, 'order_floor_distributions', ['order_id']);
+    await safeAddIndex(queryInterface, 'order_floor_distributions', ['floor_id']);
   },
 
   async down(queryInterface) {

@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: варианты заказа (цвет + размер + количество)
  */
@@ -47,15 +56,27 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('order_variants', ['order_id']);
-    await queryInterface.addIndex('order_variants', ['size_id']);
-    await queryInterface.addIndex('order_variants', ['color']);
-    await queryInterface.addIndex('order_variants', ['order_id', 'color', 'size_id'], { unique: true });
+    await safeAddIndex(queryInterface, 'order_variants', ['order_id']);
+    await safeAddIndex(queryInterface, 'order_variants', ['size_id']);
+    await safeAddIndex(queryInterface, 'order_variants', ['color']);
+    await safeAddIndex(queryInterface, 'order_variants', ['order_id', 'color', 'size_id'], {
+      unique: true,
+    });
 
     // Ограничение: quantity >= 0
-    await queryInterface.sequelize.query(
-      'ALTER TABLE order_variants ADD CONSTRAINT order_variants_quantity_check CHECK (quantity >= 0)'
-    );
+    try {
+      await queryInterface.sequelize.query(
+        'ALTER TABLE order_variants ADD CONSTRAINT order_variants_quantity_check CHECK (quantity >= 0)',
+      );
+    } catch (e) {
+      const msg = String(e?.message || '');
+      const code = e?.original?.code || e?.parent?.code;
+      if (/already exists/i.test(msg) || code === '42710') {
+        // пропустить
+      } else {
+        throw e;
+      }
+    }
   },
 
   async down(queryInterface) {

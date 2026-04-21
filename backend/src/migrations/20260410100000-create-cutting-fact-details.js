@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 module.exports = {
   async up(queryInterface, Sequelize) {
     await queryInterface.createTable('cutting_fact_details', {
@@ -39,7 +48,7 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('cutting_fact_details', ['cutting_document_id'], {
+    await safeAddIndex(queryInterface, 'cutting_fact_details', ['cutting_document_id'], {
       name: 'cutting_fact_details_cutting_document_id_idx',
     });
   },

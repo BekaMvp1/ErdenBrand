@@ -1,5 +1,7 @@
 'use strict';
 
+const { safeCreateIndexQuery } = require('../utils/migrationHelpers');
+
 /** Снимок таблицы «Планирование производства» (матрица недель) — переживает обновление страницы */
 
 module.exports = {
@@ -49,7 +51,7 @@ module.exports = {
       updated_at: { allowNull: false, type: Sequelize.DATE },
     });
 
-    await queryInterface.sequelize.query(`
+    await safeCreateIndexQuery(queryInterface, `
       CREATE UNIQUE INDEX planning_matrix_snapshots_uq
       ON planning_matrix_snapshots (month, workshop_id, week_slice_start, COALESCE(building_floor_id, -1));
     `);

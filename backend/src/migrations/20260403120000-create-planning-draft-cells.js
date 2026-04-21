@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /** Дневные ячейки плана (Планирование неделя) — агрегируются в недели для месяца. */
 module.exports = {
   async up(queryInterface, Sequelize) {
@@ -57,11 +66,11 @@ module.exports = {
         defaultValue: Sequelize.fn('NOW'),
       },
     });
-    await queryInterface.addIndex('planning_draft_cells', ['user_id', 'scope_key', 'row_id', 'date', 'cell_key'], {
+    await safeAddIndex(queryInterface, 'planning_draft_cells', ['user_id', 'scope_key', 'row_id', 'date', 'cell_key'], {
       unique: true,
       name: 'planning_draft_cells_user_scope_row_date_key',
     });
-    await queryInterface.addIndex('planning_draft_cells', ['user_id', 'scope_key', 'date']);
+    await safeAddIndex(queryInterface, 'planning_draft_cells', ['user_id', 'scope_key', 'date']);
   },
 
   async down(queryInterface) {

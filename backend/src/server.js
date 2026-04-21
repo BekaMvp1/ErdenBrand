@@ -114,6 +114,23 @@ async function start() {
     process.exit(1);
   }
 
+  // Railway / прод: миграции при старте (в Variables задайте AUTO_MIGRATE=true)
+  const autoMigrate =
+    process.env.AUTO_MIGRATE === 'true' || process.env.AUTO_MIGRATE === '1';
+  if (autoMigrate) {
+    try {
+      console.log('Запуск миграций (npx sequelize-cli db:migrate)...');
+      execSync('npx sequelize-cli db:migrate', {
+        stdio: 'inherit',
+        cwd: __dirname + '/..',
+      });
+      console.log('Миграции выполнены');
+    } catch (err) {
+      console.error('Migration error:', err?.message || err);
+      process.exit(1);
+    }
+  }
+
   // Автоматический запуск сидеров при первом запуске (если нет админа)
   if (process.env.AUTO_SEED !== 'false') {
     try {

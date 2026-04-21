@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: добавить поля для панели заказов в order_operations
  */
@@ -8,14 +17,14 @@ module.exports = {
     const table = await queryInterface.describeTable('order_operations');
 
     if (!table.stage_key) {
-      await queryInterface.addColumn('order_operations', 'stage_key', {
+      await addColumnIfMissing(queryInterface, 'order_operations', 'stage_key', {
         type: Sequelize.STRING(50),
         allowNull: true,
       });
     }
 
     if (!table.planned_qty) {
-      await queryInterface.addColumn('order_operations', 'planned_qty', {
+      await addColumnIfMissing(queryInterface, 'order_operations', 'planned_qty', {
         type: Sequelize.INTEGER,
         allowNull: false,
         defaultValue: 0,
@@ -23,18 +32,18 @@ module.exports = {
     }
 
     if (!table.actual_qty) {
-      await queryInterface.addColumn('order_operations', 'actual_qty', {
+      await addColumnIfMissing(queryInterface, 'order_operations', 'actual_qty', {
         type: Sequelize.INTEGER,
         allowNull: false,
         defaultValue: 0,
       });
     }
 
-    await queryInterface.sequelize.query(`
+    await safeCreateIndexQuery(queryInterface, `
       CREATE INDEX IF NOT EXISTS order_operations_stage_key_idx
       ON order_operations (stage_key)
     `);
-    await queryInterface.sequelize.query(`
+    await safeCreateIndexQuery(queryInterface, `
       CREATE INDEX IF NOT EXISTS order_operations_order_stage_idx
       ON order_operations (order_id, stage_key)
     `);

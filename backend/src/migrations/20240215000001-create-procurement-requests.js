@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: заявки на закуп (один заказ = один запрос)
  */
@@ -40,7 +49,7 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('procurement_requests', ['order_id']);
+    await safeAddIndex(queryInterface, 'procurement_requests', ['order_id']);
   },
 
   async down(queryInterface) {

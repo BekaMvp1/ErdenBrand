@@ -1,5 +1,7 @@
 'use strict';
 
+const { safeCreateIndexQuery } = require('../utils/migrationHelpers');
+
 /**
  * Перенос остатка на следующую неделю: храним carry отдельно от manual
  * weekly_carry: (workshop_id, building_floor_id, week_start, row_key, carry_qty)
@@ -55,7 +57,7 @@ module.exports = {
       },
     });
 
-    await queryInterface.sequelize.query(`
+    await safeCreateIndexQuery(queryInterface, `
       CREATE UNIQUE INDEX weekly_carry_workshop_floor_week_row_unique
       ON weekly_carry (workshop_id, COALESCE(building_floor_id, 0), week_start, row_key);
     `);

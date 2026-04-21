@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: справочник цехов
  * Наш цех (4 этажа), Аутсорс (1), Аксы (1)
@@ -40,7 +49,15 @@ module.exports = {
       },
     });
 
-    await queryInterface.bulkInsert('workshops', [
+    const existingWorkshops = await queryInterface.sequelize.query(
+      'SELECT COUNT(*)::int AS cnt FROM workshops',
+      { type: Sequelize.QueryTypes.SELECT },
+    );
+    if (existingWorkshops.length && Number(existingWorkshops[0].cnt) > 0) {
+      return;
+    }
+
+    await bulkInsertIfCountZero(queryInterface, 'workshops', [
       { name: 'Наш цех', floors_count: 4, is_active: true, created_at: new Date(), updated_at: new Date() },
       { name: 'Аутсорс', floors_count: 1, is_active: true, created_at: new Date(), updated_at: new Date() },
       { name: 'Аксы', floors_count: 1, is_active: true, created_at: new Date(), updated_at: new Date() },

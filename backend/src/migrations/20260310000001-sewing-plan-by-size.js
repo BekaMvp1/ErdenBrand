@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Пошив по размерной матрице: план и факт по этажам и размерам.
  * - order_size_matrix: плановое количество по размерам по заказу
@@ -46,11 +55,11 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('order_size_matrix', ['order_id', 'model_size_id'], {
+    await safeAddIndex(queryInterface, 'order_size_matrix', ['order_id', 'model_size_id'], {
       unique: true,
       name: 'order_size_matrix_order_model_size_unique',
     });
-    await queryInterface.addIndex('order_size_matrix', ['order_id']);
+    await safeAddIndex(queryInterface, 'order_size_matrix', ['order_id']);
 
     // План и факт пошива по этажу, размеру, дате (учёт всегда по размерам)
     await queryInterface.createTable('sewing_plans', {
@@ -107,12 +116,12 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('sewing_plans', ['order_id', 'floor_id', 'model_size_id', 'date'], {
+    await safeAddIndex(queryInterface, 'sewing_plans', ['order_id', 'floor_id', 'model_size_id', 'date'], {
       unique: true,
       name: 'sewing_plans_order_floor_model_size_date_unique',
     });
-    await queryInterface.addIndex('sewing_plans', ['order_id']);
-    await queryInterface.addIndex('sewing_plans', ['date']);
+    await safeAddIndex(queryInterface, 'sewing_plans', ['order_id']);
+    await safeAddIndex(queryInterface, 'sewing_plans', ['date']);
   },
 
   async down(queryInterface) {

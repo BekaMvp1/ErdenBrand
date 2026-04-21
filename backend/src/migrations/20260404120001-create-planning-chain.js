@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /** Цепочка закуп → раскрой → пошив по заказам из планирования. section_id — ключ секции черновика (floor_4, aksy, …). */
 
 module.exports = {
@@ -59,11 +68,11 @@ module.exports = {
         defaultValue: Sequelize.fn('NOW'),
       },
     });
-    await queryInterface.addIndex('planning_chains', ['order_id', 'section_id'], {
+    await safeAddIndex(queryInterface, 'planning_chains', ['order_id', 'section_id'], {
       unique: true,
       name: 'planning_chains_order_section_unique',
     });
-    await queryInterface.addIndex('planning_chains', ['sewing_week_start'], {
+    await safeAddIndex(queryInterface, 'planning_chains', ['sewing_week_start'], {
       name: 'planning_chains_sewing_week_idx',
     });
   },

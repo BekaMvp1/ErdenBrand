@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: фактические показатели БДР/БДДС
  */
@@ -59,8 +68,8 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('finance_fact', ['type', 'category_id']);
-    await queryInterface.addIndex('finance_fact', ['date']);
+    await safeAddIndex(queryInterface, 'finance_fact', ['type', 'category_id']);
+    await safeAddIndex(queryInterface, 'finance_fact', ['date']);
   },
 
   async down(queryInterface) {

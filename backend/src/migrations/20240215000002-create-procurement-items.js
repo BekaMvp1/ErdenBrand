@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: позиции закупа (ткань, фурнитура и т.д.)
  */
@@ -59,7 +68,7 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('procurement_items', ['procurement_request_id']);
+    await safeAddIndex(queryInterface, 'procurement_items', ['procurement_request_id']);
   },
 
   async down(queryInterface) {

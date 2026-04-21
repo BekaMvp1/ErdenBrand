@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: справочник категорий финансов (БДР/БДДС)
  */
@@ -36,7 +45,7 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('finance_categories', ['type']);
+    await safeAddIndex(queryInterface, 'finance_categories', ['type']);
   },
 
   async down(queryInterface) {

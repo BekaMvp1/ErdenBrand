@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: части заказа (для комплектов: Пиджак → 3 этаж, Брюки → 2 этаж)
  * Используется при разделении заказа в планировании.
@@ -47,8 +56,8 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('order_parts', ['order_id']);
-    await queryInterface.addIndex('order_parts', ['floor_id']);
+    await safeAddIndex(queryInterface, 'order_parts', ['order_id']);
+    await safeAddIndex(queryInterface, 'order_parts', ['floor_id']);
   },
 
   async down(queryInterface) {

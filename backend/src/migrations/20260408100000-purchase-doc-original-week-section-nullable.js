@@ -1,8 +1,17 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.addColumn('purchase_documents', 'original_week_start', {
+    await addColumnIfMissing(queryInterface, 'purchase_documents', 'original_week_start', {
       type: Sequelize.DATEONLY,
       allowNull: true,
     });

@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Правильная ростовка: справочник размеров (code, type, sort_order), ростовка заказа по size_id,
  * рост в раскрое (165/170/ручной), учёт по size_id в партиях/ОТК/складе/отгрузке.
@@ -9,24 +18,33 @@
 module.exports = {
   async up(queryInterface, Sequelize) {
     // ————— 1) Справочник размеров: code, type, sort_order —————
-    await queryInterface.addColumn('sizes', 'code', {
-      type: Sequelize.STRING(10),
-      allowNull: true,
-    });
+    const cols_sizes = await queryInterface.describeTable('sizes');
+    if (!cols_sizes.code) {
+      await addColumnIfMissing(queryInterface, 'sizes', 'code', {
+        type: Sequelize.STRING(10),
+        allowNull: true,
+      });
+    }
     await queryInterface.sequelize.query(`
       DO $$ BEGIN
         CREATE TYPE enum_sizes_type AS ENUM ('NUMERIC', 'ALPHA');
       EXCEPTION WHEN duplicate_object THEN NULL;
       END $$;
     `);
-    await queryInterface.addColumn('sizes', 'type', {
-      type: 'enum_sizes_type',
-      allowNull: true,
-    });
-    await queryInterface.addColumn('sizes', 'sort_order', {
-      type: Sequelize.INTEGER,
-      allowNull: true,
-    });
+    const cols_sizes_type = await queryInterface.describeTable('sizes');
+    if (!cols_sizes_type.type) {
+      await addColumnIfMissing(queryInterface, 'sizes', 'type', {
+        type: 'enum_sizes_type',
+        allowNull: true,
+      });
+    }
+    const cols_sizes_sort_order = await queryInterface.describeTable('sizes');
+    if (!cols_sizes_sort_order.sort_order) {
+      await addColumnIfMissing(queryInterface, 'sizes', 'sort_order', {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+      });
+    }
 
     // Нормализация: XXL -> 2XL и т.д.; code = uppercase
     const [rows] = await queryInterface.sequelize.query(`SELECT id, name FROM sizes`);
@@ -68,7 +86,7 @@ module.exports = {
       );
     }
 
-    await queryInterface.addIndex('sizes', ['code'], { unique: true });
+    await safeAddIndex(queryInterface, 'sizes', ['code'], { unique: true });
     await queryInterface.sequelize.query('ALTER TABLE sizes ALTER COLUMN code SET NOT NULL');
     await queryInterface.sequelize.query('ALTER TABLE sizes ALTER COLUMN type SET NOT NULL');
     await queryInterface.sequelize.query('ALTER TABLE sizes ALTER COLUMN sort_order SET NOT NULL');
@@ -111,11 +129,11 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('order_rostovka', ['order_id', 'size_id'], {
+    await safeAddIndex(queryInterface, 'order_rostovka', ['order_id', 'size_id'], {
       unique: true,
       name: 'order_rostovka_order_size_unique',
     });
-    await queryInterface.addIndex('order_rostovka', ['order_id']);
+    await safeAddIndex(queryInterface, 'order_rostovka', ['order_id']);
 
     // ————— 3) Раскрой: рост (165/170/ручной) —————
     await queryInterface.sequelize.query(`
@@ -124,15 +142,21 @@ module.exports = {
       EXCEPTION WHEN duplicate_object THEN NULL;
       END $$;
     `);
-    await queryInterface.addColumn('cutting_tasks', 'height_type', {
-      type: 'enum_cutting_height_type',
-      allowNull: true,
-      defaultValue: 'PRESET',
-    });
-    await queryInterface.addColumn('cutting_tasks', 'height_value', {
-      type: Sequelize.INTEGER,
-      allowNull: true,
-    });
+    const cols_cutting_tasks = await queryInterface.describeTable('cutting_tasks');
+    if (!cols_cutting_tasks.height_type) {
+      await addColumnIfMissing(queryInterface, 'cutting_tasks', 'height_type', {
+        type: 'enum_cutting_height_type',
+        allowNull: true,
+        defaultValue: 'PRESET',
+      });
+    }
+    const cols_cutting_tasks_height_value = await queryInterface.describeTable('cutting_tasks');
+    if (!cols_cutting_tasks_height_value.height_value) {
+      await addColumnIfMissing(queryInterface, 'cutting_tasks', 'height_value', {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+      });
+    }
     await queryInterface.sequelize.query(`UPDATE cutting_tasks SET height_type = 'PRESET', height_value = 170 WHERE height_value IS NULL`);
     await queryInterface.sequelize.query(`ALTER TABLE cutting_tasks ALTER COLUMN height_type SET NOT NULL`);
     await queryInterface.sequelize.query(`ALTER TABLE cutting_tasks ALTER COLUMN height_type SET DEFAULT 'PRESET'`);
@@ -140,49 +164,61 @@ module.exports = {
     await queryInterface.sequelize.query(`ALTER TABLE cutting_tasks ALTER COLUMN height_value SET DEFAULT 170`);
 
     // ————— 4) Партии/ОТК/склад/отгрузка: учёт по size_id (дополнительно к model_size_id) —————
-    await queryInterface.addColumn('sewing_batch_items', 'size_id', {
-      type: Sequelize.INTEGER,
-      allowNull: true,
-      references: { model: 'sizes', key: 'id' },
-      onUpdate: 'CASCADE',
-      onDelete: 'RESTRICT',
-    });
-    await queryInterface.addIndex('sewing_batch_items', ['batch_id', 'size_id'], {
+    const cols_sewing_batch_items = await queryInterface.describeTable('sewing_batch_items');
+    if (!cols_sewing_batch_items.size_id) {
+      await addColumnIfMissing(queryInterface, 'sewing_batch_items', 'size_id', {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+        references: { model: 'sizes', key: 'id' },
+        onUpdate: 'CASCADE',
+        onDelete: 'RESTRICT',
+      });
+    }
+    await safeAddIndex(queryInterface, 'sewing_batch_items', ['batch_id', 'size_id'], {
       name: 'sewing_batch_items_batch_size_idx',
     });
 
-    await queryInterface.addColumn('qc_batch_items', 'size_id', {
-      type: Sequelize.INTEGER,
-      allowNull: true,
-      references: { model: 'sizes', key: 'id' },
-      onUpdate: 'CASCADE',
-      onDelete: 'RESTRICT',
-    });
-    await queryInterface.addIndex('qc_batch_items', ['qc_batch_id', 'size_id'], {
+    const cols_qc_batch_items = await queryInterface.describeTable('qc_batch_items');
+    if (!cols_qc_batch_items.size_id) {
+      await addColumnIfMissing(queryInterface, 'qc_batch_items', 'size_id', {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+        references: { model: 'sizes', key: 'id' },
+        onUpdate: 'CASCADE',
+        onDelete: 'RESTRICT',
+      });
+    }
+    await safeAddIndex(queryInterface, 'qc_batch_items', ['qc_batch_id', 'size_id'], {
       name: 'qc_batch_items_qc_batch_size_idx',
     });
 
-    await queryInterface.addColumn('warehouse_stock', 'size_id', {
-      type: Sequelize.INTEGER,
-      allowNull: true,
-      references: { model: 'sizes', key: 'id' },
-      onUpdate: 'CASCADE',
-      onDelete: 'RESTRICT',
-    });
-    await queryInterface.sequelize.query(`
+    const cols_warehouse_stock = await queryInterface.describeTable('warehouse_stock');
+    if (!cols_warehouse_stock.size_id) {
+      await addColumnIfMissing(queryInterface, 'warehouse_stock', 'size_id', {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+        references: { model: 'sizes', key: 'id' },
+        onUpdate: 'CASCADE',
+        onDelete: 'RESTRICT',
+      });
+    }
+    await safeCreateIndexQuery(queryInterface, `
       CREATE UNIQUE INDEX warehouse_stock_batch_size_unique
       ON warehouse_stock (batch_id, size_id)
       WHERE batch_id IS NOT NULL AND size_id IS NOT NULL
     `);
 
-    await queryInterface.addColumn('shipment_items', 'size_id', {
-      type: Sequelize.INTEGER,
-      allowNull: true,
-      references: { model: 'sizes', key: 'id' },
-      onUpdate: 'CASCADE',
-      onDelete: 'RESTRICT',
-    });
-    await queryInterface.addIndex('shipment_items', ['shipment_id', 'size_id'], {
+    const cols_shipment_items = await queryInterface.describeTable('shipment_items');
+    if (!cols_shipment_items.size_id) {
+      await addColumnIfMissing(queryInterface, 'shipment_items', 'size_id', {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+        references: { model: 'sizes', key: 'id' },
+        onUpdate: 'CASCADE',
+        onDelete: 'RESTRICT',
+      });
+    }
+    await safeAddIndex(queryInterface, 'shipment_items', ['shipment_id', 'size_id'], {
       name: 'shipment_items_shipment_size_idx',
     });
   },

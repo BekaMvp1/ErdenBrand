@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: добавить TZ/MODEL поля в заказы
  */
@@ -8,7 +17,7 @@ module.exports = {
     const table = await queryInterface.describeTable('orders');
 
     if (!table.tz_code) {
-      await queryInterface.addColumn('orders', 'tz_code', {
+      await addColumnIfMissing(queryInterface, 'orders', 'tz_code', {
         type: Sequelize.STRING(60),
         allowNull: false,
         defaultValue: '',
@@ -16,7 +25,7 @@ module.exports = {
     }
 
     if (!table.model_name) {
-      await queryInterface.addColumn('orders', 'model_name', {
+      await addColumnIfMissing(queryInterface, 'orders', 'model_name', {
         type: Sequelize.STRING(160),
         allowNull: false,
         defaultValue: '',
@@ -24,16 +33,16 @@ module.exports = {
     }
 
     if (!table.article) {
-      await queryInterface.addColumn('orders', 'article', {
+      await addColumnIfMissing(queryInterface, 'orders', 'article', {
         type: Sequelize.STRING(80),
         allowNull: true,
       });
     }
 
-    await queryInterface.addIndex('orders', ['tz_code'], {
+    await safeAddIndex(queryInterface, 'orders', ['tz_code'], {
       name: 'orders_tz_code_idx',
     });
-    await queryInterface.addIndex('orders', ['model_name'], {
+    await safeAddIndex(queryInterface, 'orders', ['model_name'], {
       name: 'orders_model_name_idx',
     });
   },

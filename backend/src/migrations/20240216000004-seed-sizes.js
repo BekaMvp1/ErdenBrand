@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Сидер: буквенные размеры S–5XL, цифровые 38,40,42,44,46,48,50,52,54,56
  */
@@ -16,7 +25,7 @@ module.exports = {
       created_at: now,
       updated_at: now,
     }));
-    await queryInterface.bulkInsert('sizes', rows);
+    await bulkInsertIfCountZero(queryInterface, 'sizes', rows);
   },
 
   async down(queryInterface) {

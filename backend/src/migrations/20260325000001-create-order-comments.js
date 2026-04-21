@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: комментарии к заказам (текст + фото)
  * order_comments: id, order_id, text, author_id, photos (JSONB), created_at, updated_at
@@ -48,7 +57,7 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('order_comments', ['order_id']);
+    await safeAddIndex(queryInterface, 'order_comments', ['order_id']);
   },
 
   async down(queryInterface) {

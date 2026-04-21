@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Рост заказа: 165 / 170 / ручной (для раскроя).
  * order_height_type: PRESET (165 или 170) или CUSTOM (120–220).
@@ -14,12 +23,12 @@ module.exports = {
         WHEN duplicate_object THEN NULL;
       END $$;
     `);
-    await queryInterface.addColumn('orders', 'order_height_type', {
+    await addColumnIfMissing(queryInterface, 'orders', 'order_height_type', {
       type: 'enum_orders_height_type',
       allowNull: true,
       defaultValue: 'PRESET',
     });
-    await queryInterface.addColumn('orders', 'order_height_value', {
+    await addColumnIfMissing(queryInterface, 'orders', 'order_height_value', {
       type: Sequelize.INTEGER,
       allowNull: true,
     });

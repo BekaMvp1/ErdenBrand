@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /** Черновик планирования производства (UI-таблица): JSON по пользователю и scope (цех/этаж/месяц). */
 
 module.exports = {
@@ -37,7 +46,7 @@ module.exports = {
         defaultValue: Sequelize.fn('NOW'),
       },
     });
-    await queryInterface.addIndex('planning_production_drafts', ['user_id', 'scope_key'], {
+    await safeAddIndex(queryInterface, 'planning_production_drafts', ['user_id', 'scope_key'], {
       unique: true,
       name: 'planning_production_drafts_user_scope_unique',
     });

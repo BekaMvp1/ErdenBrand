@@ -1,25 +1,34 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /** ОТК из цепочки: chain_id + недели факта; документы отгрузки по цепочке. */
 
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.addColumn('otk_documents', 'chain_id', {
+    await addColumnIfMissing(queryInterface, 'otk_documents', 'chain_id', {
       type: Sequelize.INTEGER,
       allowNull: true,
       references: { model: 'planning_chains', key: 'id' },
       onUpdate: 'CASCADE',
       onDelete: 'SET NULL',
     });
-    await queryInterface.addColumn('otk_documents', 'original_week_start', {
+    await addColumnIfMissing(queryInterface, 'otk_documents', 'original_week_start', {
       type: Sequelize.DATEONLY,
       allowNull: true,
     });
-    await queryInterface.addColumn('otk_documents', 'actual_week_start', {
+    await addColumnIfMissing(queryInterface, 'otk_documents', 'actual_week_start', {
       type: Sequelize.DATEONLY,
       allowNull: true,
     });
-    await queryInterface.sequelize.query(`
+    await safeCreateIndexQuery(queryInterface, `
       CREATE UNIQUE INDEX IF NOT EXISTS otk_documents_chain_id_unique
       ON otk_documents (chain_id) WHERE chain_id IS NOT NULL
     `);
@@ -65,7 +74,7 @@ module.exports = {
         defaultValue: Sequelize.fn('NOW'),
       },
     });
-    await queryInterface.addIndex('shipping_documents', ['chain_id'], {
+    await safeAddIndex(queryInterface, 'shipping_documents', ['chain_id'], {
       unique: true,
       name: 'shipping_documents_chain_id_unique',
     });

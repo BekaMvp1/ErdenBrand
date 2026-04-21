@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: связь заказа с плановыми финансовыми показателями (опционально)
  */
@@ -45,7 +54,7 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('order_finance_link', ['order_id']);
+    await safeAddIndex(queryInterface, 'order_finance_link', ['order_id']);
   },
 
   async down(queryInterface) {

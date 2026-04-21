@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Складской учёт по размерам, моделям и партиям (ОТК → склад → отгрузка).
  * - models + model_sizes: размерная сетка модели
@@ -67,13 +76,13 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('model_sizes', ['model_id', 'size_id'], {
+    await safeAddIndex(queryInterface, 'model_sizes', ['model_id', 'size_id'], {
       unique: true,
       name: 'model_sizes_model_size_unique',
     });
 
     // Ссылка заказа на модель (опционально)
-    await queryInterface.addColumn('orders', 'model_id', {
+    await addColumnIfMissing(queryInterface, 'orders', 'model_id', {
       type: Sequelize.INTEGER,
       allowNull: true,
       references: { model: 'models', key: 'id' },
@@ -130,8 +139,8 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('sewing_records', ['order_id', 'date']);
-    await queryInterface.addIndex('sewing_records', ['model_size_id']);
+    await safeAddIndex(queryInterface, 'sewing_records', ['order_id', 'date']);
+    await safeAddIndex(queryInterface, 'sewing_records', ['model_size_id']);
 
     // ОТК: проверка по размерам (проверено / принято / брак)
     await queryInterface.createTable('qc_records', {
@@ -183,8 +192,8 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('qc_records', ['order_id']);
-    await queryInterface.addIndex('qc_records', ['model_size_id']);
+    await safeAddIndex(queryInterface, 'qc_records', ['order_id']);
+    await safeAddIndex(queryInterface, 'qc_records', ['model_size_id']);
 
     // Склад: остатки по заказу, размеру, партии (после ОТК: приход = passed_qty)
     await queryInterface.createTable('warehouse_stock', {
@@ -229,11 +238,11 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('warehouse_stock', ['order_id', 'model_size_id', 'batch'], {
+    await safeAddIndex(queryInterface, 'warehouse_stock', ['order_id', 'model_size_id', 'batch'], {
       unique: true,
       name: 'warehouse_stock_order_model_size_batch_unique',
     });
-    await queryInterface.addIndex('warehouse_stock', ['order_id']);
+    await safeAddIndex(queryInterface, 'warehouse_stock', ['order_id']);
 
     // Отгрузки: списание со склада (shipment_qty ≤ warehouse_qty)
     await queryInterface.createTable('shipments', {
@@ -287,8 +296,8 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('shipments', ['order_id']);
-    await queryInterface.addIndex('shipments', ['shipped_at']);
+    await safeAddIndex(queryInterface, 'shipments', ['order_id']);
+    await safeAddIndex(queryInterface, 'shipments', ['shipped_at']);
   },
 
   async down(queryInterface) {

@@ -1,5 +1,13 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: логика этажей и операций
  * - building_floors: обновить названия (1 этаж Финиш, 2-4 Производство)
@@ -19,52 +27,76 @@ module.exports = {
     `);
 
     // 2. Добавить колонки в operations
-    await queryInterface.addColumn('operations', 'default_floor_id', {
-      type: Sequelize.INTEGER,
-      allowNull: true,
-      references: { model: 'building_floors', key: 'id' },
-      onUpdate: 'CASCADE',
-      onDelete: 'SET NULL',
-    });
-    await queryInterface.addColumn('operations', 'category', {
-      type: Sequelize.STRING(20),
-      allowNull: true,
-      defaultValue: 'SEWING',
-    });
-    await queryInterface.addColumn('operations', 'locked_to_floor', {
-      type: Sequelize.BOOLEAN,
-      allowNull: false,
-      defaultValue: false,
-    });
+    let cols_operations = await queryInterface.describeTable('operations');
+    if (!cols_operations.default_floor_id) {
+      await addColumnIfMissing(queryInterface, 'operations', 'default_floor_id', {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+        references: { model: 'building_floors', key: 'id' },
+        onUpdate: 'CASCADE',
+        onDelete: 'SET NULL',
+      });
+      cols_operations = await queryInterface.describeTable('operations');
+    }
+    if (!cols_operations.category) {
+      await addColumnIfMissing(queryInterface, 'operations', 'category', {
+        type: Sequelize.STRING(20),
+        allowNull: true,
+        defaultValue: 'SEWING',
+      });
+      cols_operations = await queryInterface.describeTable('operations');
+    }
+    if (!cols_operations.locked_to_floor) {
+      await addColumnIfMissing(queryInterface, 'operations', 'locked_to_floor', {
+        type: Sequelize.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+      });
+    }
 
     // 3. Добавить колонки в order_operations
-    await queryInterface.addColumn('order_operations', 'floor_id', {
-      type: Sequelize.INTEGER,
-      allowNull: true,
-      references: { model: 'building_floors', key: 'id' },
-      onUpdate: 'CASCADE',
-      onDelete: 'SET NULL',
-    });
-    await queryInterface.addColumn('order_operations', 'responsible_user_id', {
-      type: Sequelize.INTEGER,
-      allowNull: true,
-      references: { model: 'users', key: 'id' },
-      onUpdate: 'CASCADE',
-      onDelete: 'SET NULL',
-    });
-    await queryInterface.addColumn('order_operations', 'status', {
-      type: Sequelize.STRING(20),
-      allowNull: true,
-      defaultValue: 'Ожидает',
-    });
-    await queryInterface.addColumn('order_operations', 'planned_total', {
-      type: Sequelize.INTEGER,
-      allowNull: true,
-    });
-    await queryInterface.addColumn('order_operations', 'actual_total', {
-      type: Sequelize.INTEGER,
-      allowNull: true,
-    });
+    let cols_order_operations = await queryInterface.describeTable('order_operations');
+    if (!cols_order_operations.floor_id) {
+      await addColumnIfMissing(queryInterface, 'order_operations', 'floor_id', {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+        references: { model: 'building_floors', key: 'id' },
+        onUpdate: 'CASCADE',
+        onDelete: 'SET NULL',
+      });
+      cols_order_operations = await queryInterface.describeTable('order_operations');
+    }
+    if (!cols_order_operations.responsible_user_id) {
+      await addColumnIfMissing(queryInterface, 'order_operations', 'responsible_user_id', {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+        references: { model: 'users', key: 'id' },
+        onUpdate: 'CASCADE',
+        onDelete: 'SET NULL',
+      });
+      cols_order_operations = await queryInterface.describeTable('order_operations');
+    }
+    if (!cols_order_operations.status) {
+      await addColumnIfMissing(queryInterface, 'order_operations', 'status', {
+        type: Sequelize.STRING(20),
+        allowNull: true,
+        defaultValue: 'Ожидает',
+      });
+      cols_order_operations = await queryInterface.describeTable('order_operations');
+    }
+    if (!cols_order_operations.planned_total) {
+      await addColumnIfMissing(queryInterface, 'order_operations', 'planned_total', {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+      });
+      cols_order_operations = await queryInterface.describeTable('order_operations');
+    }
+    if (!cols_order_operations.actual_total) {
+      await addColumnIfMissing(queryInterface, 'order_operations', 'actual_total', {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+      });
+    }
 
     // 4. Создать order_operation_variants
     await queryInterface.createTable('order_operation_variants', {
@@ -109,11 +141,33 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('order_operation_variants', ['order_operation_id']);
-    await queryInterface.addIndex('order_operation_variants', ['order_operation_id', 'color', 'size'], {
-      unique: true,
-      name: 'order_operation_variants_unique',
-    });
+    try {
+      await safeAddIndex(queryInterface, 'order_operation_variants', ['order_operation_id']);
+    } catch (e) {
+      if (
+        String(e?.message || '').includes('already exists') ||
+        e?.parent?.code === '42P07'
+      ) {
+        // пропустить
+      } else {
+        throw e;
+      }
+    }
+    try {
+      await safeAddIndex(queryInterface, 'order_operation_variants', ['order_operation_id', 'color', 'size'], {
+        unique: true,
+        name: 'order_operation_variants_unique',
+      });
+    } catch (e) {
+      if (
+        String(e?.message || '').includes('already exists') ||
+        e?.parent?.code === '42P07'
+      ) {
+        // пропустить
+      } else {
+        throw e;
+      }
+    }
 
     // 5. Заполнить category и default_floor для существующих операций
     // Раскрой -> CUTTING, этаж 2

@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 module.exports = {
   async up(queryInterface, Sequelize) {
     await queryInterface.createTable('cutting_documents', {
@@ -54,14 +63,14 @@ module.exports = {
         defaultValue: Sequelize.fn('NOW'),
       },
     });
-    await queryInterface.addIndex('cutting_documents', ['chain_id'], {
+    await safeAddIndex(queryInterface, 'cutting_documents', ['chain_id'], {
       unique: true,
       name: 'cutting_documents_chain_id_unique',
     });
-    await queryInterface.addIndex('cutting_documents', ['order_id'], {
+    await safeAddIndex(queryInterface, 'cutting_documents', ['order_id'], {
       name: 'cutting_documents_order_id_idx',
     });
-    await queryInterface.addIndex('cutting_documents', ['actual_week_start'], {
+    await safeAddIndex(queryInterface, 'cutting_documents', ['actual_week_start'], {
       name: 'cutting_documents_actual_week_idx',
     });
   },

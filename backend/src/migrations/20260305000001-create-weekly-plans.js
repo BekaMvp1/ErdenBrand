@@ -1,5 +1,7 @@
 'use strict';
 
+const { safeCreateIndexQuery } = require('../utils/migrationHelpers');
+
 /**
  * Недельное планирование: ручной план + перенос остатка (carry)
  * row_key = order_id
@@ -58,7 +60,7 @@ module.exports = {
       },
     });
 
-    await queryInterface.sequelize.query(`
+    await safeCreateIndexQuery(queryInterface, `
       CREATE UNIQUE INDEX weekly_plans_workshop_floor_week_row_unique
       ON weekly_plans (workshop_id, COALESCE(building_floor_id, 0), week_start, row_key);
     `);
@@ -104,7 +106,7 @@ module.exports = {
       },
     });
 
-    await queryInterface.sequelize.query(`
+    await safeCreateIndexQuery(queryInterface, `
       CREATE UNIQUE INDEX weekly_capacity_workshop_floor_week_unique
       ON weekly_capacity (workshop_id, COALESCE(building_floor_id, 0), week_start);
     `);

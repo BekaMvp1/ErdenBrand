@@ -1,16 +1,25 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: completed_at для заказов, составной индекс
  */
 
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.addColumn('orders', 'completed_at', {
+    await addColumnIfMissing(queryInterface, 'orders', 'completed_at', {
       type: Sequelize.DATE,
       allowNull: true,
     });
-    await queryInterface.addIndex('orders', ['status_id', 'deadline'], {
+    await safeAddIndex(queryInterface, 'orders', ['status_id', 'deadline'], {
       name: 'orders_status_deadline_idx',
     });
   },

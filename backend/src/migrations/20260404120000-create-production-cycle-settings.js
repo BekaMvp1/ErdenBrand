@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /** Глобальные настройки опережения закупа и раскроя (одна строка). */
 
 module.exports = {
@@ -38,7 +47,7 @@ module.exports = {
         defaultValue: Sequelize.fn('NOW'),
       },
     });
-    await queryInterface.bulkInsert('production_cycle_settings', [
+    await bulkInsertIfCountZero(queryInterface, 'production_cycle_settings', [
       {
         purchase_lead_weeks: 3,
         cutting_lead_weeks: 2,

@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: движения по складу (приход/расход)
  */
@@ -51,8 +60,8 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('warehouse_movements', ['item_id']);
-    await queryInterface.addIndex('warehouse_movements', ['order_id']);
+    await safeAddIndex(queryInterface, 'warehouse_movements', ['item_id']);
+    await safeAddIndex(queryInterface, 'warehouse_movements', ['order_id']);
   },
 
   async down(queryInterface) {

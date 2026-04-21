@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * ОТК по партиям: партии пошива → ОТК по партии → склад по партии → отгрузка по партии.
  * - sewing_batches: партия пошива (batch_code, status DONE/IN_PROGRESS)
@@ -69,8 +78,8 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('sewing_batches', ['order_id']);
-    await queryInterface.addIndex('sewing_batches', ['status']);
+    await safeAddIndex(queryInterface, 'sewing_batches', ['order_id']);
+    await safeAddIndex(queryInterface, 'sewing_batches', ['status']);
 
     // Факт пошива по партии и размерам
     await queryInterface.createTable('sewing_batch_items', {
@@ -114,20 +123,20 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('sewing_batch_items', ['batch_id', 'model_size_id'], {
+    await safeAddIndex(queryInterface, 'sewing_batch_items', ['batch_id', 'model_size_id'], {
       unique: true,
       name: 'sewing_batch_items_batch_model_size_unique',
     });
 
     // Связь плана пошива с партией (опционально)
-    await queryInterface.addColumn('sewing_plans', 'batch_id', {
+    await addColumnIfMissing(queryInterface, 'sewing_plans', 'batch_id', {
       type: Sequelize.INTEGER,
       allowNull: true,
       references: { model: 'sewing_batches', key: 'id' },
       onUpdate: 'CASCADE',
       onDelete: 'SET NULL',
     });
-    await queryInterface.addIndex('sewing_plans', ['batch_id']);
+    await safeAddIndex(queryInterface, 'sewing_plans', ['batch_id']);
 
     // ОТК по партии (одна запись на партию)
     await queryInterface.createTable('qc_batches', {
@@ -213,21 +222,21 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('qc_batch_items', ['qc_batch_id', 'model_size_id'], {
+    await safeAddIndex(queryInterface, 'qc_batch_items', ['qc_batch_id', 'model_size_id'], {
       unique: true,
       name: 'qc_batch_items_qc_batch_model_size_unique',
     });
 
     // Склад: добавлен batch_id (остатки по партии после ОТК)
-    await queryInterface.addColumn('warehouse_stock', 'batch_id', {
+    await addColumnIfMissing(queryInterface, 'warehouse_stock', 'batch_id', {
       type: Sequelize.INTEGER,
       allowNull: true,
       references: { model: 'sewing_batches', key: 'id' },
       onUpdate: 'CASCADE',
       onDelete: 'CASCADE',
     });
-    await queryInterface.addIndex('warehouse_stock', ['batch_id']);
-    await queryInterface.sequelize.query(`
+    await safeAddIndex(queryInterface, 'warehouse_stock', ['batch_id']);
+    await safeCreateIndexQuery(queryInterface, `
       CREATE UNIQUE INDEX warehouse_stock_batch_model_size_unique
       ON warehouse_stock (batch_id, model_size_id)
       WHERE batch_id IS NOT NULL
@@ -270,17 +279,17 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('shipment_items', ['shipment_id']);
+    await safeAddIndex(queryInterface, 'shipment_items', ['shipment_id']);
 
     // Отгрузка: добавлен batch_id (новая схема — одна отгрузка на партию с позициями в shipment_items)
-    await queryInterface.addColumn('shipments', 'batch_id', {
+    await addColumnIfMissing(queryInterface, 'shipments', 'batch_id', {
       type: Sequelize.INTEGER,
       allowNull: true,
       references: { model: 'sewing_batches', key: 'id' },
       onUpdate: 'CASCADE',
       onDelete: 'SET NULL',
     });
-    await queryInterface.addIndex('shipments', ['batch_id']);
+    await safeAddIndex(queryInterface, 'shipments', ['batch_id']);
   },
 
   async down(queryInterface) {

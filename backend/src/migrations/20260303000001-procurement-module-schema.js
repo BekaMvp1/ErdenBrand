@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: новая схема модуля закупа (draft/sent/received, material_name, planned_qty, purchased_*)
  * Не ломает существующие данные — миграция с маппингом
@@ -12,7 +21,7 @@ module.exports = {
       // 1. procurement_requests: добавить completed_at
       const prTable = await queryInterface.describeTable('procurement_requests');
       if (!prTable.completed_at) {
-        await queryInterface.addColumn(
+        await addColumnIfMissing(queryInterface, 
           'procurement_requests',
           'completed_at',
           { type: Sequelize.DATE, allowNull: true },
@@ -55,7 +64,7 @@ module.exports = {
       // 3. procurement_items: новые колонки
       const piTable = await queryInterface.describeTable('procurement_items');
       if (!piTable.material_name) {
-        await queryInterface.addColumn(
+        await addColumnIfMissing(queryInterface, 
           'procurement_items',
           'material_name',
           { type: Sequelize.STRING(200), allowNull: true },
@@ -71,7 +80,7 @@ module.exports = {
         );
       }
       if (!piTable.planned_qty) {
-        await queryInterface.addColumn(
+        await addColumnIfMissing(queryInterface, 
           'procurement_items',
           'planned_qty',
           { type: Sequelize.DECIMAL(12, 3), allowNull: true },
@@ -87,7 +96,7 @@ module.exports = {
         );
       }
       if (!piTable.purchased_qty) {
-        await queryInterface.addColumn(
+        await addColumnIfMissing(queryInterface, 
           'procurement_items',
           'purchased_qty',
           { type: Sequelize.DECIMAL(12, 3), allowNull: true },
@@ -103,7 +112,7 @@ module.exports = {
         );
       }
       if (!piTable.purchased_price) {
-        await queryInterface.addColumn(
+        await addColumnIfMissing(queryInterface, 
           'procurement_items',
           'purchased_price',
           { type: Sequelize.DECIMAL(12, 2), allowNull: true },
@@ -119,7 +128,7 @@ module.exports = {
         );
       }
       if (!piTable.purchased_sum) {
-        await queryInterface.addColumn(
+        await addColumnIfMissing(queryInterface, 
           'procurement_items',
           'purchased_sum',
           { type: Sequelize.DECIMAL(12, 2), allowNull: true },

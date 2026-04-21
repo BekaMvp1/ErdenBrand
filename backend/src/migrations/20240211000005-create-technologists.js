@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: технологи (привязаны к цехам пошива)
  */
@@ -45,8 +54,8 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('technologists', ['user_id']);
-    await queryInterface.addIndex('technologists', ['floor_id']);
+    await safeAddIndex(queryInterface, 'technologists', ['user_id']);
+    await safeAddIndex(queryInterface, 'technologists', ['floor_id']);
   },
 
   async down(queryInterface) {

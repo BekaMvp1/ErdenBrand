@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Единый источник истины по этапам заказа: Закуп → Раскрой → Пошив → ОТК → Склад → Отгрузка.
  * Статусы: NOT_STARTED, IN_PROGRESS, DONE.
@@ -52,13 +61,13 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('order_stages', ['order_id', 'stage_key'], {
+    await safeAddIndex(queryInterface, 'order_stages', ['order_id', 'stage_key'], {
       unique: true,
       name: 'order_stages_order_stage_unique',
     });
-    await queryInterface.addIndex('order_stages', ['order_id']);
-    await queryInterface.addIndex('order_stages', ['stage_key']);
-    await queryInterface.addIndex('order_stages', ['status']);
+    await safeAddIndex(queryInterface, 'order_stages', ['order_id']);
+    await safeAddIndex(queryInterface, 'order_stages', ['stage_key']);
+    await safeAddIndex(queryInterface, 'order_stages', ['status']);
 
     // Обратное заполнение для существующих заказов: у всех procurement = IN_PROGRESS, остальные NOT_STARTED
     const [orders] = await queryInterface.sequelize.query('SELECT id FROM orders ORDER BY id');

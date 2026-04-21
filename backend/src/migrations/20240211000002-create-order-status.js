@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: справочник статусов заказов
  */
@@ -28,8 +37,8 @@ module.exports = {
       },
     });
 
-    // Вставляем начальные статусы
-    await queryInterface.bulkInsert('order_status', [
+    // Вставляем начальные статусы (COUNT внутри bulkInsertIfCountZero)
+    await bulkInsertIfCountZero(queryInterface, 'order_status', [
       { name: 'Принят', created_at: new Date(), updated_at: new Date() },
       { name: 'В работе', created_at: new Date(), updated_at: new Date() },
       { name: 'Готов', created_at: new Date(), updated_at: new Date() },

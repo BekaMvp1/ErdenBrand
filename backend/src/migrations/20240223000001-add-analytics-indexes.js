@@ -1,5 +1,7 @@
 'use strict';
 
+const { safeCreateIndexQuery } = require('../utils/migrationHelpers');
+
 /**
  * Миграция: индексы для аналитики
  * orders, order_operations — для ускорения запросов overdue, bottlenecks, workers, timeline
@@ -16,8 +18,9 @@ module.exports = {
       ['order_operations', 'idx_order_operations_op_status', 'operation_id, status'],
     ];
     for (const [table, name, cols] of indexes) {
-      await queryInterface.sequelize.query(
-        `CREATE INDEX IF NOT EXISTS ${name} ON ${table} (${cols})`
+      await safeCreateIndexQuery(
+        queryInterface,
+        `CREATE INDEX IF NOT EXISTS ${name} ON ${table} (${cols})`,
       );
     }
   },

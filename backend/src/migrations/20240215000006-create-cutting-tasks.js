@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: задачи на раскрой по заказам
  */
@@ -52,8 +61,8 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('cutting_tasks', ['order_id']);
-    await queryInterface.addIndex('cutting_tasks', ['cutting_type']);
+    await safeAddIndex(queryInterface, 'cutting_tasks', ['order_id']);
+    await safeAddIndex(queryInterface, 'cutting_tasks', ['cutting_type']);
   },
 
   async down(queryInterface) {

@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: справочник цветов изделий (добавляются вручную)
  */
@@ -27,7 +36,7 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('colors', ['name']);
+    await safeAddIndex(queryInterface, 'colors', ['name']);
   },
 
   async down(queryInterface) {

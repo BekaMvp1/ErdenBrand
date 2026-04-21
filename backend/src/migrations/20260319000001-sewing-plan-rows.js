@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * План пошива по (order_id, floor_id, work_date) — единый источник плана для доски пошива.
  * Связка только по order_id + floor_id.
@@ -47,13 +56,13 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('sewing_plan_rows', ['order_id', 'floor_id', 'work_date'], {
+    await safeAddIndex(queryInterface, 'sewing_plan_rows', ['order_id', 'floor_id', 'work_date'], {
       unique: true,
       name: 'sewing_plan_rows_order_floor_date_unique',
     });
-    await queryInterface.addIndex('sewing_plan_rows', ['order_id']);
-    await queryInterface.addIndex('sewing_plan_rows', ['floor_id']);
-    await queryInterface.addIndex('sewing_plan_rows', ['work_date']);
+    await safeAddIndex(queryInterface, 'sewing_plan_rows', ['order_id']);
+    await safeAddIndex(queryInterface, 'sewing_plan_rows', ['floor_id']);
+    await safeAddIndex(queryInterface, 'sewing_plan_rows', ['work_date']);
 
     // Обратное заполнение из sewing_plans (агрегат по order_id, floor_id, date)
     const [rows] = await queryInterface.sequelize.query(`

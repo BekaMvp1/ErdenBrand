@@ -1,12 +1,21 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: тип модели (Обычная | Комплект)
  */
 
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.addColumn('orders', 'model_type', {
+    await addColumnIfMissing(queryInterface, 'orders', 'model_type', {
       type: Sequelize.STRING(20),
       allowNull: true,
       defaultValue: 'regular',

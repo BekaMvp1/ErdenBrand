@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: справочник размеров
  */
@@ -33,8 +42,8 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('sizes', ['name'], { unique: true });
-    await queryInterface.addIndex('sizes', ['is_active']);
+    await safeAddIndex(queryInterface, 'sizes', ['name'], { unique: true });
+    await safeAddIndex(queryInterface, 'sizes', ['is_active']);
   },
 
   async down(queryInterface) {

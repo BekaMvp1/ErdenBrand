@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Система периодов планирования по месяцам.
  * planning_periods: месяц как отдельный период (ACTIVE/CLOSED).
@@ -48,37 +57,57 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('planning_periods', ['year', 'month'], {
-      unique: true,
-      name: 'planning_periods_year_month_unique',
-    });
+    try {
+      await safeAddIndex(queryInterface, 'planning_periods', ['year', 'month'], {
+        unique: true,
+        name: 'planning_periods_year_month_unique',
+      });
+    } catch (e) {
+      if (
+        String(e?.message || '').includes('already exists') ||
+        e.parent?.code === '42P07'
+      ) {
+        // пропустить
+      } else {
+        throw e;
+      }
+    }
 
     // Добавляем period_id в production_plan_day (пока nullable)
-    await queryInterface.addColumn('production_plan_day', 'period_id', {
-      type: Sequelize.INTEGER,
-      allowNull: true,
-      references: { model: 'planning_periods', key: 'id' },
-      onUpdate: 'CASCADE',
-      onDelete: 'RESTRICT',
-    });
+    const cols_production_plan_day = await queryInterface.describeTable('production_plan_day');
+    if (!cols_production_plan_day.period_id) {
+      await addColumnIfMissing(queryInterface, 'production_plan_day', 'period_id', {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+        references: { model: 'planning_periods', key: 'id' },
+        onUpdate: 'CASCADE',
+        onDelete: 'RESTRICT',
+      });
+    }
 
     // Добавляем period_id в weekly_plans
-    await queryInterface.addColumn('weekly_plans', 'period_id', {
-      type: Sequelize.INTEGER,
-      allowNull: true,
-      references: { model: 'planning_periods', key: 'id' },
-      onUpdate: 'CASCADE',
-      onDelete: 'RESTRICT',
-    });
+    const cols_weekly_plans = await queryInterface.describeTable('weekly_plans');
+    if (!cols_weekly_plans.period_id) {
+      await addColumnIfMissing(queryInterface, 'weekly_plans', 'period_id', {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+        references: { model: 'planning_periods', key: 'id' },
+        onUpdate: 'CASCADE',
+        onDelete: 'RESTRICT',
+      });
+    }
 
     // Добавляем period_id в weekly_carry
-    await queryInterface.addColumn('weekly_carry', 'period_id', {
-      type: Sequelize.INTEGER,
-      allowNull: true,
-      references: { model: 'planning_periods', key: 'id' },
-      onUpdate: 'CASCADE',
-      onDelete: 'RESTRICT',
-    });
+    const cols_weekly_carry = await queryInterface.describeTable('weekly_carry');
+    if (!cols_weekly_carry.period_id) {
+      await addColumnIfMissing(queryInterface, 'weekly_carry', 'period_id', {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+        references: { model: 'planning_periods', key: 'id' },
+        onUpdate: 'CASCADE',
+        onDelete: 'RESTRICT',
+      });
+    }
 
     // Создаём один период по умолчанию для существующих данных (март 2026)
     const [rows] = await queryInterface.sequelize.query(`
@@ -128,7 +157,7 @@ module.exports = {
     await queryInterface.sequelize.query(`
       DROP INDEX IF EXISTS production_plan_day_order_date_workshop_floor_unique
     `);
-    await queryInterface.sequelize.query(`
+    await safeCreateIndexQuery(queryInterface, `
       CREATE UNIQUE INDEX production_plan_day_period_order_date_workshop_floor_unique
       ON production_plan_day (period_id, order_id, date, workshop_id, COALESCE(floor_id, 0))
     `);
@@ -136,7 +165,7 @@ module.exports = {
     await queryInterface.sequelize.query(`
       DROP INDEX IF EXISTS weekly_plans_workshop_floor_week_row_unique
     `);
-    await queryInterface.sequelize.query(`
+    await safeCreateIndexQuery(queryInterface, `
       CREATE UNIQUE INDEX weekly_plans_period_workshop_floor_week_row_unique
       ON weekly_plans (period_id, workshop_id, COALESCE(building_floor_id, 0), week_start, row_key)
     `);
@@ -144,7 +173,7 @@ module.exports = {
     await queryInterface.sequelize.query(`
       DROP INDEX IF EXISTS weekly_carry_workshop_floor_week_row_unique
     `);
-    await queryInterface.sequelize.query(`
+    await safeCreateIndexQuery(queryInterface, `
       CREATE UNIQUE INDEX weekly_carry_period_workshop_floor_week_row_unique
       ON weekly_carry (period_id, workshop_id, COALESCE(building_floor_id, 0), week_start, row_key)
     `);
@@ -155,21 +184,21 @@ module.exports = {
     await queryInterface.sequelize.query(`
       DROP INDEX IF EXISTS production_plan_day_period_order_date_workshop_floor_unique
     `);
-    await queryInterface.sequelize.query(`
+    await safeCreateIndexQuery(queryInterface, `
       CREATE UNIQUE INDEX production_plan_day_order_date_workshop_floor_unique
       ON production_plan_day (order_id, date, workshop_id, COALESCE(floor_id, 0))
     `);
     await queryInterface.sequelize.query(`
       DROP INDEX IF EXISTS weekly_plans_period_workshop_floor_week_row_unique
     `);
-    await queryInterface.sequelize.query(`
+    await safeCreateIndexQuery(queryInterface, `
       CREATE UNIQUE INDEX weekly_plans_workshop_floor_week_row_unique
       ON weekly_plans (workshop_id, COALESCE(building_floor_id, 0), week_start, row_key)
     `);
     await queryInterface.sequelize.query(`
       DROP INDEX IF EXISTS weekly_carry_period_workshop_floor_week_row_unique
     `);
-    await queryInterface.sequelize.query(`
+    await safeCreateIndexQuery(queryInterface, `
       CREATE UNIQUE INDEX weekly_carry_workshop_floor_week_row_unique
       ON weekly_carry (workshop_id, COALESCE(building_floor_id, 0), week_start, row_key)
     `);

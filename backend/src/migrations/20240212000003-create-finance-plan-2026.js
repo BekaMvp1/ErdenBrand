@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: плановые показатели БДР/БДДС по месяцам 2026
  */
@@ -46,7 +55,7 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('finance_plan_2026', ['type', 'category_id', 'month'], {
+    await safeAddIndex(queryInterface, 'finance_plan_2026', ['type', 'category_id', 'month'], {
       unique: true,
       name: 'finance_plan_2026_unique',
     });

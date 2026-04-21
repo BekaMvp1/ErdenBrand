@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Таблица sewing_fact_matrix: разбивка факта пошива по цвету и размеру (для предзаполнения полей на странице Пошив).
  * Один снимок на (order_id, floor_id); при сохранении матрицы строки перезаписываются.
@@ -51,12 +60,12 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('sewing_fact_matrix', ['order_id', 'floor_id', 'color', 'size'], {
+    await safeAddIndex(queryInterface, 'sewing_fact_matrix', ['order_id', 'floor_id', 'color', 'size'], {
       unique: true,
       name: 'sewing_fact_matrix_order_floor_color_size_unique',
     });
-    await queryInterface.addIndex('sewing_fact_matrix', ['order_id']);
-    await queryInterface.addIndex('sewing_fact_matrix', ['floor_id']);
+    await safeAddIndex(queryInterface, 'sewing_fact_matrix', ['order_id']);
+    await safeAddIndex(queryInterface, 'sewing_fact_matrix', ['floor_id']);
   },
 
   async down(queryInterface) {

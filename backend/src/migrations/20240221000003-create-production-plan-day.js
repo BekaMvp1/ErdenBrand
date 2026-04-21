@@ -1,5 +1,7 @@
 'use strict';
 
+const { safeCreateIndexQuery } = require('../utils/migrationHelpers');
+
 /**
  * Миграция: план производства по дням
  * order_id, date, workshop_id, floor_id (nullable для цехов с 1 этажом)
@@ -62,7 +64,7 @@ module.exports = {
     });
 
     // Уникальность: для floor_id=NULL используем 0 в выражении
-    await queryInterface.sequelize.query(`
+    await safeCreateIndexQuery(queryInterface, `
       CREATE UNIQUE INDEX production_plan_day_order_date_workshop_floor_unique
       ON production_plan_day (order_id, date, workshop_id, COALESCE(floor_id, 0));
     `);

@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Единый статус пошива по заказу+этаж (2/3/4).
  * Один источник правды: sewing_order_floors.status (IN_PROGRESS | DONE).
@@ -54,11 +63,11 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('sewing_order_floors', ['order_id', 'floor_id'], {
+    await safeAddIndex(queryInterface, 'sewing_order_floors', ['order_id', 'floor_id'], {
       unique: true,
       name: 'sewing_order_floors_order_floor_unique',
     });
-    await queryInterface.addIndex('sewing_order_floors', ['status']);
+    await safeAddIndex(queryInterface, 'sewing_order_floors', ['status']);
 
     // Заполнить из существующих партий DONE
     const [doneBatches] = await queryInterface.sequelize.query(`

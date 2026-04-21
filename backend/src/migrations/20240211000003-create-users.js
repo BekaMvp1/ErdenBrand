@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: пользователи системы
  */
@@ -56,9 +65,9 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('users', ['floor_id']);
-    await queryInterface.addIndex('users', ['role']);
-    await queryInterface.addIndex('users', ['is_active']);
+    await safeAddIndex(queryInterface, 'users', ['floor_id']);
+    await safeAddIndex(queryInterface, 'users', ['role']);
+    await safeAddIndex(queryInterface, 'users', ['is_active']);
   },
 
   async down(queryInterface) {

@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: производственный календарь (мощность и загрузка по дням)
  */
@@ -50,9 +59,9 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('production_calendar', ['date']);
-    await queryInterface.addIndex('production_calendar', ['sewer_id']);
-    await queryInterface.addIndex('production_calendar', ['date', 'sewer_id'], {
+    await safeAddIndex(queryInterface, 'production_calendar', ['date']);
+    await safeAddIndex(queryInterface, 'production_calendar', ['sewer_id']);
+    await safeAddIndex(queryInterface, 'production_calendar', ['date', 'sewer_id'], {
       unique: true,
       name: 'production_calendar_date_sewer_unique',
     });

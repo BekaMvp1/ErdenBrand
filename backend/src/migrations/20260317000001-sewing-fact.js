@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Таблица sewing_fact: фактическое количество пошива по заказу, этажу и дате.
  * Используется при сохранении факта на странице «Пошив» и при завершении пошива → ОТК.
@@ -47,13 +56,13 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('sewing_fact', ['order_id', 'floor_id', 'date'], {
+    await safeAddIndex(queryInterface, 'sewing_fact', ['order_id', 'floor_id', 'date'], {
       unique: true,
       name: 'sewing_fact_order_floor_date_unique',
     });
-    await queryInterface.addIndex('sewing_fact', ['order_id']);
-    await queryInterface.addIndex('sewing_fact', ['floor_id']);
-    await queryInterface.addIndex('sewing_fact', ['date']);
+    await safeAddIndex(queryInterface, 'sewing_fact', ['order_id']);
+    await safeAddIndex(queryInterface, 'sewing_fact', ['floor_id']);
+    await safeAddIndex(queryInterface, 'sewing_fact', ['date']);
   },
 
   async down(queryInterface) {

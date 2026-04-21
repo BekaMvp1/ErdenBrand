@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: таблица очереди синхронизации в облако
  */
@@ -49,8 +58,8 @@ module.exports = {
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
       },
     });
-    await queryInterface.addIndex('sync_queue', ['status']);
-    await queryInterface.addIndex('sync_queue', ['entity_type', 'entity_id']);
+    await safeAddIndex(queryInterface, 'sync_queue', ['status']);
+    await safeAddIndex(queryInterface, 'sync_queue', ['entity_type', 'entity_id']);
   },
 
   async down(queryInterface) {

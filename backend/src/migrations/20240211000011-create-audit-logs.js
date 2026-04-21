@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  safeAddIndex,
+  safeCreateIndexQuery,
+  addColumnIfMissing,
+  safeAddConstraint,
+  bulkInsertIfCountZero,
+} = require('../utils/migrationHelpers');
+
+
 /**
  * Миграция: журнал аудита действий пользователей
  */
@@ -41,9 +50,9 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex('audit_logs', ['user_id']);
-    await queryInterface.addIndex('audit_logs', ['entity', 'entity_id']);
-    await queryInterface.addIndex('audit_logs', ['created_at']);
+    await safeAddIndex(queryInterface, 'audit_logs', ['user_id']);
+    await safeAddIndex(queryInterface, 'audit_logs', ['entity', 'entity_id']);
+    await safeAddIndex(queryInterface, 'audit_logs', ['created_at']);
   },
 
   async down(queryInterface) {

@@ -2,7 +2,7 @@
  * Страница: Панель заказов (оперативная доска)
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useOrderProgress } from '../context/OrderProgressContext';
@@ -77,74 +77,85 @@ const UNIFIED_BOX_CLASS = 'w-full min-h-full rounded-lg border border-white/15 b
 const photoCache = {};
 
 function OrderPhoto({ orderId }) {
-  const [src, setSrc] = useState(null);
-  const [loaded, setLoaded] = useState(false);
-  const ref = useRef(null);
+  const [src, setSrc] = useState(
+    photoCache[orderId] !== undefined ? photoCache[orderId] : undefined
+  );
 
   useEffect(() => {
-    const node = ref.current;
-    if (!node) return undefined;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0];
-        if (entry?.isIntersecting && !loaded) {
-          setLoaded(true);
+    // Если уже в кэше — не грузить
+    if (photoCache[orderId] !== undefined) return;
 
-          // Если фото уже в кэше — не делать запрос
-          if (photoCache[orderId] !== undefined) {
-            setSrc(photoCache[orderId]);
-            observer.disconnect();
-            return;
-          }
-
-          api.orders.photo(orderId)
-            .then((res) => {
-              const photo = typeof res?.photo === 'string' && res.photo.trim() ? res.photo.trim() : null;
-              photoCache[orderId] = photo; // сохранить в кэш
-              setSrc(photo);
-            })
-            .catch(() => {
-              photoCache[orderId] = null;
-            });
-          observer.disconnect();
-        }
-      },
-      { threshold: 0.1 }
-    );
-    observer.observe(node);
+    let cancelled = false;
+    api.orders
+      .photo(orderId)
+      .then((res) => {
+        const photo = res?.data?.photo ?? res?.photo ?? null;
+        photoCache[orderId] = photo;
+        if (!cancelled) setSrc(photo);
+      })
+      .catch(() => {
+        photoCache[orderId] = null;
+        if (!cancelled) setSrc(null);
+      });
 
     return () => {
-      observer.disconnect();
+      cancelled = true;
     };
-  }, [orderId, loaded]);
+  }, [orderId]);
+
+  if (src === undefined) {
+    // Загружается — показать заглушку
+    return (
+      <div
+        style={{
+          width: 52,
+          height: 52,
+          borderRadius: 6,
+          background: '#1a1a1a',
+          border: '0.5px solid #333',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <span style={{ fontSize: 10, color: '#444' }}>...</span>
+      </div>
+    );
+  }
+
+  if (!src) {
+    // Фото нет
+    return (
+      <div
+        style={{
+          width: 52,
+          height: 52,
+          borderRadius: 6,
+          background: '#1a1a1a',
+          border: '0.5px solid #333',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <span style={{ fontSize: 10, color: '#444' }}>фото</span>
+      </div>
+    );
+  }
 
   return (
-    <div
-      ref={ref}
+    <img
+      src={src}
+      alt=""
       style={{
         width: 52,
         height: 52,
+        objectFit: 'cover',
         borderRadius: 6,
-        background: '#111',
         border: '0.5px solid #333',
-        overflow: 'hidden',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
       }}
-    >
-      {src ? (
-        <img
-          src={src}
-          loading="lazy"
-          alt=""
-          style={{ width: 52, height: 52, objectFit: 'cover' }}
-          onError={() => setSrc(null)}
-        />
-      ) : (
-        <span style={{ fontSize: 10, color: '#444' }}>фото</span>
-      )}
-    </div>
+      onError={() => setSrc(null)}
+    />
   );
 }
 

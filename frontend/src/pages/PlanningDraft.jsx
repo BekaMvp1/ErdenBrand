@@ -1297,6 +1297,7 @@ export default function PlanningDraft({ viewMode = 'month' }) {
   const tableScrollRef = useRef(null);
   const ddSearchInputRef = useRef(null);
   const prevDraftScopeRef = useRef(null);
+  const lastLoadedMonthKeyRef = useRef(null);
   const ordersRef = useRef(orders);
   const clientsRef = useRef(clients);
   const sectionTreeRef = useRef(sectionTree);
@@ -1336,6 +1337,12 @@ export default function PlanningDraft({ viewMode = 'month' }) {
     () => planningProductionDraftScopeKeyFE(workshopId, floorId, effectiveMonthKey),
     [workshopId, floorId, effectiveMonthKey]
   );
+  const orderIdsQuery = useMemo(() => {
+    const ids = (orders || [])
+      .map((o) => Number(o?.id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+    return ids.length ? ids.join(',') : '';
+  }, [orders]);
 
   const displayDays = useMemo(
     () => (isWeek ? getWeekDates(weekStartMonday) : []),
@@ -1583,24 +1590,34 @@ export default function PlanningDraft({ viewMode = 'month' }) {
   }, [effectiveMonthKey, allWeeks.length]);
 
   const refreshCuttingFacts = useCallback(async () => {
+    if (!orderIdsQuery) {
+      setCuttingFactsByOrderId({});
+      return;
+    }
     try {
-      const data = await api.cutting.factsByOrder();
+      const data = await api.cutting.factsByOrder(orderIdsQuery);
       if (data && typeof data === 'object') setCuttingFactsByOrderId(data);
+      else setCuttingFactsByOrderId({});
     } catch (e) {
       console.warn('PlanningDraft cutting facts:', e);
+      setCuttingFactsByOrderId({});
     }
-  }, []);
+  }, [orderIdsQuery]);
 
   const refreshSewingFacts = useCallback(async () => {
+    if (!orderIdsQuery) {
+      setSewingFactsByOrderId({});
+      return;
+    }
     try {
-      const data = await api.sewing.factsByOrder();
+      const data = await api.sewing.factsByOrder(orderIdsQuery);
       if (data && typeof data === 'object') setSewingFactsByOrderId(data);
       else setSewingFactsByOrderId({});
     } catch (e) {
       console.warn('PlanningDraft sewing facts:', e);
       setSewingFactsByOrderId({});
     }
-  }, []);
+  }, [orderIdsQuery]);
 
   useEffect(() => {
     refreshCuttingFacts();
@@ -1761,9 +1778,13 @@ export default function PlanningDraft({ viewMode = 'month' }) {
 
   useEffect(() => {
     if (loading) return;
+    if (lastLoadedMonthKeyRef.current === effectiveMonthKey && prevDraftScopeRef.current === draftScopeKey) {
+      return;
+    }
     const prev = prevDraftScopeRef.current;
     if (prev === draftScopeKey && prev !== null) return;
     prevDraftScopeRef.current = draftScopeKey;
+    lastLoadedMonthKeyRef.current = effectiveMonthKey;
 
     draftInitDoneRef.current = false;
     let cancelled = false;

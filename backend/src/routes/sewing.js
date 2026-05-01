@@ -325,9 +325,15 @@ router.patch('/facts/:factId', async (req, res, next) => {
  */
 router.get('/facts-by-order', async (req, res, next) => {
   try {
+    const orderIds = String(req.query.order_ids || '')
+      .split(',')
+      .map((v) => Number(v))
+      .filter((n) => Number.isFinite(n) && n > 0);
     const sewingFloorIds = await getSewingFloorIds();
+    const where = { floor_id: { [Op.in]: sewingFloorIds } };
+    if (orderIds.length > 0) where.order_id = { [Op.in]: orderIds };
     const rows = await db.SewingFact.findAll({
-      where: { floor_id: { [Op.in]: sewingFloorIds } },
+      where,
       attributes: ['order_id', 'fact_qty'],
       raw: true,
     });

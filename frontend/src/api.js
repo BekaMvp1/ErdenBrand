@@ -424,7 +424,8 @@ export const api = {
       request('/api/sewing/fact/bulk', { method: 'POST', body: JSON.stringify(body) }),
     complete: (body) =>
       request('/api/sewing/complete', { method: 'POST', body: JSON.stringify(body) }),
-    factsByOrder: () => request('/api/sewing/facts-by-order'),
+    factsByOrder: (order_ids) =>
+      request(`/api/sewing/facts-by-order${order_ids ? `?order_ids=${encodeURIComponent(order_ids)}` : ''}`),
     documentsList: () => request('/api/sewing/documents'),
     documentFactsList: (docId) => request(`/api/sewing/documents/${docId}/facts`),
     documentPatch: (id, body) =>
@@ -568,7 +569,8 @@ export const api = {
       request('/api/cutting/complete', { method: 'POST', body: JSON.stringify(data) }),
     sendToSewing: (data) =>
       request('/api/cutting/send-to-sewing', { method: 'POST', body: JSON.stringify(data) }),
-    factsByOrder: () => request('/api/cutting/facts-by-order'),
+    factsByOrder: (order_ids) =>
+      request(`/api/cutting/facts-by-order${order_ids ? `?order_ids=${encodeURIComponent(order_ids)}` : ''}`),
     documentsList: () => request('/api/cutting/documents'),
     documentsFromChain: (chain_ids) =>
       request('/api/cutting/documents/from-chain', {

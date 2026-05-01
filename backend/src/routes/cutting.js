@@ -401,7 +401,13 @@ router.get('/tasks', async (req, res, next) => {
  */
 router.get('/facts-by-order', async (req, res, next) => {
   try {
+    const orderIds = String(req.query.order_ids || '')
+      .split(',')
+      .map((v) => Number(v))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    const where = orderIds.length > 0 ? { order_id: { [Op.in]: orderIds } } : undefined;
     const rows = await db.CuttingTask.findAll({
+      ...(where ? { where } : {}),
       attributes: ['order_id', 'actual_variants'],
       raw: true,
     });

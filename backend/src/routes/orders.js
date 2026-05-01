@@ -1879,6 +1879,49 @@ router.put('/:id/rostovka', async (req, res, next) => {
 });
 
 /**
+ * GET /api/orders/:id/photo
+ * Лёгкий эндпоинт превью: возвращает только первое фото заказа.
+ */
+router.get('/:id/photo', async (req, res, next) => {
+  try {
+    const order = await db.Order.findByPk(req.params.id, {
+      attributes: ['id', 'photos', 'building_floor_id', 'floor_id'],
+    });
+    if (!order) return res.status(404).json({ photo: null });
+
+    if (req.user.role === 'technologist') {
+      const allowed = req.allowedBuildingFloorId ?? req.allowedFloorId;
+      if (allowed) {
+        const orderFloor = order.building_floor_id ?? order.floor_id;
+        if (orderFloor != null && Number(orderFloor) !== Number(allowed)) {
+          return res.status(403).json({ photo: null });
+        }
+      }
+    }
+    if (req.user.role === 'operator' && req.user.Sewer) {
+      const hasMyOps = await db.OrderOperation.count({
+        where: { order_id: order.id, sewer_id: req.user.Sewer.id },
+      });
+      if (!hasMyOps) return res.status(403).json({ photo: null });
+    }
+
+    const firstPhoto = Array.isArray(order.photos) && order.photos.length > 0
+      ? order.photos[0]
+      : null;
+    if (!firstPhoto) return res.status(404).json({ photo: null });
+    if (typeof firstPhoto === 'string') return res.json({ photo: firstPhoto });
+    if (firstPhoto && typeof firstPhoto === 'object') {
+      const url = typeof firstPhoto.url === 'string' ? firstPhoto.url : '';
+      const imageUrl = typeof firstPhoto.image_url === 'string' ? firstPhoto.image_url : '';
+      return res.json({ photo: url || imageUrl || null });
+    }
+    return res.status(404).json({ photo: null });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * GET /api/orders/:id
  * Детали заказа (включая variants, sizes, colors)
  */

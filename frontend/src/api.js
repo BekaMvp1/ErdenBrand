@@ -149,6 +149,7 @@ export const api = {
       return request(`/api/orders${q ? `?${q}` : ''}`);
     },
     get: (id) => request(`/api/orders/${id}`),
+    photo: (id) => request(`/api/orders/${id}/photo`),
     stages: (id) => request(`/api/orders/${id}/stages`),
     create: (data) =>
       request('/api/orders', { method: 'POST', body: JSON.stringify(data) }),

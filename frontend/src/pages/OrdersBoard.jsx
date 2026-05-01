@@ -2,7 +2,7 @@
  * Страница: Панель заказов (оперативная доска)
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useOrderProgress } from '../context/OrderProgressContext';
@@ -73,13 +73,79 @@ const GRID_TEMPLATE = `${COL_WIDTHS.client}px ${COL_WIDTHS.priority}px ${COL_WID
 const GRID_MIN_WIDTH = COL_WIDTHS.client + COL_WIDTHS.priority + COL_WIDTHS.created + STAGE_COLUMNS.length * COL_WIDTHS.stage + COL_WIDTHS.forecast + COL_WIDTHS.deadline;
 const UNIFIED_BOX_CLASS = 'w-full min-h-full rounded-lg border border-white/15 bg-slate-900/45 p-2.5 text-sm';
 
-/** Превью заказа: строка из photos[0], объекта с url или image_url */
-function boardOrderThumbSrc(orderRow) {
-  const p = orderRow.photos?.[0];
-  if (typeof p === 'string' && p.trim()) return p.trim();
-  if (p && typeof p === 'object' && typeof p.url === 'string' && p.url.trim()) return p.url.trim();
-  if (typeof orderRow.image_url === 'string' && orderRow.image_url.trim()) return orderRow.image_url.trim();
-  return null;
+// Кэш фото на уровне модуля (живёт пока открыта вкладка)
+const photoCache = {};
+
+function OrderPhoto({ orderId }) {
+  const [src, setSrc] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return undefined;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry?.isIntersecting && !loaded) {
+          setLoaded(true);
+
+          // Если фото уже в кэше — не делать запрос
+          if (photoCache[orderId] !== undefined) {
+            setSrc(photoCache[orderId]);
+            observer.disconnect();
+            return;
+          }
+
+          api.orders.photo(orderId)
+            .then((res) => {
+              const photo = typeof res?.photo === 'string' && res.photo.trim() ? res.photo.trim() : null;
+              photoCache[orderId] = photo; // сохранить в кэш
+              setSrc(photo);
+            })
+            .catch(() => {
+              photoCache[orderId] = null;
+            });
+          observer.disconnect();
+        }
+      },
+      { threshold: 0.1 }
+    );
+    observer.observe(node);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [orderId, loaded]);
+
+  return (
+    <div
+      ref={ref}
+      style={{
+        width: 52,
+        height: 52,
+        borderRadius: 6,
+        background: '#111',
+        border: '0.5px solid #333',
+        overflow: 'hidden',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      {src ? (
+        <img
+          src={src}
+          loading="lazy"
+          alt=""
+          style={{ width: 52, height: 52, objectFit: 'cover' }}
+          onError={() => setSrc(null)}
+        />
+      ) : (
+        <span style={{ fontSize: 10, color: '#444' }}>фото</span>
+      )}
+    </div>
+  );
 }
 
 /** Компактные бейджи цепочки (ключи как в orderProgress.progress) */
@@ -379,7 +445,6 @@ function BoardRow({ orderRow, viewMode, onOpenOrder, onOpenStage, orderProgress 
   const stickyLeft = 'sticky z-10 bg-slate-950/95';
   const stickyRight = 'sticky z-10 bg-slate-950/95';
   const rowMinH = 'min-h-[80px]';
-  const thumbSrc = boardOrderThumbSrc(orderRow);
   const totalPct = Math.min(
     100,
     orderProgress?.total_progress ??
@@ -402,25 +467,7 @@ function BoardRow({ orderRow, viewMode, onOpenOrder, onOpenStage, orderProgress 
       <div className={`${stickyLeft} left-0 border-r border-white/10 px-0 flex flex-col ${rowMinH}`}>
         <UnifiedCellBox className="flex flex-1 items-start gap-2.5 py-2 min-h-0 !p-2">
           <div className="relative h-[52px] w-[52px] shrink-0">
-            {thumbSrc ? (
-              <img
-                src={thumbSrc}
-                loading="lazy"
-                alt=""
-                className="h-[52px] w-[52px] rounded-md object-cover border border-[#333]/80"
-                onError={(e) => {
-                  e.currentTarget.style.display = 'none';
-                  const next = e.currentTarget.nextElementSibling;
-                  if (next instanceof HTMLElement) next.style.display = 'flex';
-                }}
-              />
-            ) : null}
-            <div
-              className="absolute inset-0 flex h-[52px] w-[52px] items-center justify-center rounded-md border border-[#222] bg-[#111] text-[9px] text-[#333]"
-              style={{ display: thumbSrc ? 'none' : 'flex' }}
-            >
-              фото
-            </div>
+            <OrderPhoto orderId={orderRow.id} />
           </div>
           <div className="min-w-0 flex-1">
             <div className="mb-0.5 flex min-w-0 items-center gap-1.5">

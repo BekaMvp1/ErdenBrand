@@ -30,6 +30,9 @@ module.exports = (sequelize, DataTypes) => {
     timestamps: true,
     updatedAt: false,
     underscored: true,
+      indexes: [
+        { fields: ['created_at'] },
+      ],
   });
   return AuditLog;
 };

@@ -37,6 +37,9 @@ module.exports = (sequelize, DataTypes) => {
     tableName: 'sizes',
     timestamps: true,
     underscored: true,
+      indexes: [
+        { fields: ['created_at'] },
+      ],
   });
   return Size;
 };

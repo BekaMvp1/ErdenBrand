@@ -4,6 +4,8 @@
 
 import { API_URL } from './apiBaseUrl';
 
+const API_TIMEOUT_MS = 15000;
+
 function getToken() {
   return sessionStorage.getItem('token');
 }
@@ -17,6 +19,10 @@ function isLikelyNetworkError(err) {
 
 async function request(path, options = {}) {
   const maxRetries = 3;
+  const timeoutMs =
+    Number.isFinite(Number(options.timeout)) && Number(options.timeout) > 0
+      ? Number(options.timeout)
+      : API_TIMEOUT_MS;
   const token = getToken();
   const headers = {
     'Content-Type': 'application/json',
@@ -27,13 +33,23 @@ async function request(path, options = {}) {
   let lastError;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const timeoutController = new AbortController();
+    const timeoutId = window.setTimeout(() => timeoutController.abort(), timeoutMs);
+    const externalSignal = options.signal;
+    const onAbort = () => timeoutController.abort();
+    if (externalSignal) {
+      if (externalSignal.aborted) timeoutController.abort();
+      else externalSignal.addEventListener('abort', onAbort, { once: true });
+    }
     try {
+      const { timeout: _timeout, ...fetchOptions } = options;
       const res = await fetch(`${API_URL}${path}`, {
-        ...options,
+        ...fetchOptions,
         headers,
         mode: 'cors',
         credentials: 'include',
         cache: 'no-store',
+        signal: timeoutController.signal,
       });
 
       if (res.status === 502) {
@@ -72,16 +88,27 @@ async function request(path, options = {}) {
       return data;
     } catch (err) {
       lastError = err;
+      if (err?.name === 'AbortError') {
+        console.error('[API] Таймаут запроса:', path);
+      } else if (!err?.status) {
+        console.error('[API] Сервер недоступен:', path);
+      }
       if (err && err.status === 401) throw err;
       if (err && typeof err.status === 'number' && err.status !== 502 && err.status >= 400) {
         throw err;
       }
+      if (err?.name === 'AbortError') throw err;
       if (attempt < maxRetries && isLikelyNetworkError(err)) {
         console.log(`[API] сеть попытка ${attempt}/${maxRetries}:`, err?.message || err);
         await new Promise((r) => setTimeout(r, attempt * 1000));
         continue;
       }
       throw err;
+    } finally {
+      window.clearTimeout(timeoutId);
+      if (externalSignal) {
+        externalSignal.removeEventListener('abort', onAbort);
+      }
     }
   }
 
@@ -89,7 +116,7 @@ async function request(path, options = {}) {
 }
 
 export const api = {
-  health: () => request('/api/health'),
+  health: (opts = {}) => request('/api/health', opts),
   dashboard: {
     summary: () => request('/api/dashboard/summary'),
     get: () => request('/api/dashboard'),
@@ -281,6 +308,23 @@ export const api = {
     productionDraftPut: (body) =>
       request('/api/planning/production-draft', {
         method: 'PUT',
+        body: JSON.stringify(body),
+      }),
+    monthFactsGet: (params) => {
+      const q = new URLSearchParams();
+      q.set('month_key', params.month_key);
+      if (params.workshop_id != null && String(params.workshop_id).trim() !== '') {
+        q.set('workshop_id', String(params.workshop_id));
+      }
+      if (params.building_floor_id != null && String(params.building_floor_id).trim() !== '') {
+        q.set('building_floor_id', String(params.building_floor_id));
+      }
+      q.set('week_slice_start', String(params.week_slice_start ?? 0));
+      return request(`/api/planning/month-facts?${q}`);
+    },
+    monthFactPost: (body) =>
+      request('/api/planning/month-fact', {
+        method: 'POST',
         body: JSON.stringify(body),
       }),
     chainList: () => request('/api/planning/chain'),
@@ -697,3 +741,5 @@ export const api = {
       request(`/api/references/cutting-types/${id}`, { method: 'DELETE' }),
   },
 };
+
+export default api;

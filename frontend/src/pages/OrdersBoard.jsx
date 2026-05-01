@@ -405,6 +405,7 @@ function BoardRow({ orderRow, viewMode, onOpenOrder, onOpenStage, orderProgress 
             {thumbSrc ? (
               <img
                 src={thumbSrc}
+                loading="lazy"
                 alt=""
                 className="h-[52px] w-[52px] rounded-md object-cover border border-[#333]/80"
                 onError={(e) => {
@@ -588,7 +589,18 @@ export default function OrdersBoard() {
   const [data, setData] = useState({ pagination: { page: 1, limit: 20, total: 0, totalPages: 1 }, orders: [] });
 
   useEffect(() => {
-    api.workshops.list().then(setWorkshops).catch(() => setWorkshops([]));
+    let cancelled = false;
+    api.workshops
+      .list()
+      .then((list) => {
+        if (!cancelled) setWorkshops(list);
+      })
+      .catch(() => {
+        if (!cancelled) setWorkshops([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {

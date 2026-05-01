@@ -62,8 +62,20 @@ export default function References() {
 
   useEffect(() => {
     if (tab === 'operations') {
-      api.references.buildingFloors().then(setBuildingFloors).catch(() => setBuildingFloors([]));
+      let cancelled = false;
+      api.references
+        .buildingFloors()
+        .then((rows) => {
+          if (!cancelled) setBuildingFloors(rows);
+        })
+        .catch(() => {
+          if (!cancelled) setBuildingFloors([]);
+        });
+      return () => {
+        cancelled = true;
+      };
     }
+    return undefined;
   }, [tab]);
 
   const handleAddFloor = async (e) => {

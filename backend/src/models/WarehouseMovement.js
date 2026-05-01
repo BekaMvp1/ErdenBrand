@@ -33,6 +33,10 @@ module.exports = (sequelize, DataTypes) => {
     tableName: 'warehouse_movements',
     timestamps: true,
     underscored: true,
+      indexes: [
+        { fields: ['order_id'] },
+        { fields: ['created_at'] },
+      ],
     createdAt: 'created_at',
     updatedAt: false,
   });

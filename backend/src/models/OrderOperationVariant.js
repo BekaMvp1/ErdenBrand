@@ -36,6 +36,9 @@ module.exports = (sequelize, DataTypes) => {
     tableName: 'order_operation_variants',
     timestamps: true,
     underscored: true,
+      indexes: [
+        { fields: ['created_at'] },
+      ],
   });
   return OrderOperationVariant;
 };

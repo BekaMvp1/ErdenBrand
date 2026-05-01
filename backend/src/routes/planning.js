@@ -2100,6 +2100,82 @@ router.get('/production-draft', async (req, res, next) => {
 });
 
 /**
+ * GET /api/planning/month-facts?month_key=YYYY-MM&workshop_id=&building_floor_id=&week_slice_start=
+ * Ручные факты по неделям (индекс 0–3 в текущем срезе месяца), для текущего пользователя.
+ */
+router.get('/month-facts', async (req, res, next) => {
+  try {
+    const { month_key, workshop_id, building_floor_id, week_slice_start } = req.query;
+    if (!month_key || !/^\d{4}-\d{2}$/.test(String(month_key).trim())) {
+      return res.status(400).json({ error: 'Укажите month_key (YYYY-MM)' });
+    }
+    const key = planningProductionDraftScopeKey(workshop_id, building_floor_id, month_key);
+    const wss = Math.max(0, parseInt(week_slice_start, 10) || 0);
+    const rows = await db.PlanningMonthFact.findAll({
+      where: { user_id: req.user.id, scope_key: key, week_slice_start: wss },
+      attributes: ['order_id', 'week_index', 'value'],
+      raw: true,
+    });
+    res.json({
+      facts: rows.map((r) => ({
+        order_id: r.order_id,
+        week_index: r.week_index,
+        value: r.value != null ? Number(r.value) : 0,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/planning/month-fact
+ * body: { month_key, workshop_id?, building_floor_id?, week_slice_start?, order_id, week_index (0–3), value }
+ */
+router.post('/month-fact', async (req, res, next) => {
+  try {
+    if (!['admin', 'manager', 'technologist'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Сохранение доступно admin/manager/technologist' });
+    }
+    const {
+      month_key,
+      workshop_id,
+      building_floor_id,
+      week_slice_start,
+      order_id,
+      week_index,
+      value,
+    } = req.body || {};
+    if (!month_key || !/^\d{4}-\d{2}$/.test(String(month_key).trim())) {
+      return res.status(400).json({ error: 'Укажите month_key (YYYY-MM)' });
+    }
+    const oid = parseInt(order_id, 10);
+    const wi = parseInt(week_index, 10);
+    if (!Number.isFinite(oid) || !Number.isFinite(wi) || wi < 0 || wi > 3) {
+      return res.status(400).json({ error: 'Некорректные order_id или week_index (0–3)' });
+    }
+    const numVal = Number(value);
+    const v = Number.isFinite(numVal) ? Math.round(numVal) : 0;
+    const key = planningProductionDraftScopeKey(workshop_id, building_floor_id, month_key);
+    const wss = Math.max(0, parseInt(week_slice_start, 10) || 0);
+    const [row, created] = await db.PlanningMonthFact.findOrCreate({
+      where: {
+        user_id: req.user.id,
+        scope_key: key,
+        week_slice_start: wss,
+        order_id: oid,
+        week_index: wi,
+      },
+      defaults: { value: v },
+    });
+    if (!created) await row.update({ value: v });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * GET /api/planning/matrix-snapshot?month=YYYY-MM&workshop_id=&week_slice_start=&floor_id=
  * floor_id — building_floor_id (1–4) или не передаётся для цеха без этажей
  */

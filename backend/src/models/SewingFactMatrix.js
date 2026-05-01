@@ -13,7 +13,11 @@ module.exports = (sequelize, DataTypes) => {
       size: { type: DataTypes.STRING(40), allowNull: false },
       fact_qty: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
     },
-    { tableName: 'sewing_fact_matrix', timestamps: true, underscored: true }
+    { tableName: 'sewing_fact_matrix', timestamps: true,
+      indexes: [
+        { fields: ['order_id'] },
+        { fields: ['created_at'] },
+      ], underscored: true }
   );
   return SewingFactMatrix;
 };

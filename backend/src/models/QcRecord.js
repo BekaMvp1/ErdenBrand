@@ -40,6 +40,10 @@ module.exports = (sequelize, DataTypes) => {
       tableName: 'qc_records',
       timestamps: true,
       underscored: true,
+      indexes: [
+        { fields: ['order_id'] },
+        { fields: ['created_at'] },
+      ],
     }
   );
   return QcRecord;

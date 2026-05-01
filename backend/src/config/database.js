@@ -80,7 +80,8 @@ const sslExplicitOff =
     .toLowerCase()
     .trim() === '0';
 
-const productionSsl =
+/** SSL для любого окружения, если БД не на localhost (Neon, Render, RDS и т.д.) */
+const remoteSsl =
   !isLocalhost &&
   !sslExplicitOff && {
     require: true,
@@ -100,21 +101,31 @@ module.exports = {
     dialect: 'postgres',
     logging: false,
     pool: poolDefaults,
+    ...(remoteSsl && {
+      dialectOptions: {
+        ssl: remoteSsl,
+      },
+    }),
   },
   test: {
     use_env_variable: 'DATABASE_URL',
     dialect: 'postgres',
     logging: false,
     pool: poolDefaults,
+    ...(remoteSsl && {
+      dialectOptions: {
+        ssl: remoteSsl,
+      },
+    }),
   },
   production: {
     use_env_variable: 'DATABASE_URL',
     dialect: 'postgres',
     logging: false,
     pool: poolDefaults,
-    ...(productionSsl && {
+    ...(remoteSsl && {
       dialectOptions: {
-        ssl: productionSsl,
+        ssl: remoteSsl,
       },
     }),
   },

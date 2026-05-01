@@ -141,20 +141,43 @@ export default function SewingChainPanel() {
   }, [loadDocs]);
 
   useEffect(() => {
-    api.workshops.list().then(setWorkshops).catch(() => setWorkshops(CHAIN_WORKSHOPS_FALLBACK));
+    let cancelled = false;
+    api.workshops
+      .list()
+      .then((list) => {
+        if (!cancelled) setWorkshops(list);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error('[SewingChainPanel.jsx]:', err?.message || err);
+          setWorkshops(CHAIN_WORKSHOPS_FALLBACK);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     api.references
       .buildingFloors(4)
-      .then((data) => setBuildingFloors(Array.isArray(data) ? data : []))
-      .catch(() =>
-        setBuildingFloors([
-          { id: 2, name: '2 этаж' },
-          { id: 3, name: '3 этаж' },
-          { id: 4, name: '4 этаж' },
-        ])
-      );
+      .then((data) => {
+        if (!cancelled) setBuildingFloors(Array.isArray(data) ? data : []);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error('[SewingChainPanel.jsx]:', err?.message || err);
+          setBuildingFloors([
+            { id: 2, name: '2 этаж' },
+            { id: 3, name: '3 этаж' },
+            { id: 4, name: '4 этаж' },
+          ]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const setQuickRange = (range) => {

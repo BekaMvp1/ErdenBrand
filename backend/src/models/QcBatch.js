@@ -42,6 +42,10 @@ module.exports = (sequelize, DataTypes) => {
       timestamps: true,
       updatedAt: false,
       underscored: true,
+      indexes: [
+        { fields: ['status'] },
+        { fields: ['created_at'] },
+      ],
     }
   );
   return QcBatch;

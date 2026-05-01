@@ -45,6 +45,9 @@ module.exports = (sequelize, DataTypes) => {
     timestamps: true,
     updatedAt: false, // в таблице только created_at
     underscored: true,
+      indexes: [
+        { fields: ['created_at'] },
+      ],
   });
   return ProcurementItem;
 };

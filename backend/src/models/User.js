@@ -44,6 +44,9 @@ module.exports = (sequelize, DataTypes) => {
     tableName: 'users',
     timestamps: true,
     underscored: true,
+      indexes: [
+        { fields: ['created_at'] },
+      ],
     defaultScope: {
       attributes: { exclude: ['password_hash'] },
     },

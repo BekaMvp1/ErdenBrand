@@ -19,6 +19,9 @@ module.exports = (sequelize, DataTypes) => {
       tableName: 'sewing_fact_details',
       timestamps: true,
       underscored: true,
+      indexes: [
+        { fields: ['created_at'] },
+      ],
     }
   );
 

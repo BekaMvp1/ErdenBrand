@@ -36,7 +36,7 @@ export function OrderProgressProvider({ children }) {
     }
     if (!silent) setLoading(true);
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 8000);
+    const timeoutId = window.setTimeout(() => controller.abort(), 10000);
     try {
       const signal = controller.signal;
       const [progressRes, statsRes] = await Promise.all([
@@ -47,12 +47,12 @@ export function OrderProgressProvider({ children }) {
       setDashboardStats(statsRes && typeof statsRes === 'object' ? statsRes : null);
       setLastUpdated(new Date());
     } catch (err) {
-      if (err?.name !== 'AbortError') {
-        console.error('[Progress]', err);
+      if (err?.name !== 'AbortError' && err?.code !== 'ERR_CANCELED') {
+        console.error('[Progress] Ошибка загрузки:', err?.message || err);
       }
     } finally {
       window.clearTimeout(timeoutId);
-      if (!silent) setLoading(false);
+      setLoading(false);
     }
   }, []);
 

@@ -19,6 +19,10 @@ module.exports = (sequelize, DataTypes) => {
       tableName: 'weekly_carry',
       timestamps: true,
       underscored: true,
+      indexes: [
+        { fields: ['created_at'] },
+        { fields: ['workshop_id'] },
+      ],
     }
   );
   return WeeklyCarry;

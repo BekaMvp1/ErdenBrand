@@ -17,6 +17,9 @@ module.exports = (sequelize, DataTypes) => {
     tableName: 'floors',
     timestamps: true,
     underscored: true,
+      indexes: [
+        { fields: ['created_at'] },
+      ],
   });
   return Floor;
 };

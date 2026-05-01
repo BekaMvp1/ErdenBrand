@@ -69,6 +69,10 @@ module.exports = (sequelize, DataTypes) => {
       tableName: 'planning_chains',
       timestamps: true,
       underscored: true,
+      indexes: [
+        { fields: ['order_id'] },
+        { fields: ['created_at'] },
+      ],
     }
   );
   return PlanningChain;

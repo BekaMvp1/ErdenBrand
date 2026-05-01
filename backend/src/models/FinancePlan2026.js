@@ -30,6 +30,9 @@ module.exports = (sequelize, DataTypes) => {
     tableName: 'finance_plan_2026',
     timestamps: true,
     underscored: true,
+      indexes: [
+        { fields: ['created_at'] },
+      ],
   });
   return FinancePlan2026;
 };

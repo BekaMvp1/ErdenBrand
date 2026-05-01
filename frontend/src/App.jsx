@@ -36,6 +36,7 @@ import Dispatcher from "./pages/Dispatcher";
 import Assistant from "./pages/Assistant";
 import OrdersBoard from "./pages/OrdersBoard";
 import ProductionDashboard from "./pages/ProductionDashboard";
+import ServerStatus from "./components/ServerStatus";
 
 export default function App() {
   return (
@@ -43,6 +44,7 @@ export default function App() {
       <FontProvider>
         <AuthProvider>
           <OrderProgressProvider>
+          <ServerStatus />
           <BrowserRouter>
             <Routes>
               <Route path="/login" element={<Login />} />

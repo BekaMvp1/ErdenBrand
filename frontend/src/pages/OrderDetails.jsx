@@ -186,7 +186,21 @@ export default function OrderDetails() {
 
   useEffect(() => {
     if (!order?.id) return;
-    api.orders.getProcurement(order.id).then(setProcurement).catch(() => setProcurement(null));
+    let cancelled = false;
+    api.orders
+      .getProcurement(order.id)
+      .then((data) => {
+        if (!cancelled) setProcurement(data);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error('[OrderDetails.jsx]:', err?.message || err);
+          setProcurement(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [order?.id]);
 
   useEffect(() => {
@@ -201,13 +215,43 @@ export default function OrderDetails() {
 
   useEffect(() => {
     if (showEditModal) {
-      api.references.clients().then(setClients);
-      api.workshops.list().then(setWorkshops).catch(() => setWorkshops([]));
-      api.references.orderStatus().then(setStatuses);
+      let cancelled = false;
+      api.references
+        .clients()
+        .then((data) => {
+          if (!cancelled) setClients(data);
+        })
+        .catch((err) => {
+          if (!cancelled) console.error('[OrderDetails.jsx]:', err?.message || err);
+        });
+      api.workshops
+        .list()
+        .then((data) => {
+          if (!cancelled) setWorkshops(data);
+        })
+        .catch((err) => {
+          if (!cancelled) {
+            console.error('[OrderDetails.jsx]:', err?.message || err);
+            setWorkshops([]);
+          }
+        });
+      api.references
+        .orderStatus()
+        .then((data) => {
+          if (!cancelled) setStatuses(data);
+        })
+        .catch((err) => {
+          if (!cancelled) console.error('[OrderDetails.jsx]:', err?.message || err);
+        });
+      return () => {
+        cancelled = true;
+      };
     }
+    return undefined;
   }, [showEditModal]);
 
   useEffect(() => {
+    let cancelled = false;
     const term = (editNewColorInput || '').trim();
     if (term.length < 2 || !showEditModal) {
       setEditColorSuggestions([]);
@@ -215,12 +259,24 @@ export default function OrderDetails() {
       return;
     }
     const t = setTimeout(() => {
-      api.references.colors(term).then((data) => {
-        setEditColorSuggestions(data || []);
-        setEditColorDropdownOpen((data?.length || 0) > 0);
-      }).catch(() => setEditColorSuggestions([]));
+      api.references
+        .colors(term)
+        .then((data) => {
+          if (cancelled) return;
+          setEditColorSuggestions(data || []);
+          setEditColorDropdownOpen((data?.length || 0) > 0);
+        })
+        .catch((err) => {
+          if (!cancelled) {
+            console.error('[OrderDetails.jsx]:', err?.message || err);
+            setEditColorSuggestions([]);
+          }
+        });
     }, 200);
-    return () => clearTimeout(t);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
   }, [editNewColorInput, showEditModal]);
 
   useEffect(() => {

@@ -42,6 +42,10 @@ module.exports = (sequelize, DataTypes) => {
       tableName: 'sync_queue',
       timestamps: true,
       underscored: true,
+      indexes: [
+        { fields: ['status'] },
+        { fields: ['created_at'] },
+      ],
       createdAt: 'created_at',
       updatedAt: 'updated_at',
     }

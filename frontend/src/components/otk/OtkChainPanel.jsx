@@ -143,7 +143,21 @@ export default function OtkChainPanel() {
   }, [loadDocs]);
 
   useEffect(() => {
-    api.workshops.list().then(setWorkshops).catch(() => setWorkshops(CHAIN_WORKSHOPS_FALLBACK));
+    let cancelled = false;
+    api.workshops
+      .list()
+      .then((list) => {
+        if (!cancelled) setWorkshops(list);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error('[OtkChainPanel.jsx]:', err?.message || err);
+          setWorkshops(CHAIN_WORKSHOPS_FALLBACK);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const setQuickRange = (range) => {

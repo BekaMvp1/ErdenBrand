@@ -49,7 +49,18 @@ export default function Shipments() {
   }, [workshopId]);
 
   useEffect(() => {
-    api.workshops.list().then(setWorkshops).catch(() => setWorkshops([]));
+    let cancelled = false;
+    api.workshops
+      .list()
+      .then((list) => {
+        if (!cancelled) setWorkshops(list);
+      })
+      .catch(() => {
+        if (!cancelled) setWorkshops([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {

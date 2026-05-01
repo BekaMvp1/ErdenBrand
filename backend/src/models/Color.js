@@ -17,6 +17,9 @@ module.exports = (sequelize, DataTypes) => {
     tableName: 'colors',
     timestamps: true,
     underscored: true,
+      indexes: [
+        { fields: ['created_at'] },
+      ],
   });
   return Color;
 };

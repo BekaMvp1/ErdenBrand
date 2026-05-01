@@ -31,6 +31,9 @@ module.exports = (sequelize, DataTypes) => {
     tableName: 'production_calendar',
     timestamps: true,
     underscored: true,
+      indexes: [
+        { fields: ['created_at'] },
+      ],
   });
   return ProductionCalendar;
 };

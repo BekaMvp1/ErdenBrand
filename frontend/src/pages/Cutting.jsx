@@ -1200,20 +1200,43 @@ export default function Cutting() {
   }, []);
 
   useEffect(() => {
-    api.workshops.list().then(setWorkshops).catch(() => setWorkshops(CHAIN_WORKSHOPS_FALLBACK));
+    let cancelled = false;
+    api.workshops
+      .list()
+      .then((list) => {
+        if (!cancelled) setWorkshops(list);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error('[Cutting.jsx]:', err?.message || err);
+          setWorkshops(CHAIN_WORKSHOPS_FALLBACK);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     api.references
       .buildingFloors(4)
-      .then((data) => setChainBuildingFloors(Array.isArray(data) ? data : []))
-      .catch(() =>
-        setChainBuildingFloors([
-          { id: 2, name: '2 этаж' },
-          { id: 3, name: '3 этаж' },
-          { id: 4, name: '4 этаж' },
-        ])
-      );
+      .then((data) => {
+        if (!cancelled) setChainBuildingFloors(Array.isArray(data) ? data : []);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error('[Cutting.jsx]:', err?.message || err);
+          setChainBuildingFloors([
+            { id: 2, name: '2 этаж' },
+            { id: 3, name: '3 этаж' },
+            { id: 4, name: '4 этаж' },
+          ]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {

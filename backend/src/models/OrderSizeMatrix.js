@@ -30,7 +30,10 @@ module.exports = (sequelize, DataTypes) => {
       tableName: 'order_size_matrix',
       timestamps: true,
       underscored: true,
-      indexes: [{ unique: true, fields: ['order_id', 'model_size_id'] }],
+      indexes: [{ unique: true, fields: ['order_id', 'model_size_id'] },
+        { fields: ['order_id'] },
+        { fields: ['created_at'] }
+      ],
     }
   );
   return OrderSizeMatrix;

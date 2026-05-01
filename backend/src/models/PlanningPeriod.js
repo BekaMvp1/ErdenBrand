@@ -44,7 +44,10 @@ module.exports = (sequelize, DataTypes) => {
       timestamps: true,
       updatedAt: false,
       underscored: true,
-      indexes: [{ unique: true, fields: ['year', 'month'] }],
+      indexes: [{ unique: true, fields: ['year', 'month'] },
+        { fields: ['status'] },
+        { fields: ['created_at'] }
+      ],
     }
   );
   return PlanningPeriod;

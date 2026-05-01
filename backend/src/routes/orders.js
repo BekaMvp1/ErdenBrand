@@ -625,11 +625,19 @@ router.get('/', async (req, res, next) => {
     ];
 
     const order = [['created_at', 'DESC']];
-    const limitVal = limit ? Math.min(parseInt(limit, 10) || 100, 500) : undefined;
+    const limitVal = Math.min(
+      Math.max(1, parseInt(limit, 10) || 50),
+      50
+    );
     const offsetVal = page && limitVal ? (Math.max(1, parseInt(page, 10)) - 1) * limitVal : undefined;
 
-    const options = { where, include, order };
-    if (limitVal) options.limit = limitVal;
+    const options = {
+      where,
+      include,
+      order,
+      limit: limitVal,
+      attributes: { exclude: ['photos'] },
+    };
     if (offsetVal !== undefined) options.offset = offsetVal;
 
     const orders = await db.Order.findAll(options);

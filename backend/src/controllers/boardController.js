@@ -162,6 +162,7 @@ async function getBoardOrders(req, res, next) {
 
     const orders = await db.Order.findAll({
       where,
+      attributes: { exclude: ['photos'] },
       include: [
         { model: db.Client, as: 'Client', required: !!q },
         { model: db.Workshop, as: 'Workshop', required: false, attributes: ['id', 'name'] },
@@ -528,7 +529,6 @@ async function getBoardOrders(req, res, next) {
         workshop_name: plain.Workshop?.name || '—',
         client_name: plain.Client?.name || '—',
         model_name: plain.title || '—',
-        photos: Array.isArray(plain.photos) ? plain.photos : [],
         total_quantity: totalQty,
         article: plain.color || null,
         priority: computedPriority,

@@ -97,6 +97,11 @@ module.exports = (sequelize, DataTypes) => {
     tableName: 'order_operations',
     timestamps: true,
     underscored: true,
+      indexes: [
+        { fields: ['status'] },
+        { fields: ['order_id'] },
+        { fields: ['created_at'] },
+      ],
   });
   return OrderOperation;
 };

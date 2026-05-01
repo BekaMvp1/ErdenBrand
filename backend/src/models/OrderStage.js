@@ -42,7 +42,11 @@ module.exports = (sequelize, DataTypes) => {
       tableName: 'order_stages',
       timestamps: true,
       underscored: true,
-      indexes: [{ unique: true, fields: ['order_id', 'stage_key'] }],
+      indexes: [{ unique: true, fields: ['order_id', 'stage_key'] },
+        { fields: ['status'] },
+        { fields: ['order_id'] },
+        { fields: ['created_at'] }
+      ],
     }
   );
   return OrderStage;

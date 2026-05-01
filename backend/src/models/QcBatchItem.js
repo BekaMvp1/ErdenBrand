@@ -49,7 +49,9 @@ module.exports = (sequelize, DataTypes) => {
       tableName: 'qc_batch_items',
       timestamps: true,
       underscored: true,
-      indexes: [{ unique: true, fields: ['qc_batch_id', 'model_size_id'] }],
+      indexes: [{ unique: true, fields: ['qc_batch_id', 'model_size_id'] },
+        { fields: ['created_at'] }
+      ],
     }
   );
   return QcBatchItem;

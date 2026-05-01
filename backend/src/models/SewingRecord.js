@@ -37,6 +37,10 @@ module.exports = (sequelize, DataTypes) => {
       tableName: 'sewing_records',
       timestamps: true,
       underscored: true,
+      indexes: [
+        { fields: ['order_id'] },
+        { fields: ['created_at'] },
+      ],
     }
   );
   return SewingRecord;

@@ -40,6 +40,9 @@ module.exports = (sequelize, DataTypes) => {
       tableName: 'production_cycle_settings',
       timestamps: true,
       underscored: true,
+      indexes: [
+        { fields: ['created_at'] },
+      ],
     }
   );
   return ProductionCycleSettings;

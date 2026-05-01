@@ -63,6 +63,11 @@ module.exports = (sequelize, DataTypes) => {
       tableName: 'production_plan_day',
       timestamps: true,
       underscored: true,
+      indexes: [
+        { fields: ['order_id'] },
+        { fields: ['created_at'] },
+        { fields: ['workshop_id'] },
+      ],
       // Уникальность задаётся миграцией: (order_id, date, workshop_id, COALESCE(floor_id,0))
     }
   );

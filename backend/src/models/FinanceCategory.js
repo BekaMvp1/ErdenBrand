@@ -26,6 +26,9 @@ module.exports = (sequelize, DataTypes) => {
     tableName: 'finance_categories',
     timestamps: true,
     underscored: true,
+      indexes: [
+        { fields: ['created_at'] },
+      ],
   });
   return FinanceCategory;
 };

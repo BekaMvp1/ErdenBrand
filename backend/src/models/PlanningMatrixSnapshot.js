@@ -41,6 +41,10 @@ module.exports = (sequelize, DataTypes) => {
     {
       tableName: 'planning_matrix_snapshots',
       underscored: true,
+      indexes: [
+        { fields: ['created_at'] },
+        { fields: ['workshop_id'] },
+      ],
       timestamps: true,
       createdAt: 'created_at',
       updatedAt: 'updated_at',

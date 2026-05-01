@@ -20,6 +20,9 @@ module.exports = (sequelize, DataTypes) => {
     {
       tableName: 'otk_fact_details',
       underscored: true,
+      indexes: [
+        { fields: ['created_at'] },
+      ],
       timestamps: true,
     }
   );

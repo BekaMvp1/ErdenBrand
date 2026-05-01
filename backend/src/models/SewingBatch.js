@@ -27,7 +27,12 @@ module.exports = (sequelize, DataTypes) => {
         defaultValue: 'IN_PROGRESS',
       },
     },
-    { tableName: 'sewing_batches', timestamps: true, underscored: true }
+    { tableName: 'sewing_batches', timestamps: true,
+      indexes: [
+        { fields: ['status'] },
+        { fields: ['order_id'] },
+        { fields: ['created_at'] },
+      ], underscored: true }
   );
   return SewingBatch;
 };

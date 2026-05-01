@@ -4,8 +4,8 @@
 
 const http = require('http');
 const { execSync } = require('child_process');
-const app = require('./app');
 const db = require('./models');
+const app = require('./app');
 
 process.on('uncaughtException', (err) => {
   console.error('[UNCAUGHT EXCEPTION]', err.message);
@@ -162,3 +162,16 @@ async function start() {
 }
 
 start();
+
+if (process.env.NODE_ENV === 'production' && process.env.RENDER_URL) {
+  const https = require('https');
+  setInterval(() => {
+    https
+      .get(`${process.env.RENDER_URL}/api/health`, (res) => {
+        console.log('[Keep-alive] ping:', res.statusCode);
+      })
+      .on('error', (err) => {
+        console.error('[Keep-alive] ошибка:', err.message);
+      });
+  }, 10 * 60 * 1000);
+}

@@ -18,7 +18,12 @@ module.exports = (sequelize, DataTypes) => {
       done_at: { type: DataTypes.DATE, allowNull: true },
       done_batch_id: { type: DataTypes.INTEGER, allowNull: true },
     },
-    { tableName: 'sewing_order_floors', timestamps: true, underscored: true }
+    { tableName: 'sewing_order_floors', timestamps: true,
+      indexes: [
+        { fields: ['status'] },
+        { fields: ['order_id'] },
+        { fields: ['created_at'] },
+      ], underscored: true }
   );
   return SewingOrderFloor;
 };

@@ -27,10 +27,8 @@ const isLocalPostgres =
   conn.host === '127.0.0.1' ||
   (typeof conn.host === 'string' && conn.host.endsWith('.local'));
 
-const useProductionSsl =
-  env === 'production' &&
-  dbConfig.dialectOptions &&
-  !isLocalPostgres;
+/** Neon/Render и т.д.: SSL из config/database.js для любого NODE_ENV, не только production */
+const useRemoteSsl = dbConfig.dialectOptions && !isLocalPostgres;
 
 const sequelize = new Sequelize(conn.database, conn.username, conn.password, {
   host: conn.host,
@@ -38,7 +36,7 @@ const sequelize = new Sequelize(conn.database, conn.username, conn.password, {
   dialect: 'postgres',
   logging: false,
   ...(dbConfig.pool && { pool: dbConfig.pool }),
-  ...(useProductionSsl && {
+  ...(useRemoteSsl && {
     dialectOptions: dbConfig.dialectOptions,
   }),
   define: {
@@ -110,6 +108,7 @@ const db = {
   PlanningMatrixSnapshot: require('./PlanningMatrixSnapshot')(sequelize, Sequelize.DataTypes),
   PlanningProductionDraft: require('./PlanningProductionDraft')(sequelize, Sequelize.DataTypes),
   PlanningDraftCell: require('./PlanningDraftCell')(sequelize, Sequelize.DataTypes),
+  PlanningMonthFact: require('./PlanningMonthFact')(sequelize, Sequelize.DataTypes),
   ProductionCycleSettings: require('./ProductionCycleSettings')(sequelize, Sequelize.DataTypes),
   PlanningChain: require('./PlanningChain')(sequelize, Sequelize.DataTypes),
   PurchaseDocument: require('./PurchaseDocument')(sequelize, Sequelize.DataTypes),
@@ -144,6 +143,11 @@ db.PlanningProductionDraft.belongsTo(db.User, { foreignKey: 'user_id' });
 
 db.User.hasMany(db.PlanningDraftCell, { foreignKey: 'user_id' });
 db.PlanningDraftCell.belongsTo(db.User, { foreignKey: 'user_id' });
+
+db.User.hasMany(db.PlanningMonthFact, { foreignKey: 'user_id' });
+db.PlanningMonthFact.belongsTo(db.User, { foreignKey: 'user_id' });
+db.Order.hasMany(db.PlanningMonthFact, { foreignKey: 'order_id' });
+db.PlanningMonthFact.belongsTo(db.Order, { foreignKey: 'order_id' });
 
 db.ProductionCycleSettings.belongsTo(db.User, { foreignKey: 'updated_by', as: 'UpdatedBy' });
 

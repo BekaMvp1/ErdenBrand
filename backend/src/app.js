@@ -42,8 +42,8 @@ const shippingDocumentsRoutes = require("./routes/shippingDocuments");
 const analyticsRoutes = require("./modules/analytics/analytics.routes");
 const assistantRoutes = require("./modules/assistant/assistant.routes");
 const plannerRoutes = require("./modules/planner/planner.routes");
-const dekatirovkaRoutes = require("./routes/dekatirovka");
-const proverkaRoutes = require("./routes/proverka");
+const dekatirovkaRouter = require("./routes/dekatirovka");
+const proverkaRouter = require("./routes/proverka");
 
 const app = express();
 app.use(compression());
@@ -376,7 +376,7 @@ app.use(
   authenticate,
   requireRole("admin", "manager", "technologist"),
   technologistFloorOnly,
-  dekatirovkaRoutes,
+  dekatirovkaRouter,
 );
 /** Проверка: роутер из ./routes/proverka.js → setupStageFactsRoutes (не legacy createStageFactsRouter напрямую). */
 app.use(
@@ -384,15 +384,15 @@ app.use(
   authenticate,
   requireRole("admin", "manager", "technologist"),
   technologistFloorOnly,
-  proverkaRoutes,
+  proverkaRouter,
 );
-/** Алиас пути с кириллицей (как в меню): /api/dekatировка → тот же dekatirovkaRoutes */
+/** Алиас пути с кириллицей (как в меню): /api/dekatировка → тот же dekatirovkaRouter */
 app.use(
   "/api/dekat\u0438\u0440\u043e\u0432\u043a\u0430",
   authenticate,
   requireRole("admin", "manager", "technologist"),
   technologistFloorOnly,
-  dekatirovkaRoutes,
+  dekatirovkaRouter,
 );
 
 // 404

@@ -179,7 +179,9 @@ function rowMatchesStatusFilter(row, filter) {
   if (filter === 'all') return true;
   const sts = [
     row.purchase_status,
+    row.dekatirovka_status,
     row.cutting_status,
+    row.proverka_status,
     row.sewing_status,
     row.otk_status,
     row.shipping_status,
@@ -241,6 +243,8 @@ export default function ProductionChain() {
   const [clientFilter, setClientFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [sewingFactsByOrderId, setSewingFactsByOrderId] = useState({});
+  /** План/факт шт. для колонок Декатировка и Проверка (ключ order_id строкой) */
+  const [stageQtyByOrder, setStageQtyByOrder] = useState({ dekatirovka: {}, proverka: {} });
   const [colWidths, setColWidths] = useState(DEFAULT_WIDTHS);
   const [dropdown, setDropdown] = useState(null);
   const resizeRef = useRef({ active: false, key: null, startX: 0, startW: 0 });
@@ -300,6 +304,36 @@ export default function ProductionChain() {
   useEffect(() => {
     if (allowed) load();
   }, [allowed, load]);
+
+  const monthKey = useMemo(
+    () =>
+      `${navMonth.getFullYear()}-${String(navMonth.getMonth() + 1).padStart(2, '0')}`,
+    [navMonth]
+  );
+
+  useEffect(() => {
+    if (!allowed || rows.length === 0) {
+      setStageQtyByOrder({ dekatirovka: {}, proverka: {} });
+      return;
+    }
+    let cancelled = false;
+    const ids = [...new Set(rows.map((r) => r.order_id).filter(Boolean))];
+    api.planning
+      .chainDekatProverka(monthKey, ids)
+      .then((data) => {
+        if (cancelled) return;
+        setStageQtyByOrder({
+          dekatirovka: data?.dekatirovka || {},
+          proverka: data?.proverka || {},
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setStageQtyByOrder({ dekatirovka: {}, proverka: {} });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [allowed, rows, monthKey]);
 
   const monthNavLabel = useMemo(
     () =>
@@ -382,6 +416,28 @@ export default function ProductionChain() {
     }
     return { buy, cut, sew, show: buy + cut + sew > 0 };
   }, [rows, todayIso]);
+
+  const moveChainStageWeek = useCallback(async (chainRowId, weekField, newIso) => {
+    if (!newIso) return;
+    try {
+      const updated = await api.planning.chainPatch(chainRowId, { [weekField]: newIso });
+      const nid = Number(chainRowId);
+      setRows((prev) =>
+        prev.map((x) =>
+          Number(x.id) === nid
+            ? {
+                ...x,
+                ...updated,
+                Order: chainRowOrder(updated) ?? chainRowOrder(x),
+              }
+            : x
+        )
+      );
+    } catch (e) {
+      if (import.meta.env.DEV) console.error('[Chain week]', e?.message || e);
+      alert(e?.message || 'Не удалось обновить неделю');
+    }
+  }, []);
 
   const moveDocWeek = useCallback(async (docType, docId, chainRowId, newIso) => {
     if (!docId || !newIso) return;
@@ -467,6 +523,10 @@ export default function ProductionChain() {
               sewing_status: updated?.sewing_status ?? x.sewing_status,
               otk_status: updated?.otk_status ?? x.otk_status,
               shipping_status: updated?.shipping_status ?? x.shipping_status,
+              dekatirovka_status: updated?.dekatirovka_status ?? x.dekatirovka_status,
+              proverka_status: updated?.proverka_status ?? x.proverka_status,
+              dekatirovka_week_start: updated?.dekatirovka_week_start ?? x.dekatirovka_week_start,
+              proverka_week_start: updated?.proverka_week_start ?? x.proverka_week_start,
               purchase_doc: updated?.purchase_doc ?? x.purchase_doc,
               cutting_doc: updated?.cutting_doc ?? x.cutting_doc,
               otk_doc: updated?.otk_doc ?? x.otk_doc,
@@ -507,7 +567,9 @@ export default function ProductionChain() {
   const rowNeedsUrgentOutline = (row) => {
     const triple = [
       ['purchase_week_start', 'purchase_status'],
+      ['dekatirovka_week_start', 'dekatirovka_status'],
       ['cutting_week_start', 'cutting_status'],
+      ['proverka_week_start', 'proverka_status'],
       ['sewing_week_start', 'sewing_status'],
       ['otk_week_start', 'otk_status'],
       ['shipping_week_start', 'shipping_status'],
@@ -709,7 +771,7 @@ export default function ProductionChain() {
                     />
                   </th>
                 ))}
-                {['Закуп', 'Раскрой', 'Пошив', 'ОТК', 'Отгрузка'].map((title, si) => (
+                {['Закуп', 'Декатировка', 'Раскрой', 'Проверка', 'Пошив', 'ОТК', 'Отгрузка'].map((title, si) => (
                   <th
                     key={title}
                     colSpan={1}
@@ -734,7 +796,7 @@ export default function ProductionChain() {
             <tbody>
               {filteredRows.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="p-4" style={{ color: 'var(--muted)' }}>
+                  <td colSpan={12} className="p-4" style={{ color: 'var(--muted)' }}>
                     {rows.length === 0
                       ? 'Нет записей в цепочке — сформируйте план в «Планирование месяц»'
                       : rowsWithSewingInNavMonth.length === 0
@@ -832,6 +894,19 @@ export default function ProductionChain() {
                         const stSh = sd?.status ?? row.shipping_status;
                         const metaSh = badgeMeta(planSh, stSh, todayMonday);
                         const badgeSh = chainBadgeClassName(planSh, stSh, todayMonday);
+                        const oidKey = String(o?.id ?? row.order_id ?? '');
+                        const dekatQty = stageQtyByOrder.dekatirovka[oidKey] || {};
+                        const provQty = stageQtyByOrder.proverka[oidKey] || {};
+                        const planDekatW = chainDateIso(row.dekatirovka_week_start);
+                        const planProvW = chainDateIso(row.proverka_week_start);
+                        const stDe = row.dekatirovka_status;
+                        const stPr = row.proverka_status;
+                        const metaDe = badgeMeta(planDekatW, stDe, todayMonday);
+                        const badgeDe = chainBadgeClassName(planDekatW, stDe, todayMonday);
+                        const metaPr = badgeMeta(planProvW, stPr, todayMonday);
+                        const badgePr = chainBadgeClassName(planProvW, stPr, todayMonday);
+                        const actDekatW = planDekatW;
+                        const actProvW = planProvW;
                         return (
                           <>
                             <td
@@ -898,6 +973,58 @@ export default function ProductionChain() {
                               className="pc-chain-cell border px-1 py-1"
                               style={{ borderColor: 'var(--border)', width: colWidths.stage * 2 }}
                             >
+                              <div className="pc-mini-label">План (нед.):</div>
+                              <div className="pc-chain-week">
+                                {planDekatW ? formatChainWeekRange(planDekatW) : '—'}
+                              </div>
+                              <div className="pc-mini-label mt-0.5">План / Факт (шт):</div>
+                              <div className="text-[10px] leading-tight" style={{ color: 'var(--text)' }}>
+                                {dekatQty.planned_qty ?? 0} / {dekatQty.actual_qty ?? 0}
+                              </div>
+                              <div className="pc-mini-label mt-0.5">Неделя:</div>
+                              <select
+                                className="pc-week-select"
+                                value={
+                                  actDekatW && selectableWeeks.some((w) => w.start === actDekatW)
+                                    ? actDekatW
+                                    : selectableWeeks[0]?.start || ''
+                                }
+                                disabled={!canPatch}
+                                onChange={(e) =>
+                                  moveChainStageWeek(row.id, 'dekatirovka_week_start', e.target.value)
+                                }
+                              >
+                                {selectableWeeks.map((w) => (
+                                  <option key={w.start} value={w.start}>
+                                    {w.label}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                type="button"
+                                disabled={!canPatch}
+                                className={badgeDe}
+                                onClick={(e) => {
+                                  if (!canPatch) return;
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  setDropdown({
+                                    chainRowId: row.id,
+                                    field: 'dekatirovka_status',
+                                    current: stDe,
+                                    docId: null,
+                                    docType: null,
+                                    left: rect.left,
+                                    top: rect.bottom + 4,
+                                  });
+                                }}
+                              >
+                                {metaDe.label}
+                              </button>
+                            </td>
+                            <td
+                              className="pc-chain-cell border px-1 py-1"
+                              style={{ borderColor: 'var(--border)', width: colWidths.stage * 2 }}
+                            >
                               <div className="pc-mini-label">План:</div>
                               <div
                                 className="pc-chain-week"
@@ -952,6 +1079,58 @@ export default function ProductionChain() {
                                 }}
                               >
                                 {metaC.label}
+                              </button>
+                            </td>
+                            <td
+                              className="pc-chain-cell border px-1 py-1"
+                              style={{ borderColor: 'var(--border)', width: colWidths.stage * 2 }}
+                            >
+                              <div className="pc-mini-label">План (нед.):</div>
+                              <div className="pc-chain-week">
+                                {planProvW ? formatChainWeekRange(planProvW) : '—'}
+                              </div>
+                              <div className="pc-mini-label mt-0.5">План / Факт (шт):</div>
+                              <div className="text-[10px] leading-tight" style={{ color: 'var(--text)' }}>
+                                {provQty.planned_qty ?? 0} / {provQty.actual_qty ?? 0}
+                              </div>
+                              <div className="pc-mini-label mt-0.5">Неделя:</div>
+                              <select
+                                className="pc-week-select"
+                                value={
+                                  actProvW && selectableWeeks.some((w) => w.start === actProvW)
+                                    ? actProvW
+                                    : selectableWeeks[0]?.start || ''
+                                }
+                                disabled={!canPatch}
+                                onChange={(e) =>
+                                  moveChainStageWeek(row.id, 'proverka_week_start', e.target.value)
+                                }
+                              >
+                                {selectableWeeks.map((w) => (
+                                  <option key={w.start} value={w.start}>
+                                    {w.label}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                type="button"
+                                disabled={!canPatch}
+                                className={badgePr}
+                                onClick={(e) => {
+                                  if (!canPatch) return;
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  setDropdown({
+                                    chainRowId: row.id,
+                                    field: 'proverka_status',
+                                    current: stPr,
+                                    docId: null,
+                                    docType: null,
+                                    left: rect.left,
+                                    top: rect.bottom + 4,
+                                  });
+                                }}
+                              >
+                                {metaPr.label}
                               </button>
                             </td>
                             <td

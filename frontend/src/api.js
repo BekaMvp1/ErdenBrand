@@ -198,6 +198,26 @@ export const api = {
     deleteProcurement: (id) =>
       request(`/api/orders/${id}/procurement`, { method: 'DELETE' }),
   },
+  dekatirovka: {
+    list: (params = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return request(`/api/dekatirovka${q ? `?${q}` : ''}`);
+    },
+    create: (body) =>
+      request('/api/dekatirovka', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id, body) =>
+      request(`/api/dekatirovka/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  },
+  proverka: {
+    list: (params = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return request(`/api/proverka${q ? `?${q}` : ''}`);
+    },
+    create: (body) =>
+      request('/api/proverka', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id, body) =>
+      request(`/api/proverka/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  },
   planning: {
     updateOperation: (id, data) =>
       request(`/api/planning/operations/${id}`, {
@@ -329,6 +349,13 @@ export const api = {
         body: JSON.stringify(body),
       }),
     chainList: () => request('/api/planning/chain'),
+    /** План/факт шт. для колонок Декатировка и Проверка (план из month facts, факт из facts-таблиц) */
+    chainDekatProverka: (monthKey, orderIds) => {
+      const q = new URLSearchParams();
+      q.set('month_key', String(monthKey).slice(0, 7));
+      if (orderIds && orderIds.length) q.set('order_ids', orderIds.join(','));
+      return request(`/api/planning/chain/dekat-proverka?${q}`);
+    },
     chainPost: (body) =>
       request('/api/planning/chain', {
         method: 'POST',

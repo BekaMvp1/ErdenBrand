@@ -1,5 +1,7 @@
 /**
  * Middleware аутентификации и авторизации (RBAC)
+ *
+ * authenticate: один запрос User.findByPk + joins (Floor, Technologist, Sewer) на каждый защищённый запрос.
  */
 
 const jwt = require('jsonwebtoken');

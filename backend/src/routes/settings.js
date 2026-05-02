@@ -58,6 +58,8 @@ router.get('/production-cycle', async (req, res, next) => {
         cuttingLeadWeeks: 2,
         otkLeadWeeks: 1,
         shippingLeadWeeks: 0,
+        dekatirovkaLeadWeeks: 0,
+        proverkaLeadWeeks: 0,
       });
     }
     res.json({
@@ -65,6 +67,8 @@ router.get('/production-cycle', async (req, res, next) => {
       cuttingLeadWeeks: row.cutting_lead_weeks,
       otkLeadWeeks: row.otk_lead_weeks ?? 1,
       shippingLeadWeeks: row.shipping_lead_weeks ?? 0,
+      dekatirovkaLeadWeeks: row.dekatirovka_lead_weeks ?? 0,
+      proverkaLeadWeeks: row.proverka_lead_weeks ?? 0,
     });
   } catch (err) {
     console.error('[settings/production-cycle GET]', err.message);
@@ -87,6 +91,10 @@ router.post('/production-cycle', async (req, res, next) => {
     const shipRaw = parseInt(req.body?.shippingLeadWeeks, 10);
     const o = Math.min(4, Math.max(0, Number.isFinite(otkRaw) ? otkRaw : 1));
     const s = Math.min(4, Math.max(0, Number.isFinite(shipRaw) ? shipRaw : 0));
+    const dekatRaw = parseInt(req.body?.dekatirovkaLeadWeeks, 10);
+    const provRaw = parseInt(req.body?.proverkaLeadWeeks, 10);
+    const dekat = Math.min(4, Math.max(0, Number.isFinite(dekatRaw) ? dekatRaw : 0));
+    const prov = Math.min(4, Math.max(0, Number.isFinite(provRaw) ? provRaw : 0));
     let row = await db.ProductionCycleSettings.findByPk(1);
     if (!row) {
       row = await db.ProductionCycleSettings.create({
@@ -94,6 +102,8 @@ router.post('/production-cycle', async (req, res, next) => {
         cutting_lead_weeks: c,
         otk_lead_weeks: o,
         shipping_lead_weeks: s,
+        dekatirovka_lead_weeks: dekat,
+        proverka_lead_weeks: prov,
         updated_by: req.user.id,
       });
     } else {
@@ -102,6 +112,8 @@ router.post('/production-cycle', async (req, res, next) => {
         cutting_lead_weeks: c,
         otk_lead_weeks: o,
         shipping_lead_weeks: s,
+        dekatirovka_lead_weeks: dekat,
+        proverka_lead_weeks: prov,
         updated_by: req.user.id,
       });
     }
@@ -112,6 +124,8 @@ router.post('/production-cycle', async (req, res, next) => {
       cuttingLeadWeeks: row.cutting_lead_weeks,
       otkLeadWeeks: row.otk_lead_weeks ?? 1,
       shippingLeadWeeks: row.shipping_lead_weeks ?? 0,
+      dekatirovkaLeadWeeks: row.dekatirovka_lead_weeks ?? 0,
+      proverkaLeadWeeks: row.proverka_lead_weeks ?? 0,
     });
   } catch (err) {
     console.error('[settings/production-cycle POST]', err.message);

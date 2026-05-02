@@ -64,6 +64,24 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         defaultValue: 'pending',
       },
+      dekatirovka_week_start: {
+        type: DataTypes.DATEONLY,
+        allowNull: true,
+      },
+      proverka_week_start: {
+        type: DataTypes.DATEONLY,
+        allowNull: true,
+      },
+      dekatirovka_status: {
+        type: DataTypes.STRING(20),
+        allowNull: false,
+        defaultValue: 'pending',
+      },
+      proverka_status: {
+        type: DataTypes.STRING(20),
+        allowNull: false,
+        defaultValue: 'pending',
+      },
     },
     {
       tableName: 'planning_chains',

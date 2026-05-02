@@ -16,6 +16,8 @@ import OrderDetails from "./pages/OrderDetails";
 import PlanningDraft from "./pages/PlanningDraft";
 import Sewing from "./pages/Sewing";
 import Procurement from "./pages/Procurement";
+import Dekatirovka from "./pages/Dekatirovka";
+import Proverka from "./pages/Proverka";
 import PrintProcurement from "./pages/PrintProcurement";
 import PrintPlanning from "./pages/PrintPlanning";
 import PrintCutting from "./pages/PrintCutting";
@@ -49,7 +51,6 @@ export default function App() {
             <Routes>
               <Route path="/login" element={<Login />} />
               <Route
-                path="/"
                 element={
                   <ProtectedRoute>
                     <Layout />
@@ -66,10 +67,10 @@ export default function App() {
                 <Route path="planning" element={<PlanningDraft />} />
                 <Route path="planning-draft" element={<Navigate to="/planning" replace />} />
                 <Route path="planning-week" element={<PlanningDraft viewMode="week" />} />
+                <Route path="procurement" element={<Procurement />} />
                 <Route path="production-chain" element={<ProductionChain />} />
                 <Route path="sewing" element={<Sewing />} />
                 <Route path="floor-tasks" element={<Navigate to="/sewing" replace />} />
-                <Route path="procurement" element={<Procurement />} />
                 <Route path="print/procurement/:id" element={<PrintProcurement />} />
                 <Route path="print/planning/:month" element={<PrintPlanning />} />
                 <Route path="print/cutting/:id" element={<PrintCutting />} />
@@ -79,6 +80,8 @@ export default function App() {
                 <Route path="cutting/:type" element={<Cutting />} />
                 <Route path="warehouse" element={<Warehouse />} />
                 <Route path="otk" element={<Otk />} />
+                <Route path="/dekatirovka" element={<Dekatirovka />} />
+                <Route path="/proverka" element={<Proverka />} />
                 <Route path="qc" element={<Qc />} />
                 <Route path="shipments" element={<Shipments />} />
                 <Route path="shipping-plan" element={<Shipping />} />

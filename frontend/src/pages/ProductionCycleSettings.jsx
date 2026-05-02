@@ -56,14 +56,24 @@ function workweekSpanLabel(mondayIso) {
   return `${parseInt(p0[2], 10)} ${M0} – ${parseInt(p5[2], 10)} ${M5}`;
 }
 
-const PREVIEW_STAGE_ORDER = { Закуп: 0, Раскрой: 1, Пошив: 2, ОТК: 3, Отгрузка: 4 };
+const PREVIEW_STAGE_ORDER = {
+  Закуп: 0,
+  Декатировка: 1,
+  Раскрой: 2,
+  Проверка: 3,
+  Пошив: 4,
+  ОТК: 5,
+  Отгрузка: 6,
+};
 
 function buildPreviewStageRows(
   monthKey,
   purchaseLead,
   cuttingLead,
   otkLead,
-  shippingLead
+  shippingLead,
+  dekatLead,
+  proverkaLead
 ) {
   const weeks = getWeeksInMonth(monthKey);
   const w = weeks[2];
@@ -72,23 +82,45 @@ function buildPreviewStageRows(
   const sewingW = 3;
   const purMon = subtractWeeksMonday(sewMon, purchaseLead);
   const cutMon = subtractWeeksMonday(sewMon, cuttingLead);
+  const dL = Math.min(4, Math.max(0, Number(dekatLead) || 0));
+  const pL = Math.min(4, Math.max(0, Number(proverkaLead) || 0));
+  const dekatMon = dL > 0 ? addWeeksMonday(purMon, dL) : purMon;
+  const provMon = pL > 0 ? addWeeksMonday(cutMon, pL) : cutMon;
+  const purW = sewingW - purchaseLead;
+  const cutW = sewingW - cuttingLead;
+  const dekatW = dL > 0 ? purW + dL : purW;
+  const provW = pL > 0 ? cutW + pL : cutW;
   const otkMon = otkLead > 0 ? addWeeksMonday(sewMon, otkLead) : sewMon;
   const shipMon =
     shippingLead > 0 ? addWeeksMonday(otkMon, shippingLead) : otkMon;
   const items = [
     {
       label: 'Закуп',
-      weekNum: sewingW - purchaseLead,
+      weekNum: purW,
       weeks: purchaseLead,
       mon: purMon,
       sameWeek: false,
     },
     {
+      label: 'Декатировка',
+      weekNum: dekatW,
+      weeks: dL,
+      mon: dekatMon,
+      sameWeek: dL === 0,
+    },
+    {
       label: 'Раскрой',
-      weekNum: sewingW - cuttingLead,
+      weekNum: cutW,
       weeks: cuttingLead,
       mon: cutMon,
       sameWeek: false,
+    },
+    {
+      label: 'Проверка',
+      weekNum: provW,
+      weeks: pL,
+      mon: provMon,
+      sameWeek: pL === 0,
     },
     { label: 'Пошив', weekNum: sewingW, weeks: 1, mon: sewMon, sameWeek: false },
     {
@@ -126,6 +158,8 @@ export default function ProductionCycleSettings() {
   const [cuttingLeadWeeks, setCuttingLeadWeeks] = useState(2);
   const [otkLeadWeeks, setOtkLeadWeeks] = useState(1);
   const [shippingLeadWeeks, setShippingLeadWeeks] = useState(0);
+  const [dekatirovkaLeadWeeks, setDekatirovkaLeadWeeks] = useState(0);
+  const [proverkaLeadWeeks, setProverkaLeadWeeks] = useState(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState('');
@@ -147,6 +181,10 @@ export default function ProductionCycleSettings() {
         setOtkLeadWeeks(Math.min(4, Math.max(0, Number.isFinite(otkN) ? otkN : 1)));
         const shipN = Number(data.shippingLeadWeeks);
         setShippingLeadWeeks(Math.min(4, Math.max(0, Number.isFinite(shipN) ? shipN : 0)));
+        const dk = Number(data.dekatirovkaLeadWeeks);
+        setDekatirovkaLeadWeeks(Math.min(4, Math.max(0, Number.isFinite(dk) ? dk : 0)));
+        const pv = Number(data.proverkaLeadWeeks);
+        setProverkaLeadWeeks(Math.min(4, Math.max(0, Number.isFinite(pv) ? pv : 0)));
       }
     } catch (err) {
       if (import.meta.env.DEV) console.error('[Settings] ошибка:', err);
@@ -172,6 +210,10 @@ export default function ProductionCycleSettings() {
     setOtkLeadWeeks((v) => Math.min(4, Math.max(0, v + delta)));
   const bumpShipping = (delta) =>
     setShippingLeadWeeks((v) => Math.min(4, Math.max(0, v + delta)));
+  const bumpDekat = (delta) =>
+    setDekatirovkaLeadWeeks((v) => Math.min(4, Math.max(0, v + delta)));
+  const bumpProverka = (delta) =>
+    setProverkaLeadWeeks((v) => Math.min(4, Math.max(0, v + delta)));
 
   const previewMonthKey = useMemo(() => {
     const d = new Date();
@@ -185,7 +227,9 @@ export default function ProductionCycleSettings() {
         purchaseLeadWeeks,
         cuttingLeadWeeks,
         otkLeadWeeks,
-        shippingLeadWeeks
+        shippingLeadWeeks,
+        dekatirovkaLeadWeeks,
+        proverkaLeadWeeks
       ),
     [
       previewMonthKey,
@@ -193,6 +237,8 @@ export default function ProductionCycleSettings() {
       cuttingLeadWeeks,
       otkLeadWeeks,
       shippingLeadWeeks,
+      dekatirovkaLeadWeeks,
+      proverkaLeadWeeks,
     ]
   );
 
@@ -213,6 +259,8 @@ export default function ProductionCycleSettings() {
         cuttingLeadWeeks,
         otkLeadWeeks,
         shippingLeadWeeks,
+        dekatirovkaLeadWeeks,
+        proverkaLeadWeeks,
       });
       if (import.meta.env.DEV) console.log('[Settings] ответ API (save):', saved);
       setToast('Настройки сохранены');
@@ -317,6 +365,72 @@ export default function ProductionCycleSettings() {
             </div>
             <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
               Минимум: 1, максимум: 6
+            </p>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm" style={{ color: 'var(--text)' }}>
+              Декатировка: через недель после закупа (0 = та же неделя):
+            </label>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                className={btnSq}
+                style={btnStyle}
+                onClick={() => bumpDekat(-1)}
+                aria-label="Минус декатировка"
+              >
+                −
+              </button>
+              <span className="min-w-[2rem] text-center text-lg font-semibold" style={{ color: '#c8ff00' }}>
+                {dekatirovkaLeadWeeks}
+              </span>
+              <button
+                type="button"
+                className={btnSq}
+                style={btnStyle}
+                onClick={() => bumpDekat(1)}
+                aria-label="Плюс декатировка"
+              >
+                +
+              </button>
+              <span style={{ color: 'var(--muted)' }}>недели</span>
+            </div>
+            <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+              Минимум: 0, максимум: 4
+            </p>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm" style={{ color: 'var(--text)' }}>
+              Проверка: через недель после раскроя (0 = та же неделя):
+            </label>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                className={btnSq}
+                style={btnStyle}
+                onClick={() => bumpProverka(-1)}
+                aria-label="Минус проверка"
+              >
+                −
+              </button>
+              <span className="min-w-[2rem] text-center text-lg font-semibold" style={{ color: '#c8ff00' }}>
+                {proverkaLeadWeeks}
+              </span>
+              <button
+                type="button"
+                className={btnSq}
+                style={btnStyle}
+                onClick={() => bumpProverka(1)}
+                aria-label="Плюс проверка"
+              >
+                +
+              </button>
+              <span style={{ color: 'var(--muted)' }}>недели</span>
+            </div>
+            <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+              Минимум: 0, максимум: 4
             </p>
           </div>
 

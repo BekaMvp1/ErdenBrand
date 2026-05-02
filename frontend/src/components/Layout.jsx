@@ -100,6 +100,12 @@ const NAV_ICONS = {
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 3 3-1 3-1m6-9a9 9 0 11-18 0 9 9 0 0118 0zm-4.5 0a4.5 4.5 0 10-9 0 4.5 4.5 0 009 0z" />
     </svg>
   ),
+  /** Декатировка / проверка ткани — корзина с каплей */
+  dekat: (
+    <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l-1 12H6L5 9zm4 5h.01M15 14h.01" />
+    </svg>
+  ),
 };
 
 const SIDEBAR_LOCK_KEY = 'sidebar_locked';
@@ -124,6 +130,13 @@ export default function Layout() {
   const [lockedExpanded, setLockedExpanded] = useState(() => {
     try { return sessionStorage.getItem(SIDEBAR_LOCK_EXPANDED_KEY) === '1'; } catch { return false; }
   });
+
+  const DEKAT_MENU_PATHS = ['/dekatirovka', '/proverka'];
+  const isDekatSectionActive = DEKAT_MENU_PATHS.includes(location.pathname);
+  const [dekatGroupOpen, setDekatGroupOpen] = useState(isDekatSectionActive);
+  useEffect(() => {
+    if (isDekatSectionActive) setDekatGroupOpen(true);
+  }, [isDekatSectionActive]);
 
   // При фиксации: сохраняем текущее состояние (открыт/закрыт). Если открыт — фиксируем открытым.
   const toggleSidebarLock = () => {
@@ -154,6 +167,8 @@ export default function Layout() {
     '/board': 'Панель заказов',
     '/orders/create': 'Создать заказ',
     '/procurement': 'Закуп',
+    '/dekatirovka': 'Декатировка',
+    '/proverka': 'Проверка',
     '/planning': 'Планирование',
     '/planning-draft': 'Планирование месяц',
     '/planning-week': 'Планирование неделя',
@@ -253,6 +268,16 @@ export default function Layout() {
   const productionBlockItems = canSeeProduction
     ? [
         { type: 'item', to: '/procurement', label: 'Закуп', icon: 'procurement' },
+        {
+          type: 'group',
+          id: 'dekat',
+          label: 'Декатировка и Проверка',
+          icon: 'dekat',
+          children: [
+            { to: '/dekatirovka', label: 'Декатировка' },
+            { to: '/proverka', label: 'Проверка' },
+          ],
+        },
         { type: 'item', to: '/cutting', label: 'Раскрой', icon: 'cutting' },
         { type: 'item', to: '/sewing', label: 'Пошив', icon: 'floorTasks' },
         { type: 'item', to: '/otk', label: 'ОТК', icon: 'qc' },
@@ -349,6 +374,58 @@ export default function Layout() {
             }
             if (entry.type === 'spacer') {
               return <div key={`spacer-${idx}`} className="py-2" aria-hidden="true" />;
+            }
+            if (entry.type === 'group') {
+              const isChildActive = entry.children.some((c) => location.pathname === c.to);
+              return (
+                <div key={entry.id} className="space-y-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setDekatGroupOpen((o) => !o)}
+                    className={`flex w-full items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors duration-300 ease-out min-w-0 text-left ${
+                      isChildActive
+                        ? 'bg-white/10 text-neon-text'
+                        : 'text-neon-text/85 hover:bg-white/5 hover:text-neon-text'
+                    }`}
+                  >
+                    <span className="flex-shrink-0">{NAV_ICONS[entry.icon]}</span>
+                    <span
+                      className={`truncate whitespace-nowrap flex-1 min-w-0 ${mobileMenuOpen ? 'inline' : 'max-lg:hidden'} ${sidebarExpanded ? 'lg:inline' : 'lg:hidden'}`}
+                    >
+                      {entry.label}
+                    </span>
+                    <svg
+                      className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${dekatGroupOpen ? 'rotate-180' : ''} ${mobileMenuOpen ? 'inline' : 'max-lg:hidden'} ${sidebarExpanded ? 'lg:inline' : 'lg:hidden'}`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                      aria-hidden
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {dekatGroupOpen && (
+                    <div className="ml-2 border-l border-white/10 pl-1 space-y-0.5">
+                      {entry.children.map((child) => (
+                        <NavLink
+                          key={child.to}
+                          to={child.to}
+                          onClick={() => setMobileMenuOpen(false)}
+                          className={({ isActive }) =>
+                            `flex items-center gap-3 py-2 pr-3 rounded-lg text-sm transition-colors duration-300 ease-out min-w-0 pl-8 ${
+                              isActive
+                                ? 'bg-primary-600 text-white'
+                                : 'text-neon-text/85 hover:bg-white/5 hover:text-neon-text'
+                            }`
+                          }
+                        >
+                          <span className={`truncate whitespace-nowrap ${mobileMenuOpen ? 'inline' : 'max-lg:hidden'} ${sidebarExpanded ? 'lg:inline' : 'lg:hidden'}`}>{child.label}</span>
+                        </NavLink>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
             }
             const { to, label, icon, end } = entry;
             return (

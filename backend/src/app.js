@@ -42,6 +42,8 @@ const shippingDocumentsRoutes = require("./routes/shippingDocuments");
 const analyticsRoutes = require("./modules/analytics/analytics.routes");
 const assistantRoutes = require("./modules/assistant/assistant.routes");
 const plannerRoutes = require("./modules/planner/planner.routes");
+const dekatirovkaRoutes = require("./routes/dekatirovka");
+const proverkaRoutes = require("./routes/proverka");
 
 const app = express();
 app.use(compression());
@@ -166,6 +168,19 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }));
 app.use(express.json({ limit: "10mb" }));
+
+/** Диагностика длительности GET /api/dekatirovka и /api/proverka: время до входа в роутер (CORS + authenticate + technologistFloorOnly). */
+app.use((req, res, next) => {
+  if (req.method !== "GET") return next();
+  const basePath = String(req.originalUrl || req.url || "").split("?")[0];
+  const stageListPaths = new Set([
+    "/api/proverka",
+    "/api/dekatirovka",
+    "/api/dekat\u0438\u0440\u043e\u0432\u043a\u0430",
+  ]);
+  if (stageListPaths.has(basePath)) req._stageListT0 = Date.now();
+  next();
+});
 
 // Rate limit на auth: в dev — мягче (nodemon задаёт NODE_ENV=development)
 const isDevAuthLimit = process.env.NODE_ENV === "development";
@@ -354,6 +369,30 @@ app.use(
   authenticate,
   requireRole("admin", "manager", "technologist", "operator"),
   plannerRoutes,
+);
+/** Декатировка: роутер из ./routes/dekatirovka.js → setupStageFactsRoutes (не legacy createStageFactsRouter напрямую). */
+app.use(
+  "/api/dekatirovka",
+  authenticate,
+  requireRole("admin", "manager", "technologist"),
+  technologistFloorOnly,
+  dekatirovkaRoutes,
+);
+/** Проверка: роутер из ./routes/proverka.js → setupStageFactsRoutes (не legacy createStageFactsRouter напрямую). */
+app.use(
+  "/api/proverka",
+  authenticate,
+  requireRole("admin", "manager", "technologist"),
+  technologistFloorOnly,
+  proverkaRoutes,
+);
+/** Алиас пути с кириллицей (как в меню): /api/dekatировка → тот же dekatirovkaRoutes */
+app.use(
+  "/api/dekat\u0438\u0440\u043e\u0432\u043a\u0430",
+  authenticate,
+  requireRole("admin", "manager", "technologist"),
+  technologistFloorOnly,
+  dekatirovkaRoutes,
 );
 
 // 404

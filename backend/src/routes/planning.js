@@ -2403,6 +2403,29 @@ function resolveChainOtkShippingWeeks(sewingMondayIso, bodyItem, settingsRow) {
   return { otkWs, shipWs };
 }
 
+/**
+ * Недели декатировки (после закупа) и проверки (после раскроя) из настроек или тела запроса.
+ */
+function resolveChainDekatProverkaWeeks(purchaseMondayIso, cuttingMondayIso, bodyItem, settingsRow) {
+  let dekatWs = normalizeChainIsoDate(bodyItem.dekatirovka_week_start);
+  let provWs = normalizeChainIsoDate(bodyItem.proverka_week_start);
+  const dN = Math.min(4, Math.max(0, Number(settingsRow?.dekatirovka_lead_weeks ?? 0)));
+  const pN = Math.min(4, Math.max(0, Number(settingsRow?.proverka_lead_weeks ?? 0)));
+  const purM = getWeekStart(purchaseMondayIso);
+  const cutM = getWeekStart(cuttingMondayIso);
+  if (!dekatWs) {
+    dekatWs = dN > 0 ? addWeeksToMondayIso(purM, dN) : purM;
+  } else {
+    dekatWs = getWeekStart(dekatWs);
+  }
+  if (!provWs) {
+    provWs = pN > 0 ? addWeeksToMondayIso(cutM, pN) : cutM;
+  } else {
+    provWs = getWeekStart(provWs);
+  }
+  return { dekatWs, provWs };
+}
+
 const chainOrderInclude = {
   model: db.Order,
   attributes: [
@@ -2455,6 +2478,100 @@ router.get('/chain', async (req, res, next) => {
 });
 
 /**
+ * GET /api/planning/chain/dekat-proverka?month_key=YYYY-MM&order_ids=1,2,3
+ * План (сумма planning_month_facts за месяц) и факт из dekatirovka_facts / proverka_facts.
+ */
+router.get('/chain/dekat-proverka', async (req, res, next) => {
+  try {
+    const mk = String(req.query.month_key || '').trim().slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(mk)) {
+      return res.status(400).json({ error: 'Укажите month_key (YYYY-MM)' });
+    }
+    const suff = `_m${mk}`;
+    let ids = [];
+    if (req.query.order_ids != null && String(req.query.order_ids).trim() !== '') {
+      ids = String(req.query.order_ids)
+        .split(/[,\s]+/)
+        .map((x) => parseInt(x, 10))
+        .filter((n) => Number.isFinite(n) && n > 0);
+    } else {
+      const ch = await db.PlanningChain.findAll({ attributes: ['order_id'], raw: true });
+      ids = [...new Set(ch.map((c) => c.order_id).filter(Boolean))];
+    }
+    if (ids.length === 0) {
+      return res.json({ month_key: mk, dekatirovka: {}, proverka: {} });
+    }
+
+    const plannedRows = await db.sequelize.query(
+      `SELECT order_id, COALESCE(SUM(value), 0)::int AS planned_qty
+       FROM planning_month_facts
+       WHERE order_id IN (:ids)
+         AND RIGHT(scope_key, 10) = :suff
+       GROUP BY order_id`,
+      { replacements: { ids, suff }, type: QueryTypes.SELECT }
+    );
+    const plannedByOrder = {};
+    for (const r of plannedRows) {
+      plannedByOrder[Number(r.order_id)] = Number(r.planned_qty) || 0;
+    }
+
+    const dekatFacts = await db.DekatirovkaFact.findAll({
+      where: { month_key: mk, order_id: { [Op.in]: ids } },
+      raw: true,
+    });
+    const provFacts = await db.ProverkaFact.findAll({
+      where: { month_key: mk, order_id: { [Op.in]: ids } },
+      raw: true,
+    });
+
+    const dekatirovka = {};
+    const proverka = {};
+    for (const oid of ids) {
+      const p = plannedByOrder[oid] ?? 0;
+      dekatirovka[String(oid)] = {
+        planned_qty: p,
+        actual_qty: 0,
+        fact_id: null,
+      };
+      proverka[String(oid)] = {
+        planned_qty: p,
+        actual_qty: 0,
+        fact_id: null,
+      };
+    }
+    for (const f of dekatFacts) {
+      const k = String(f.order_id);
+      if (!dekatirovka[k]) {
+        dekatirovka[k] = {
+          planned_qty: plannedByOrder[f.order_id] ?? 0,
+          actual_qty: 0,
+          fact_id: null,
+        };
+      }
+      dekatirovka[k].actual_qty = Number(f.actual_qty) || 0;
+      dekatirovka[k].fact_id = f.id;
+    }
+    for (const f of provFacts) {
+      const k = String(f.order_id);
+      if (!proverka[k]) {
+        proverka[k] = {
+          planned_qty: plannedByOrder[f.order_id] ?? 0,
+          actual_qty: 0,
+          fact_id: null,
+        };
+      }
+      proverka[k].actual_qty = Number(f.actual_qty) || 0;
+      proverka[k].fact_id = f.id;
+    }
+
+    res.json({ month_key: mk, dekatirovka, proverka });
+  } catch (err) {
+    console.error('[planning/chain/dekat-proverka]', err.message);
+    next(err);
+  }
+});
+
+/**
  * POST /api/planning/chain
  * Тело: массив [{ order_id, section_id, purchase_week_start, cutting_week_start, sewing_week_start, otk_week_start?, shipping_week_start? }]
  * Только admin / manager.
@@ -2480,6 +2597,7 @@ router.post('/chain', async (req, res, next) => {
         const ss = normalizeChainIsoDate(it.sewing_week_start);
         if (!orderId || !sectionId || !ps || !cs || !ss) continue;
         const { otkWs, shipWs } = resolveChainOtkShippingWeeks(ss, it, settingsRow);
+        const { dekatWs, provWs } = resolveChainDekatProverkaWeeks(ps, cs, it, settingsRow);
         const order = await db.Order.findByPk(orderId);
         if (!order) continue;
         const [rec, created] = await db.PlanningChain.findOrCreate({
@@ -2492,11 +2610,15 @@ router.post('/chain', async (req, res, next) => {
             sewing_week_start: ss,
             otk_week_start: otkWs,
             shipping_week_start: shipWs,
+            dekatirovka_week_start: dekatWs,
+            proverka_week_start: provWs,
             purchase_status: 'pending',
             cutting_status: 'pending',
             sewing_status: 'pending',
             otk_status: 'pending',
             shipping_status: 'pending',
+            dekatirovka_status: 'pending',
+            proverka_status: 'pending',
           },
         });
         if (!created) {
@@ -2506,6 +2628,8 @@ router.post('/chain', async (req, res, next) => {
             sewing_week_start: ss,
             otk_week_start: otkWs,
             shipping_week_start: shipWs,
+            dekatirovka_week_start: dekatWs,
+            proverka_week_start: provWs,
           });
         }
         out.push(rec.toJSON());
@@ -2584,6 +2708,8 @@ router.patch('/chain/:id', async (req, res, next) => {
       'sewing_status',
       'otk_status',
       'shipping_status',
+      'dekatirovka_status',
+      'proverka_status',
     ]) {
       if (req.body[k] !== undefined) {
         const v = String(req.body[k]).trim();
@@ -2599,6 +2725,8 @@ router.patch('/chain/:id', async (req, res, next) => {
       'sewing_week_start',
       'otk_week_start',
       'shipping_week_start',
+      'dekatirovka_week_start',
+      'proverka_week_start',
     ];
     for (const k of weekKeys) {
       if (req.body[k] !== undefined) {

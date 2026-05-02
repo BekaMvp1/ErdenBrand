@@ -109,6 +109,8 @@ const db = {
   PlanningProductionDraft: require('./PlanningProductionDraft')(sequelize, Sequelize.DataTypes),
   PlanningDraftCell: require('./PlanningDraftCell')(sequelize, Sequelize.DataTypes),
   PlanningMonthFact: require('./PlanningMonthFact')(sequelize, Sequelize.DataTypes),
+  DekatirovkaFact: require('./DekatirovkaFact')(sequelize, Sequelize.DataTypes),
+  ProverkaFact: require('./ProverkaFact')(sequelize, Sequelize.DataTypes),
   ProductionCycleSettings: require('./ProductionCycleSettings')(sequelize, Sequelize.DataTypes),
   PlanningChain: require('./PlanningChain')(sequelize, Sequelize.DataTypes),
   PurchaseDocument: require('./PurchaseDocument')(sequelize, Sequelize.DataTypes),
@@ -148,6 +150,11 @@ db.User.hasMany(db.PlanningMonthFact, { foreignKey: 'user_id' });
 db.PlanningMonthFact.belongsTo(db.User, { foreignKey: 'user_id' });
 db.Order.hasMany(db.PlanningMonthFact, { foreignKey: 'order_id' });
 db.PlanningMonthFact.belongsTo(db.Order, { foreignKey: 'order_id' });
+
+db.Order.hasMany(db.DekatirovkaFact, { foreignKey: 'order_id' });
+db.DekatirovkaFact.belongsTo(db.Order, { foreignKey: 'order_id' });
+db.Order.hasMany(db.ProverkaFact, { foreignKey: 'order_id' });
+db.ProverkaFact.belongsTo(db.Order, { foreignKey: 'order_id' });
 
 db.ProductionCycleSettings.belongsTo(db.User, { foreignKey: 'updated_by', as: 'UpdatedBy' });
 

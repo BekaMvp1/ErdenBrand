@@ -31,6 +31,16 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         defaultValue: 0,
       },
+      dekatirovka_lead_weeks: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        defaultValue: 0,
+      },
+      proverka_lead_weeks: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        defaultValue: 0,
+      },
       updated_by: {
         type: DataTypes.INTEGER,
         allowNull: true,

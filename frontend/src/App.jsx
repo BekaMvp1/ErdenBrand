@@ -36,6 +36,7 @@ import ProductionCycleSettings from "./pages/ProductionCycleSettings";
 import ProductionChain from "./pages/ProductionChain";
 import Dispatcher from "./pages/Dispatcher";
 import Assistant from "./pages/Assistant";
+import ModelsBase from "./pages/ModelsBase";
 import OrdersBoard from "./pages/OrdersBoard";
 import ProductionDashboard from "./pages/ProductionDashboard";
 import ServerStatus from "./components/ServerStatus";
@@ -87,6 +88,7 @@ export default function App() {
                 <Route path="shipping-plan" element={<Shipping />} />
                 <Route path="finance" element={<Finance2026 />} />
                 <Route path="references" element={<References />} />
+                <Route path="models-base" element={<ModelsBase />} />
                 <Route path="settings" element={<Settings />} />
                 <Route path="settings/production-cycle" element={<ProductionCycleSettings />} />
                 <Route path="dispatcher" element={<Dispatcher />} />

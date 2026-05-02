@@ -44,6 +44,7 @@ const assistantRoutes = require("./modules/assistant/assistant.routes");
 const plannerRoutes = require("./modules/planner/planner.routes");
 const dekatirovkaRouter = require("./routes/dekatirovka");
 const proverkaRouter = require("./routes/proverka");
+const modelsBaseRoutes = require("./routes/models-base");
 
 const app = express();
 app.use(compression());
@@ -291,6 +292,13 @@ app.use(
   requireRole("admin", "manager", "technologist", "operator"),
   technologistFloorOnly,
   referencesRoutes,
+);
+app.use(
+  "/api/models-base",
+  authenticate,
+  requireRole("admin", "manager", "technologist"),
+  technologistFloorOnly,
+  modelsBaseRoutes,
 );
 app.use(
   "/api/clients",

@@ -86,6 +86,7 @@ const db = {
   PlanningPeriod: require('./PlanningPeriod')(sequelize, Sequelize.DataTypes),
   SyncQueue: require('./SyncQueue')(sequelize, Sequelize.DataTypes),
   ProductModel: require('./ProductModel')(sequelize, Sequelize.DataTypes),
+  ModelsBase: require('./ModelsBase')(sequelize, Sequelize.DataTypes),
   ModelSize: require('./ModelSize')(sequelize, Sequelize.DataTypes),
   SewingRecord: require('./SewingRecord')(sequelize, Sequelize.DataTypes),
   QcRecord: require('./QcRecord')(sequelize, Sequelize.DataTypes),

@@ -218,6 +218,22 @@ export const api = {
     update: (id, body) =>
       request(`/api/proverka/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   },
+  modelsBase: {
+    list: (params = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return request(`/api/models-base${q ? `?${q}` : ''}`);
+    },
+    get: (id) => request(`/api/models-base/${id}`),
+    create: (body) =>
+      request('/api/models-base', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id, body) =>
+      request(`/api/models-base/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+        timeout: 120000,
+      }),
+    delete: (id) => request(`/api/models-base/${id}`, { method: 'DELETE' }),
+  },
   planning: {
     updateOperation: (id, data) =>
       request(`/api/planning/operations/${id}`, {

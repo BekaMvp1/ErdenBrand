@@ -48,6 +48,38 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         defaultValue: {},
       },
+      konfek_logo: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
+      konfek_model: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
+      konfek_name: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
+      konfek_sizes: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
+      konfek_collection: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
+      konfek_fabric: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
+      konfek_fittings: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
+      konfek_note: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
     },
     {
       tableName: 'models_base',

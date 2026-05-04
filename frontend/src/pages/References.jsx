@@ -8,6 +8,25 @@ import { useAuth } from '../context/AuthContext';
 import { useRefreshOnVisible } from '../hooks/useRefreshOnVisible';
 import { Chip, NeonButton, NeonCard, NeonInput, NeonSelect } from '../components/ui';
 import PrintButton from '../components/PrintButton';
+import { RefSection } from '../components/RefSection';
+
+const MODEL_REF_TAB_IDS = new Set([
+  'fabric-names',
+  'fabric-units',
+  'fittings-names',
+  'cutting-ops',
+  'sewing-ops',
+  'otk-ops',
+]);
+
+const MODEL_REF_SECTIONS = {
+  'fabric-names': { title: 'ткань', endpoint: '/api/model-refs/fabric-names' },
+  'fabric-units': { title: 'единицу измерения', endpoint: '/api/model-refs/fabric-units' },
+  'fittings-names': { title: 'фурнитуру', endpoint: '/api/model-refs/fittings-names' },
+  'cutting-ops': { title: 'операцию раскроя', endpoint: '/api/model-refs/cutting-ops' },
+  'sewing-ops': { title: 'операцию пошива', endpoint: '/api/model-refs/sewing-ops' },
+  'otk-ops': { title: 'операцию ОТК', endpoint: '/api/model-refs/otk-ops' },
+};
 
 export default function References() {
   const { user } = useAuth();
@@ -35,6 +54,11 @@ export default function References() {
   const [deletingWorkshopId, setDeletingWorkshopId] = useState(null);
 
   const load = async () => {
+    if (MODEL_REF_TAB_IDS.has(tab)) {
+      setData([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       let res = [];
@@ -397,7 +421,15 @@ export default function References() {
     { id: 'clients', label: 'Клиенты' },
     { id: 'operations', label: 'Операции' },
     { id: 'order-status', label: 'Статусы заказов' },
+    { id: 'fabric-names', label: 'Ткани' },
+    { id: 'fabric-units', label: 'Ед. измерения' },
+    { id: 'fittings-names', label: 'Фурнитура' },
+    { id: 'cutting-ops', label: 'Операции раскроя' },
+    { id: 'sewing-ops', label: 'Операции пошива' },
+    { id: 'otk-ops', label: 'Операции ОТК' },
   ];
+
+  const modelRefsCanMutate = ['admin', 'manager', 'technologist'].includes(user?.role);
 
   return (
     <div>
@@ -598,46 +630,56 @@ export default function References() {
         </form>
       )}
 
-      <NeonCard className="overflow-hidden p-0">
-        {loading ? (
-          <div className="p-8 text-center text-[#ECECEC]/80 dark:text-dark-text/80">Загрузка...</div>
-        ) : Array.isArray(data) && data.length > 0 ? (
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-white/20 dark:border-white/20">
-                {cols ? cols.map((c) => (
-                  <th key={c.key} className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">
-                    {c.label}
-                  </th>
-                )) : Object.keys(data[0]).filter((k) => !k.includes('_at')).map((k) => (
-                  <th key={k} className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">
-                    {k}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {data.map((row) => (
-                <tr key={row.id} className="border-b border-white/15 dark:border-white/15">
+      {MODEL_REF_SECTIONS[tab] ? (
+        <NeonCard className="overflow-hidden p-4 md:p-6">
+          <RefSection
+            title={MODEL_REF_SECTIONS[tab].title}
+            endpoint={MODEL_REF_SECTIONS[tab].endpoint}
+            canMutate={modelRefsCanMutate}
+          />
+        </NeonCard>
+      ) : (
+        <NeonCard className="overflow-hidden p-0">
+          {loading ? (
+            <div className="p-8 text-center text-[#ECECEC]/80 dark:text-dark-text/80">Загрузка...</div>
+          ) : Array.isArray(data) && data.length > 0 ? (
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-white/20 dark:border-white/20">
                   {cols ? cols.map((c) => (
-                    <td key={c.key} className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80">
-                      {c.getValue ? c.getValue(row) : formatRowValue(c.key, row[c.key], row)}
-                    </td>
-                  )) : Object.entries(row)
-                    .filter(([k]) => !k.includes('_at'))
-                    .map(([k, v]) => (
-                      <td key={k} className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80">
-                        {formatRowValue(k, v, row)}
-                      </td>
-                    ))}
+                    <th key={c.key} className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">
+                      {c.label}
+                    </th>
+                  )) : Object.keys(data[0]).filter((k) => !k.includes('_at')).map((k) => (
+                    <th key={k} className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">
+                      {k}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <div className="p-8 text-[#ECECEC]/80 dark:text-dark-text/80">Нет данных</div>
-        )}
-      </NeonCard>
+              </thead>
+              <tbody>
+                {data.map((row) => (
+                  <tr key={row.id} className="border-b border-white/15 dark:border-white/15">
+                    {cols ? cols.map((c) => (
+                      <td key={c.key} className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80">
+                        {c.getValue ? c.getValue(row) : formatRowValue(c.key, row[c.key], row)}
+                      </td>
+                    )) : Object.entries(row)
+                      .filter(([k]) => !k.includes('_at'))
+                      .map(([k, v]) => (
+                        <td key={k} className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80">
+                          {formatRowValue(k, v, row)}
+                        </td>
+                      ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div className="p-8 text-[#ECECEC]/80 dark:text-dark-text/80">Нет данных</div>
+          )}
+        </NeonCard>
+      )}
     </div>
   );
 }

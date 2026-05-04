@@ -80,6 +80,43 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.TEXT,
         allowNull: true,
       },
+      fabric_data: {
+        type: DataTypes.JSONB,
+        allowNull: false,
+        defaultValue: { rows: [] },
+      },
+      /** Плоский массив [{ name, unit, qty_per_unit }] — синхронизируется с fabric_data */
+      fabric: {
+        type: DataTypes.JSONB,
+        allowNull: false,
+        defaultValue: [],
+      },
+      fittings_data: {
+        type: DataTypes.JSONB,
+        allowNull: false,
+        defaultValue: { rows: [] },
+      },
+      /** Плоский массив [{ name, unit, qty_per_unit }] — синхронизируется с fittings_data */
+      accessories: {
+        type: DataTypes.JSONB,
+        allowNull: false,
+        defaultValue: [],
+      },
+      cutting_ops: {
+        type: DataTypes.JSONB,
+        allowNull: false,
+        defaultValue: { rows: [] },
+      },
+      sewing_ops: {
+        type: DataTypes.JSONB,
+        allowNull: false,
+        defaultValue: { rows: [] },
+      },
+      otk_ops: {
+        type: DataTypes.JSONB,
+        allowNull: false,
+        defaultValue: { rows: [] },
+      },
     },
     {
       tableName: 'models_base',

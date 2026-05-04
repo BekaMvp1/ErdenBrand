@@ -116,6 +116,14 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  get: (path, opts) => request(path, opts),
+  post: (path, body, opts = {}) =>
+    request(path, {
+      method: 'POST',
+      body: JSON.stringify(body ?? {}),
+      ...opts,
+    }),
+  delete: (path, opts) => request(path, { ...opts, method: 'DELETE' }),
   health: (opts = {}) => request('/api/health', opts),
   dashboard: {
     summary: () => request('/api/dashboard/summary'),

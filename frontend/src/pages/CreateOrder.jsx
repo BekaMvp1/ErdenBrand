@@ -12,6 +12,9 @@ import { numInputValue } from '../utils/numInput';
 import { NeonButton, NeonInput, NeonSelect } from '../components/ui';
 import PrintButton from '../components/PrintButton';
 import SizeGrid, { SIZE_GRID_MAP, sizeGridNumericFromSelection } from '../components/SizeGrid';
+import CreateOrderModelSections from '../components/CreateOrderModelSections';
+import LoadModelsBaseModal from '../components/LoadModelsBaseModal';
+import { applyModelsBaseToCreateOrder } from '../utils/orderModelFromModelsBase';
 
 const ROSTOVKI = [
   { id: '165', name: '165' },
@@ -79,6 +82,12 @@ export default function CreateOrder() {
   const [editingRowTotal, setEditingRowTotal] = useState(null);
   const [orderPhotos, setOrderPhotos] = useState([]);
   const [commentPhotos, setCommentPhotos] = useState([]);
+  const [fabric, setFabric] = useState([]);
+  const [accessories, setAccessories] = useState([]);
+  const [cuttingOps, setCuttingOps] = useState([]);
+  const [sewingOps, setSewingOps] = useState([]);
+  const [otkOps, setOtkOps] = useState([]);
+  const [loadModelsModalOpen, setLoadModelsModalOpen] = useState(false);
 
   const loadRefs = useCallback(async () => {
     const [clientsRes, workshopsRes, floorsRes] = await Promise.all([
@@ -334,10 +343,42 @@ export default function CreateOrder() {
               required
             />
           </div>
+          <div className="md:col-span-2">
+            <button
+              type="button"
+              onClick={() => setLoadModelsModalOpen(true)}
+              style={{
+                background: '#1e40af',
+                color: 'white',
+                padding: '10px 20px',
+                borderRadius: 8,
+                cursor: 'pointer',
+                margin: '12px 0',
+                border: 'none',
+              }}
+            >
+              📋 Загрузить из базы моделей
+            </button>
+          </div>
           <p className="md:col-span-2 mt-1 text-xs text-[#ECECEC]/70">
             Получится: {(form.tz_code || '...').trim()} — {(form.model_name || '...').trim()}
           </p>
         </div>
+
+        <LoadModelsBaseModal
+          open={loadModelsModalOpen}
+          onClose={() => setLoadModelsModalOpen(false)}
+          onApplied={(full) =>
+            applyModelsBaseToCreateOrder(full, {
+              setForm,
+              setFabric,
+              setAccessories,
+              setCuttingOps,
+              setSewingOps,
+              setOtkOps,
+            })
+          }
+        />
 
         {/* Две части: ростовка + общее количество */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -733,6 +774,20 @@ export default function CreateOrder() {
             </div>
           )}
         </div>
+
+        <CreateOrderModelSections
+          totalQty={totalQty}
+          fabric={fabric}
+          setFabric={setFabric}
+          accessories={accessories}
+          setAccessories={setAccessories}
+          cuttingOps={cuttingOps}
+          setCuttingOps={setCuttingOps}
+          sewingOps={sewingOps}
+          setSewingOps={setSewingOps}
+          otkOps={otkOps}
+          setOtkOps={setOtkOps}
+        />
 
         <div className="flex gap-3 pt-2 border-t border-white/25 pt-6 mt-6">
           <NeonButton type="submit" disabled={loading || !isValid}>

@@ -79,6 +79,23 @@ function materialRowHasName(row) {
   return true;
 }
 
+/** Персистентный формат для API / блока «Закуп» */
+function serializeMaterialStateForOrder(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const outRows = rows
+    .filter(materialRowHasName)
+    .map((r) => ({
+      name: String(r.name || r.baseName || '').trim(),
+      unit: String(r.unit || '').trim(),
+      qty_per_unit: r.qtyPerUnit != null && r.qtyPerUnit !== '' ? String(r.qtyPerUnit) : '',
+      qty_total: r.qtyTotal != null && r.qtyTotal !== '' ? String(r.qtyTotal) : '',
+      price_per_unit: r.rateSom != null && r.rateSom !== '' ? String(r.rateSom) : '',
+      photo: typeof r.photo === 'string' && r.photo.trim() ? r.photo.trim() : null,
+    }));
+  if (!outRows.length) return null;
+  return { groups: [{ id: 1, title: 'Заказ', rows: outRows }] };
+}
+
 function syncMaterialRowsByColor(prevRows, colors, colorQtyMap, totalQty) {
   const rows = Array.isArray(prevRows) ? prevRows : [];
   const uniqueColors = (colors || []).filter(Boolean);
@@ -407,6 +424,8 @@ export default function CreateOrder() {
       });
       const size_grid_numeric = sizeGridNumericFromSelection(selectedSizes);
       const size_grid_quantities = buildSizeGridQuantities(selectedSizes, colors, matrix);
+      const fabricPayload = serializeMaterialStateForOrder(fabric);
+      const fittingsPayload = serializeMaterialStateForOrder(accessories);
       const order = await api.orders.create({
         client_id: parseInt(form.client_id, 10),
         tz_code: form.tz_code,
@@ -436,6 +455,8 @@ export default function CreateOrder() {
         total_sewing_cost: costTotals.total_sewing_cost,
         total_otk_cost: costTotals.total_otk_cost,
         total_cost: costTotals.total_cost,
+        ...(fabricPayload ? { fabric_data: fabricPayload } : {}),
+        ...(fittingsPayload ? { fittings_data: fittingsPayload } : {}),
       });
       if ((form.comment || '').trim() || commentPhotos.length > 0) {
         await api.orders.addComment(order.id, {

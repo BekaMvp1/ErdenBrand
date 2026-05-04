@@ -71,6 +71,82 @@ function parseOptionalCost(v) {
   return Math.round(n * 100) / 100;
 }
 
+const MAX_PHOTO_STR = 5 * 1024 * 1024;
+
+/**
+ * Сохраняем в JSONB ткань/фурнитуру: массив строк или { groups: [{ rows }] }.
+ * Пустой ввод → null.
+ */
+function normalizeOrderMaterialsPayload(input) {
+  if (input == null) return null;
+
+  const trimPhoto = (p) => {
+    if (typeof p !== 'string' || !p.trim()) return null;
+    const s = p.trim();
+    return s.length > MAX_PHOTO_STR ? s.slice(0, MAX_PHOTO_STR) : s;
+  };
+
+  const normalizeRow = (r) => {
+    if (!r || typeof r !== 'object') return null;
+    const name = String(r.name ?? r.title ?? '').trim().slice(0, 500);
+    const unit = String(r.unit ?? '').trim().slice(0, 80);
+    const qtyPu =
+      r.qty_per_unit != null && r.qty_per_unit !== ''
+        ? String(r.qty_per_unit).slice(0, 80)
+        : r.qtyPerUnit != null && r.qtyPerUnit !== ''
+          ? String(r.qtyPerUnit).slice(0, 80)
+          : r.qty != null && r.qty !== ''
+            ? String(r.qty).slice(0, 80)
+            : '';
+    const qtyTot =
+      r.qty_total != null && r.qty_total !== ''
+        ? String(r.qty_total).slice(0, 80)
+        : r.qtyTotal != null && r.qtyTotal !== ''
+          ? String(r.qtyTotal).slice(0, 80)
+          : r.total_qty != null && r.total_qty !== ''
+            ? String(r.total_qty).slice(0, 80)
+            : '';
+    const price =
+      r.price_per_unit != null && r.price_per_unit !== ''
+        ? String(r.price_per_unit).slice(0, 80)
+        : r.pricePerUnit != null && r.pricePerUnit !== ''
+          ? String(r.pricePerUnit).slice(0, 80)
+          : r.price != null && r.price !== ''
+            ? String(r.price).slice(0, 80)
+            : r.rateSom != null && r.rateSom !== ''
+              ? String(r.rateSom).slice(0, 80)
+              : r.cost != null && r.cost !== ''
+                ? String(r.cost).slice(0, 80)
+                : '';
+    return {
+      name,
+      unit,
+      qty_per_unit: qtyPu,
+      qty_total: qtyTot,
+      price_per_unit: price,
+      photo: trimPhoto(r.photo),
+    };
+  };
+
+  if (Array.isArray(input)) {
+    const rows = input.map(normalizeRow).filter((row) => row && row.name);
+    return rows.length ? { groups: [{ id: 1, title: '', rows }] } : null;
+  }
+
+  if (typeof input === 'object' && Array.isArray(input.groups)) {
+    const groups = input.groups
+      .map((g, gi) => ({
+        id: g != null && g.id != null ? g.id : gi + 1,
+        title: String((g && g.title) || '').slice(0, 200),
+        rows: (g && Array.isArray(g.rows) ? g.rows : []).map(normalizeRow).filter((row) => row && row.name),
+      }))
+      .filter((g) => g.rows.length > 0);
+    return groups.length ? { groups } : null;
+  }
+
+  return null;
+}
+
 /**
  * Нормализация строки для поиска по ключевым словам
  */
@@ -229,6 +305,8 @@ router.post('/', async (req, res, next) => {
       total_sewing_cost,
       total_otk_cost,
       total_cost,
+      fabric_data,
+      fittings_data,
     } = req.body;
 
     const nameFields = resolveOrderNameFields({ title, tz_code, model_name });
@@ -359,6 +437,9 @@ router.post('/', async (req, res, next) => {
     }
     const gridQtys = normalizeSizeGridQuantities(size_grid_quantities);
 
+    const fabricDataNorm = normalizeOrderMaterialsPayload(fabric_data);
+    const fittingsDataNorm = normalizeOrderMaterialsPayload(fittings_data);
+
     const t = await db.sequelize.transaction();
     let order;
     try {
@@ -392,6 +473,8 @@ router.post('/', async (req, res, next) => {
           total_sewing_cost: parseOptionalCost(total_sewing_cost),
           total_otk_cost: parseOptionalCost(total_otk_cost),
           total_cost: parseOptionalCost(total_cost),
+          fabric_data: fabricDataNorm,
+          fittings_data: fittingsDataNorm,
         },
         { transaction: t }
       );
@@ -1593,6 +1676,8 @@ router.put('/:id', async (req, res, next) => {
       model_type,
       size_grid_numeric,
       size_grid_quantities,
+      fabric_data,
+      fittings_data,
     } = req.body;
 
     const updates = {};
@@ -1641,6 +1726,12 @@ router.put('/:id', async (req, res, next) => {
     }
     if (size_grid_quantities !== undefined) {
       updates.size_grid_quantities = normalizeSizeGridQuantities(size_grid_quantities);
+    }
+    if (fabric_data !== undefined) {
+      updates.fabric_data = normalizeOrderMaterialsPayload(fabric_data);
+    }
+    if (fittings_data !== undefined) {
+      updates.fittings_data = normalizeOrderMaterialsPayload(fittings_data);
     }
 
     const { order_height_type, order_height_value } = req.body;
@@ -2051,6 +2142,9 @@ router.get('/:id', async (req, res, next) => {
 
     res.json({
       ...plain,
+      /** Явно отдаём JSONB материалов (форма создания / блок «Закуп») */
+      fabric_data: plain.fabric_data ?? null,
+      fittings_data: plain.fittings_data ?? null,
       variants: variants.map((v) => ({
         color: v.color,
         size: v.Size?.name,

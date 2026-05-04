@@ -4,7 +4,7 @@
  * Редактирование вариантов (цвет×размер×количество) как при создании
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -102,6 +102,130 @@ function formatFloor(floor) {
   return labels[floor] || `${floor} этаж`;
 }
 
+function parseNumSafe(v) {
+  const n = parseFloat(String(v ?? '').replace(',', '.'));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function flattenMaterialRows(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) {
+    return raw.map((r) => ({
+      name: String(r?.name || '').trim(),
+      unit: String(r?.unit || '').trim(),
+      qty_per_unit: r?.qty_per_unit ?? r?.qtyPerUnit ?? r?.qty ?? '',
+      qty_total: r?.qty_total ?? r?.qtyTotal ?? r?.total_qty ?? '',
+      price_per_unit: r?.price_per_unit ?? r?.pricePerUnit ?? r?.price ?? r?.rateSom ?? '',
+      photo: typeof r?.photo === 'string' && r.photo.trim() ? r.photo : null,
+    }));
+  }
+  const groups = Array.isArray(raw?.groups) ? raw.groups : [];
+  const out = [];
+  groups.forEach((g) => {
+    (g?.rows || []).forEach((r) => {
+      out.push({
+        name: String(r?.name || '').trim(),
+        unit: String(r?.unit || '').trim(),
+        qty_per_unit: r?.qty_per_unit ?? r?.qtyPerUnit ?? r?.qty ?? '',
+        qty_total: r?.qty_total ?? r?.qtyTotal ?? r?.total_qty ?? '',
+        price_per_unit: r?.price_per_unit ?? r?.pricePerUnit ?? r?.price ?? r?.rateSom ?? r?.cost ?? '',
+        photo: typeof r?.photo === 'string' && r.photo.trim() ? r.photo : null,
+      });
+    });
+  });
+  return out;
+}
+
+function materialPayloadHasRows(raw) {
+  if (!raw) return false;
+  if (Array.isArray(raw)) {
+    return raw.some((r) => r && String(r.name || r.title || '').trim());
+  }
+  if (typeof raw === 'object' && Array.isArray(raw.groups)) {
+    return raw.groups.some(
+      (g) =>
+        Array.isArray(g?.rows) && g.rows.some((r) => r && String(r.name || r.title || '').trim())
+    );
+  }
+  return false;
+}
+
+function pickFirstMaterialRaw(candidates) {
+  for (const c of candidates) {
+    if (materialPayloadHasRows(c)) return c;
+  }
+  return null;
+}
+
+function filterNamedMaterialRow(r) {
+  const n = String(r?.name ?? '').trim();
+  return n.length > 0 && n !== '—' && n !== '--';
+}
+
+/** Диагностика: не логируем целиком base64 фото (зависание консоли) */
+function safeOrderJsonStringifyForConsole(order) {
+  try {
+    return JSON.stringify(order, (key, value) => {
+      if (key === 'photos' && Array.isArray(value)) {
+        return value.map((p) =>
+          typeof p === 'string' && p.length > 400 ? `[photo ${p.length} chars]` : p
+        );
+      }
+      if (typeof value === 'string' && value.length > 800) {
+        const ks = String(key);
+        if (ks === 'photo' || ks === 'image' || value.startsWith('data:image')) {
+          return `[${ks} ${value.length} chars]`;
+        }
+      }
+      return value;
+    });
+  } catch (e) {
+    return `"stringify error: ${e?.message || e}"`;
+  }
+}
+
+function resolveOrderMaterials(order) {
+  const src = order || {};
+  const details = src.details && typeof src.details === 'object' ? src.details : {};
+  const materials =
+    src.materials && typeof src.materials === 'object' && !Array.isArray(src.materials)
+      ? src.materials
+      : {};
+
+  const fabricRaw = pickFirstMaterialRaw([
+    src.fabric_data,
+    src.spec_fabric,
+    src.order_fabric,
+    src.fabric,
+    details.fabric_data,
+    details.fabric,
+    details.materials_fabric,
+    details.spec_fabric,
+    materials.fabric_data,
+    materials.fabric,
+    materials.spec_fabric,
+  ]);
+
+  const accessoriesRaw = pickFirstMaterialRaw([
+    src.fittings_data,
+    src.spec_fittings,
+    src.order_accessories,
+    src.accessories,
+    details.fittings_data,
+    details.accessories,
+    details.spec_fittings,
+    details.materials_accessories,
+    materials.fittings_data,
+    materials.accessories,
+    materials.spec_fittings,
+  ]);
+
+  return {
+    fabric: flattenMaterialRows(fabricRaw).filter(filterNamedMaterialRow),
+    accessories: flattenMaterialRows(accessoriesRaw).filter(filterNamedMaterialRow),
+  };
+}
+
 export default function OrderDetails() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -147,6 +271,20 @@ export default function OrderDetails() {
 
   /** Может ли пользователь редактировать задачи раскроя */
   const canEditCutting = ['admin', 'manager', 'technologist'].includes(user?.role);
+  const orderMaterials = useMemo(() => resolveOrderMaterials(order), [order]);
+  const orderMaterialsRowsCount = (orderMaterials.fabric?.length || 0) + (orderMaterials.accessories?.length || 0);
+  const orderQty = Number(order?.total_quantity || order?.quantity || 0) || 0;
+  const calcLine = (row) => {
+    const perUnit = parseNumSafe(row.qty_per_unit);
+    const qtyTotalRaw = parseNumSafe(row.qty_total);
+    const qtyTotal = qtyTotalRaw > 0 ? qtyTotalRaw : perUnit * orderQty;
+    const rate = parseNumSafe(row.price_per_unit);
+    const sum = qtyTotal * rate;
+    return { qtyTotal, rate, sum };
+  };
+  const fabricTotal = (orderMaterials.fabric || []).reduce((acc, r) => acc + calcLine(r).sum, 0);
+  const accessoriesTotal = (orderMaterials.accessories || []).reduce((acc, r) => acc + calcLine(r).sum, 0);
+  const procurementTotal = fabricTotal + accessoriesTotal;
 
   const toggleCuttingTaskExpand = (taskId) => {
     setExpandedCuttingTaskIds((prev) => {
@@ -160,7 +298,10 @@ export default function OrderDetails() {
   const loadOrder = () => {
     api.orders
       .get(id)
-      .then(setOrder)
+      .then((data) => {
+        console.log('ORDER FULL:', safeOrderJsonStringifyForConsole(data));
+        setOrder(data);
+      })
       .catch(() => setOrder(null))
       .finally(() => setLoading(false));
   };
@@ -1032,9 +1173,6 @@ export default function OrderDetails() {
             </div>
           </div>
           <div className="p-4 sm:p-6 space-y-4">
-            {!procurement?.procurement?.id && !procurement?.items?.length ? (
-              <p className="text-[#ECECEC]/70 dark:text-dark-text/70 text-sm">Нет данных</p>
-            ) : (
             <>
             <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
               <span className="text-[#ECECEC]/70 dark:text-dark-text/70">Статус</span>
@@ -1070,38 +1208,92 @@ export default function OrderDetails() {
                 </>
               )}
             </div>
-            {(procurement?.items || []).filter((r) => String(r.material_name || '').trim()).length > 0 && (
+            {orderMaterialsRowsCount === 0 ? (
+              <p className="text-[#ECECEC]/70 dark:text-dark-text/70 text-sm">Материалы не указаны</p>
+            ) : (
               <div className="overflow-x-auto rounded-lg border border-white/20 dark:border-white/20">
-                <table className="w-full min-w-[500px] text-sm">
+                <table className="w-full min-w-[820px] text-sm">
                   <thead>
                     <tr className="bg-accent-3/80 dark:bg-dark-900 border-b border-white/25">
-                      <th className="text-left px-3 py-2 text-[#ECECEC]/90 dark:text-dark-text/90">Материал</th>
-                      <th className="text-left px-3 py-2 text-[#ECECEC]/90 dark:text-dark-text/90">План</th>
-                      <th className="text-left px-3 py-2 text-[#ECECEC]/90 dark:text-dark-text/90">Ед</th>
-                      <th className="text-left px-3 py-2 text-[#ECECEC]/90 dark:text-dark-text/90">Куплено</th>
-                      <th className="text-left px-3 py-2 text-[#ECECEC]/90 dark:text-dark-text/90">Цена</th>
+                      <th className="text-left px-3 py-2 text-[#ECECEC]/90 dark:text-dark-text/90">№</th>
+                      <th className="text-left px-3 py-2 text-[#ECECEC]/90 dark:text-dark-text/90">Наименование</th>
+                      <th className="text-left px-3 py-2 text-[#ECECEC]/90 dark:text-dark-text/90">Фото</th>
+                      <th className="text-left px-3 py-2 text-[#ECECEC]/90 dark:text-dark-text/90">Ед.изм</th>
+                      <th className="text-left px-3 py-2 text-[#ECECEC]/90 dark:text-dark-text/90">Кол-во итого</th>
+                      <th className="text-left px-3 py-2 text-[#ECECEC]/90 dark:text-dark-text/90">Расценка</th>
                       <th className="text-left px-3 py-2 text-[#ECECEC]/90 dark:text-dark-text/90">Сумма</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {(procurement.items || [])
-                      .filter((r) => String(r.material_name || '').trim())
-                      .map((row) => (
-                        <tr key={row.id} className="border-b border-white/10">
-                          <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">{row.material_name || '—'}</td>
-                          <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">{row.planned_qty ?? '—'}</td>
-                          <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">{row.unit || 'шт'}</td>
-                          <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">{row.purchased_qty ?? '—'}</td>
-                          <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">{row.purchased_price != null ? Number(row.purchased_price).toFixed(2) : '—'}</td>
-                          <td className="px-3 py-2 font-medium text-[#ECECEC] dark:text-dark-text">{row.purchased_sum != null ? Number(row.purchased_sum).toFixed(2) : '—'}</td>
+                    <tr className="bg-[#1e3a5f]/50 border-b border-white/20">
+                      <td colSpan={7} className="px-3 py-2 font-semibold text-[#ECECEC]">ТКАНЬ</td>
+                    </tr>
+                    {(orderMaterials.fabric || []).map((row, idx) => {
+                      const line = calcLine(row);
+                      return (
+                        <tr key={`fab-${idx}`} className="border-b border-white/10">
+                          <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">{idx + 1}</td>
+                          <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">{row.name || '—'}</td>
+                          <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">
+                            {row.photo ? (
+                              <img
+                                src={row.photo}
+                                alt=""
+                                onClick={() => setViewingPhoto(row.photo)}
+                                className="w-10 h-10 object-cover rounded border border-white/20 cursor-pointer"
+                              />
+                            ) : '—'}
+                          </td>
+                          <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">{row.unit || '—'}</td>
+                          <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">{line.qtyTotal ? line.qtyTotal : '—'}</td>
+                          <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">{line.rate ? `${line.rate} сом` : '—'}</td>
+                          <td className="px-3 py-2 font-medium text-[#ECECEC] dark:text-dark-text">{line.sum ? `${line.sum.toFixed(2)} сом` : '—'}</td>
                         </tr>
-                      ))}
+                      );
+                    })}
+                    <tr className="bg-[#1e3a5f]/50 border-b border-white/20">
+                      <td colSpan={7} className="px-3 py-2 font-semibold text-[#ECECEC]">ФУРНИТУРА</td>
+                    </tr>
+                    {(orderMaterials.accessories || []).map((row, idx) => {
+                      const line = calcLine(row);
+                      return (
+                        <tr key={`acc-${idx}`} className="border-b border-white/10">
+                          <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">{idx + 1}</td>
+                          <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">{row.name || '—'}</td>
+                          <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">
+                            {row.photo ? (
+                              <img
+                                src={row.photo}
+                                alt=""
+                                onClick={() => setViewingPhoto(row.photo)}
+                                className="w-10 h-10 object-cover rounded border border-white/20 cursor-pointer"
+                              />
+                            ) : '—'}
+                          </td>
+                          <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">{row.unit || '—'}</td>
+                          <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">{line.qtyTotal ? line.qtyTotal : '—'}</td>
+                          <td className="px-3 py-2 text-[#ECECEC] dark:text-dark-text">{line.rate ? `${line.rate} сом` : '—'}</td>
+                          <td className="px-3 py-2 font-medium text-[#ECECEC] dark:text-dark-text">{line.sum ? `${line.sum.toFixed(2)} сом` : '—'}</td>
+                        </tr>
+                      );
+                    })}
+                    <tr className="bg-accent-2/40 border-t border-white/20">
+                      <td colSpan={6} className="px-3 py-2 text-right font-medium text-[#ECECEC]/90">Итого ткань:</td>
+                      <td className="px-3 py-2 font-semibold text-[#ECECEC]">{fabricTotal.toFixed(2)} сом</td>
+                    </tr>
+                    <tr className="bg-accent-2/40 border-t border-white/20">
+                      <td colSpan={6} className="px-3 py-2 text-right font-medium text-[#ECECEC]/90">Итого фурнитура:</td>
+                      <td className="px-3 py-2 font-semibold text-[#ECECEC]">{accessoriesTotal.toFixed(2)} сом</td>
+                    </tr>
+                    <tr className="bg-primary-600/20 border-t border-white/20">
+                      <td colSpan={6} className="px-3 py-2 text-right font-semibold text-primary-300">ИТОГО ЗАКУП:</td>
+                      <td className="px-3 py-2 font-bold text-primary-300">{procurementTotal.toFixed(2)} сом</td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
             )}
             </>
-            )}
           </div>
         </div>
 

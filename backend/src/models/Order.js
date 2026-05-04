@@ -152,6 +152,16 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.DECIMAL(14, 2),
       allowNull: true,
     },
+    /** Строки ткани с формы создания заказа */
+    fabric_data: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+    },
+    /** Строки фурнитуры с формы создания заказа */
+    fittings_data: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+    },
   }, {
     tableName: 'orders',
     timestamps: true,

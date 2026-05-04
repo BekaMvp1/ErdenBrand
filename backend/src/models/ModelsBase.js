@@ -85,7 +85,7 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         defaultValue: { rows: [] },
       },
-      /** Плоский массив [{ name, unit, qty_per_unit }] — синхронизируется с fabric_data */
+      /** Плоский массив [{ name, unit, qty_per_unit, price_per_unit }] — синхронизируется с fabric_data */
       fabric: {
         type: DataTypes.JSONB,
         allowNull: false,
@@ -96,7 +96,7 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         defaultValue: { rows: [] },
       },
-      /** Плоский массив [{ name, unit, qty_per_unit }] — синхронизируется с fittings_data */
+      /** Плоский массив [{ name, unit, qty_per_unit, price_per_unit }] — синхронизируется с fittings_data */
       accessories: {
         type: DataTypes.JSONB,
         allowNull: false,

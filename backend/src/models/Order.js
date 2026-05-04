@@ -128,6 +128,30 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       defaultValue: {},
     },
+    total_fabric_cost: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+    },
+    total_accessories_cost: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+    },
+    total_cutting_cost: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+    },
+    total_sewing_cost: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+    },
+    total_otk_cost: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+    },
+    total_cost: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+    },
   }, {
     tableName: 'orders',
     timestamps: true,

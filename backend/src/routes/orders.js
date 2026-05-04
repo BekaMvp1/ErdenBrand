@@ -63,6 +63,14 @@ function normalizeSizeGridQuantities(val) {
   return out;
 }
 
+/** Числовые поля калькуляции расходов из тела POST */
+function parseOptionalCost(v) {
+  if (v === undefined || v === null || v === '') return null;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n * 100) / 100;
+}
+
 /**
  * Нормализация строки для поиска по ключевым словам
  */
@@ -215,6 +223,12 @@ router.post('/', async (req, res, next) => {
       kit_parts,
       size_grid_numeric,
       size_grid_quantities,
+      total_fabric_cost,
+      total_accessories_cost,
+      total_cutting_cost,
+      total_sewing_cost,
+      total_otk_cost,
+      total_cost,
     } = req.body;
 
     const nameFields = resolveOrderNameFields({ title, tz_code, model_name });
@@ -372,6 +386,12 @@ router.post('/', async (req, res, next) => {
           model_type: (model_type === 'set' ? 'set' : 'regular') || 'regular',
           size_grid_numeric: gridNums.length ? gridNums : null,
           size_grid_quantities: gridQtys,
+          total_fabric_cost: parseOptionalCost(total_fabric_cost),
+          total_accessories_cost: parseOptionalCost(total_accessories_cost),
+          total_cutting_cost: parseOptionalCost(total_cutting_cost),
+          total_sewing_cost: parseOptionalCost(total_sewing_cost),
+          total_otk_cost: parseOptionalCost(total_otk_cost),
+          total_cost: parseOptionalCost(total_cost),
         },
         { transaction: t }
       );

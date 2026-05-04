@@ -20,12 +20,42 @@ const MODEL_REF_TAB_IDS = new Set([
 ]);
 
 const MODEL_REF_SECTIONS = {
-  'fabric-names': { title: 'ткань', endpoint: '/api/model-refs/fabric-names' },
-  'fabric-units': { title: 'единицу измерения', endpoint: '/api/model-refs/fabric-units' },
-  'fittings-names': { title: 'фурнитуру', endpoint: '/api/model-refs/fittings-names' },
-  'cutting-ops': { title: 'операцию раскроя', endpoint: '/api/model-refs/cutting-ops' },
-  'sewing-ops': { title: 'операцию пошива', endpoint: '/api/model-refs/sewing-ops' },
-  'otk-ops': { title: 'операцию ОТК', endpoint: '/api/model-refs/otk-ops' },
+  'fabric-names': {
+    title: 'ткань',
+    endpoint: '/api/model-refs/fabric-names',
+    excelMode: 'name',
+    templateFileName: 'Ткани',
+  },
+  'fabric-units': {
+    title: 'единицу измерения',
+    endpoint: '/api/model-refs/fabric-units',
+    excelMode: 'name',
+    templateFileName: 'Ед_измерения',
+  },
+  'fittings-names': {
+    title: 'фурнитуру',
+    endpoint: '/api/model-refs/fittings-names',
+    excelMode: 'name',
+    templateFileName: 'Фурнитура',
+  },
+  'cutting-ops': {
+    title: 'операцию раскроя',
+    endpoint: '/api/model-refs/cutting-ops',
+    excelMode: 'operations',
+    templateFileName: 'Операции_раскроя',
+  },
+  'sewing-ops': {
+    title: 'операцию пошива',
+    endpoint: '/api/model-refs/sewing-ops',
+    excelMode: 'operations',
+    templateFileName: 'Операции_пошива',
+  },
+  'otk-ops': {
+    title: 'операцию ОТК',
+    endpoint: '/api/model-refs/otk-ops',
+    excelMode: 'operations',
+    templateFileName: 'Операции_ОТК',
+  },
 };
 
 export default function References() {
@@ -636,6 +666,8 @@ export default function References() {
             title={MODEL_REF_SECTIONS[tab].title}
             endpoint={MODEL_REF_SECTIONS[tab].endpoint}
             canMutate={modelRefsCanMutate}
+            excelMode={MODEL_REF_SECTIONS[tab].excelMode}
+            templateFileName={MODEL_REF_SECTIONS[tab].templateFileName}
           />
         </NeonCard>
       ) : (

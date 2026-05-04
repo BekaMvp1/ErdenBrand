@@ -3,7 +3,7 @@
  * Матрица цвет×размер, как было. Добавлен выбор ростовки; общее количество разделено на две части: ростовка + количество.
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useRefreshOnVisible } from '../hooks/useRefreshOnVisible';
@@ -15,6 +15,7 @@ import SizeGrid, { SIZE_GRID_MAP, sizeGridNumericFromSelection } from '../compon
 import CreateOrderModelSections from '../components/CreateOrderModelSections';
 import ModelNameFromBasePicker from '../components/ModelNameFromBasePicker';
 import { applyModelsBaseToCreateOrder } from '../utils/orderModelFromModelsBase';
+import { formatSom, roundCost2, sumFabricOrAccessories, sumOps } from '../utils/createOrderCosts';
 
 const ROSTOVKI = [
   { id: '165', name: '165' },
@@ -50,6 +51,124 @@ function sortSizesForDisplay(a, b) {
     return na - nb;
   }
   return sa.localeCompare(sb, 'ru');
+}
+
+function buildColorQtyMap(colors, selectedSizes, matrix) {
+  const out = {};
+  (colors || []).forEach((color) => {
+    let sum = 0;
+    (selectedSizes || []).forEach((size) => {
+      sum += parseInt(matrix[`${color}|${size}`], 10) || 0;
+    });
+    out[color] = sum;
+  });
+  return out;
+}
+
+/** Строку материала по цветам разворачиваем только если есть осмысленное наименование */
+function materialRowHasName(row) {
+  const raw =
+    row?.baseName != null && String(row.baseName).trim() !== ''
+      ? String(row.baseName)
+      : row?.name != null
+        ? String(row.name)
+        : '';
+  const n = raw.trim();
+  if (!n) return false;
+  if (n === '—' || n === '--') return false;
+  return true;
+}
+
+function syncMaterialRowsByColor(prevRows, colors, colorQtyMap, totalQty) {
+  const rows = Array.isArray(prevRows) ? prevRows : [];
+  const uniqueColors = (colors || []).filter(Boolean);
+
+  const baseMap = new Map();
+  rows.forEach((row, idx) => {
+    if (row?.splitManaged && row?.baseRowId) {
+      if (!baseMap.has(row.baseRowId)) {
+        baseMap.set(row.baseRowId, {
+          ...row,
+          id: row.baseRowId,
+          name: row.baseName || row.name || '',
+          baseName: row.baseName || row.name || '',
+          splitManaged: false,
+          color: null,
+        });
+      }
+      return;
+    }
+    const baseRowId = row?.baseRowId || row?.id || `row-${idx}`;
+    baseMap.set(baseRowId, {
+      ...row,
+      id: baseRowId,
+      baseRowId,
+      baseName: row?.baseName || row?.name || '',
+      splitManaged: false,
+      color: null,
+    });
+  });
+  const baseRows = Array.from(baseMap.values());
+
+  let next = [];
+  if (uniqueColors.length > 1) {
+    const existingByKey = new Map();
+    rows.forEach((r) => {
+      if (r?.splitManaged && r?.baseRowId && r?.color) {
+        existingByKey.set(`${r.baseRowId}::${r.color}`, r);
+      }
+    });
+    baseRows.forEach((base, baseIndex) => {
+      if (!materialRowHasName(base)) {
+        next.push({
+          ...base,
+          id: base.baseRowId || base.id || `base-${baseIndex}`,
+          name: base.baseName || base.name || '',
+          color: null,
+          qtyTotal: '',
+          splitManaged: false,
+        });
+        return;
+      }
+      uniqueColors.forEach((color) => {
+        const key = `${base.baseRowId || base.id || baseIndex}::${color}`;
+        const existed = existingByKey.get(key);
+        const qtyColor = colorQtyMap[color] || 0;
+        const baseName = base.baseName || base.name || '';
+        next.push({
+          ...base,
+          ...existed,
+          id: existed?.id || key,
+          baseRowId: base.baseRowId || base.id || `base-${baseIndex}`,
+          baseName,
+          name: `${baseName} — ${color}`,
+          color,
+          qtyTotal: String(qtyColor),
+          splitManaged: true,
+        });
+      });
+    });
+  } else {
+    const onlyColor = uniqueColors[0] || null;
+    const fallbackQty = Number.isFinite(totalQty) ? totalQty : 0;
+    next = baseRows.map((base, idx) => ({
+      ...base,
+      id: base.baseRowId || base.id || `base-${idx}`,
+      name: base.baseName || base.name || '',
+      color: onlyColor,
+      qtyTotal: String(onlyColor ? colorQtyMap[onlyColor] || 0 : fallbackQty),
+      splitManaged: false,
+    }));
+  }
+
+  const prevJson = JSON.stringify(rows);
+  const nextJson = JSON.stringify(next);
+  return prevJson === nextJson ? rows : next;
+}
+
+function firstModelPhoto(model) {
+  const p = Array.isArray(model?.photos) ? model.photos[0] : null;
+  return typeof p === 'string' && p.trim() !== '' ? p : null;
 }
 
 export default function CreateOrder() {
@@ -150,6 +269,30 @@ export default function CreateOrder() {
   const totalQty = parseInt(form.total_quantity, 10) || 0;
   const matrixSum = Object.values(matrix).reduce((a, b) => a + (parseInt(b, 10) || 0), 0);
   const isValid = totalQty > 0 && selectedSizes.length > 0 && colors.length > 0 && matrixSum === totalQty;
+  const colorQtyMap = useMemo(
+    () => buildColorQtyMap(colors, selectedSizes, matrix),
+    [colors, selectedSizes, matrix],
+  );
+
+  const costTotals = useMemo(() => {
+    const tq = totalQty;
+    const total_fabric_cost = roundCost2(sumFabricOrAccessories(fabric, tq));
+    const total_accessories_cost = roundCost2(sumFabricOrAccessories(accessories, tq));
+    const total_cutting_cost = roundCost2(sumOps(cuttingOps, tq));
+    const total_sewing_cost = roundCost2(sumOps(sewingOps, tq));
+    const total_otk_cost = roundCost2(sumOps(otkOps, tq));
+    const total_cost = roundCost2(
+      total_fabric_cost + total_accessories_cost + total_cutting_cost + total_sewing_cost + total_otk_cost,
+    );
+    return {
+      total_fabric_cost,
+      total_accessories_cost,
+      total_cutting_cost,
+      total_sewing_cost,
+      total_otk_cost,
+      total_cost,
+    };
+  }, [fabric, accessories, cuttingOps, sewingOps, otkOps, totalQty]);
 
   const setCell = (color, size, value) => {
     const key = `${color}|${size}`;
@@ -166,6 +309,11 @@ export default function CreateOrder() {
 
   const getCell = (color, size) => matrix[`${color}|${size}`] || '';
   const { registerRef, handleKeyDown } = useGridNavigation(colors.length, selectedSizes.length);
+
+  useEffect(() => {
+    setFabric((prev) => syncMaterialRowsByColor(prev, colors, colorQtyMap, totalQty));
+    setAccessories((prev) => syncMaterialRowsByColor(prev, colors, colorQtyMap, totalQty));
+  }, [fabric, accessories, colors, colorQtyMap, totalQty]);
 
   const addSize = (sizeName) => {
     const name = String(sizeName || '').trim();
@@ -282,6 +430,12 @@ export default function CreateOrder() {
         size_grid_numeric,
         size_grid_quantities,
         photos: orderPhotos,
+        total_fabric_cost: costTotals.total_fabric_cost,
+        total_accessories_cost: costTotals.total_accessories_cost,
+        total_cutting_cost: costTotals.total_cutting_cost,
+        total_sewing_cost: costTotals.total_sewing_cost,
+        total_otk_cost: costTotals.total_otk_cost,
+        total_cost: costTotals.total_cost,
       });
       if ((form.comment || '').trim() || commentPhotos.length > 0) {
         await api.orders.addComment(order.id, {
@@ -344,7 +498,7 @@ export default function CreateOrder() {
           </div>
           <div className="md:col-start-2 w-full">
             <ModelNameFromBasePicker
-              onModelLoaded={(full) =>
+              onModelLoaded={(full) => {
                 applyModelsBaseToCreateOrder(full, {
                   setForm,
                   setFabric,
@@ -352,8 +506,10 @@ export default function CreateOrder() {
                   setCuttingOps,
                   setSewingOps,
                   setOtkOps,
-                })
-              }
+                });
+                const photo = firstModelPhoto(full);
+                setOrderPhotos(photo ? [photo] : []);
+              }}
             />
           </div>
           <p className="md:col-span-2 mt-1 text-xs text-[#ECECEC]/70">
@@ -769,6 +925,50 @@ export default function CreateOrder() {
           otkOps={otkOps}
           setOtkOps={setOtkOps}
         />
+
+        <div
+          className="mt-6 overflow-hidden"
+          style={{
+            background: '#0f1a0f',
+            border: '1px solid #2d5a2d',
+            borderRadius: 12,
+            padding: 20,
+          }}
+        >
+          <h2 className="text-lg font-semibold text-[#ECECEC] mb-3 flex items-center gap-2">
+            <span aria-hidden>📊</span> Калькуляция расходов
+          </h2>
+          <table className="w-full text-sm text-[#ECECEC] border-collapse">
+            <tbody>
+              {[
+                ['Ткань (итого)', costTotals.total_fabric_cost],
+                ['Фурнитура (итого)', costTotals.total_accessories_cost],
+                ['Раскрой — итого расценок', costTotals.total_cutting_cost],
+                ['Пошив — итого расценок', costTotals.total_sewing_cost],
+                ['ОТК — итого расценок', costTotals.total_otk_cost],
+              ].map(([label, val]) => (
+                <tr key={label} className="border-b border-[#2d5a2d]/50">
+                  <td className="py-2 pr-4 text-left">{label}</td>
+                  <td className="py-2 text-right tabular-nums whitespace-nowrap">{formatSom(val)} сом</td>
+                </tr>
+              ))}
+              <tr>
+                <td
+                  className="pt-4 font-bold"
+                  style={{ color: '#C8FF00', fontSize: 18 }}
+                >
+                  Итого расходов
+                </td>
+                <td
+                  className="pt-4 text-right tabular-nums font-bold whitespace-nowrap"
+                  style={{ color: '#C8FF00', fontSize: 18 }}
+                >
+                  {formatSom(costTotals.total_cost)} сом
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
         <div className="flex gap-3 pt-2 border-t border-white/25 pt-6 mt-6">
           <NeonButton type="submit" disabled={loading || !isValid}>

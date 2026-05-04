@@ -152,20 +152,27 @@ function normalizeOpsJson(raw, kind) {
 
 function defaultFabricFittingsRows() {
   return [
-    { id: 'op-0', name: '', qty: '', unit: '', reserve_qty: '', photo: null },
-    { id: 'op-1', name: '', qty: '', unit: '', reserve_qty: '', photo: null },
-    { id: 'op-2', name: '', qty: '', unit: '', reserve_qty: '', photo: null },
+    { id: 'op-0', name: '', qty: '', unit: '', price_per_unit: '', reserve_qty: '', photo: null },
+    { id: 'op-1', name: '', qty: '', unit: '', price_per_unit: '', reserve_qty: '', photo: null },
+    { id: 'op-2', name: '', qty: '', unit: '', price_per_unit: '', reserve_qty: '', photo: null },
   ];
 }
 
 const FABRIC_PHOTO_MAX = 5000000;
 
 function normalizeFabricFittingsRowJson(r, i) {
+  const ppu =
+    r.price_per_unit != null && String(r.price_per_unit).trim() !== ''
+      ? String(r.price_per_unit).slice(0, 500)
+      : r.price != null && String(r.price).trim() !== ''
+        ? String(r.price).slice(0, 500)
+        : '';
   return {
     id: r.id != null ? String(r.id).slice(0, 80) : `op-${i}`,
     name: r.name != null ? String(r.name).slice(0, 4000) : '',
     qty: r.qty != null ? String(r.qty).slice(0, 500) : '',
     unit: r.unit != null ? String(r.unit).slice(0, 100) : '',
+    price_per_unit: ppu,
     reserve_qty: r.reserve_qty != null ? String(r.reserve_qty).slice(0, 500) : '',
     photo:
       r.photo != null && typeof r.photo === 'string'
@@ -234,10 +241,19 @@ function fabricDataToFlatArray(normalized) {
         const n = Number(String(r.qty).replace(',', '.'));
         q = Number.isFinite(n) ? n : null;
       }
+      let ppu = null;
+      if (r.price_per_unit != null && String(r.price_per_unit).trim() !== '') {
+        const p = Number(String(r.price_per_unit).replace(',', '.'));
+        ppu = Number.isFinite(p) ? p : null;
+      } else if (r.price != null && String(r.price).trim() !== '') {
+        const p = Number(String(r.price).replace(',', '.'));
+        ppu = Number.isFinite(p) ? p : null;
+      }
       out.push({
         name: r.name != null ? String(r.name).slice(0, 4000) : '',
         unit: r.unit != null ? String(r.unit).slice(0, 100) : '',
         qty_per_unit: q,
+        price_per_unit: ppu,
       });
     }
   }

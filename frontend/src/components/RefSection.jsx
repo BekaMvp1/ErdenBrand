@@ -2,14 +2,34 @@
  * Универсальный блок справочника (список + добавление + удаление)
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { useRefreshOnVisible } from '../hooks/useRefreshOnVisible';
+import { cellStr, downloadReferenceTemplate, readExcelDataRows } from '../utils/referenceExcel';
 
-export function RefSection({ title, endpoint, canMutate = true }) {
+const grayBtnStyle = {
+  background: '#4a4a4a',
+  color: '#fff',
+  borderRadius: 8,
+  padding: '8px 16px',
+  border: 'none',
+  cursor: 'pointer',
+  fontWeight: 500,
+};
+
+export function RefSection({
+  title,
+  endpoint,
+  canMutate = true,
+  /** @type {'name' | 'operations' | null} */
+  excelMode = null,
+  templateFileName = 'справочник',
+}) {
   const [items, setItems] = useState([]);
   const [newName, setNewName] = useState('');
   const [loading, setLoading] = useState(true);
+  const [importing, setImporting] = useState(false);
+  const fileInputRef = useRef(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -44,6 +64,47 @@ export function RefSection({ title, endpoint, canMutate = true }) {
     }
   };
 
+  const handleImportExcel = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !canMutate || !excelMode) return;
+    setImporting(true);
+    let count = 0;
+    let failed = 0;
+    try {
+      const dataRows = await readExcelDataRows(file);
+      for (const row of dataRows) {
+        const name = cellStr(row[0]);
+        if (!name) continue;
+        // API model-refs принимает только { name }; колонки B/C в режиме operations в файле — для ориентира, не сохраняются
+        try {
+          await api.post(endpoint, { name });
+          count += 1;
+        } catch (err) {
+          failed += 1;
+          console.error(err);
+        }
+      }
+      await reload();
+      if (count === 0 && failed === 0) {
+        alert('Нет строк с заполненным названием (колонка A).');
+      } else if (failed) {
+        alert(`Загружено ${count} записей. Не удалось: ${failed}.`);
+      } else {
+        alert(`Загружено ${count} записей`);
+      }
+    } catch (err) {
+      alert(err?.message || 'Не удалось прочитать файл');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleTemplate = () => {
+    if (!excelMode) return;
+    downloadReferenceTemplate(excelMode, templateFileName);
+  };
+
   const handleDelete = async (id) => {
     if (!canMutate) return;
     if (!window.confirm('Удалить запись?')) return;
@@ -59,7 +120,15 @@ export function RefSection({ title, endpoint, canMutate = true }) {
   return (
     <div>
       {canMutate ? (
-        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <div
+          style={{
+            display: 'flex',
+            gap: 8,
+            marginBottom: 16,
+            flexWrap: 'wrap',
+            alignItems: 'center',
+          }}
+        >
           <input
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
@@ -72,6 +141,7 @@ export function RefSection({ title, endpoint, canMutate = true }) {
               borderRadius: 6,
               padding: '6px 12px',
               flex: 1,
+              minWidth: 160,
             }}
           />
           <button
@@ -89,6 +159,32 @@ export function RefSection({ title, endpoint, canMutate = true }) {
           >
             + Добавить
           </button>
+          {excelMode ? (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                style={{ display: 'none' }}
+                onChange={(ev) => void handleImportExcel(ev)}
+              />
+              <button
+                type="button"
+                disabled={importing}
+                onClick={() => fileInputRef.current?.click()}
+                style={{
+                  ...grayBtnStyle,
+                  opacity: importing ? 0.6 : 1,
+                  cursor: importing ? 'wait' : 'pointer',
+                }}
+              >
+                📥 Импорт Excel
+              </button>
+              <button type="button" onClick={handleTemplate} style={grayBtnStyle}>
+                📤 Шаблон
+              </button>
+            </>
+          ) : null}
         </div>
       ) : null}
 

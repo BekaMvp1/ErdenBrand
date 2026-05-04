@@ -3,13 +3,14 @@
  */
 
 import { useState } from 'react';
+import { fabricRowSumSom, formatSom, opsRowSumSom } from '../utils/createOrderCosts';
 
 function newRowId() {
   return `row-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
 export function emptyFabricRow() {
-  return { id: newRowId(), name: '', unit: '', qtyPerUnit: '' };
+  return { id: newRowId(), name: '', photo: null, unit: '', qtyPerUnit: '', qtyTotal: '', rateSom: '' };
 }
 
 export function emptyOpsRow() {
@@ -23,11 +24,25 @@ export function flattenFabricLike(modelJson) {
   const rows = [];
   for (const g of groups) {
     for (const r of g.rows || []) {
+      const price =
+        r.price_per_unit != null && r.price_per_unit !== ''
+          ? String(r.price_per_unit)
+          : r.price != null && r.price !== ''
+            ? String(r.price)
+            : r.cost != null && r.cost !== ''
+              ? String(r.cost)
+              : '';
+      const photo =
+        r.photo != null && typeof r.photo === 'string' && String(r.photo).trim() !== ''
+          ? r.photo
+          : null;
       rows.push({
         id: newRowId(),
         name: r.name != null ? String(r.name) : '',
+        photo,
         unit: r.unit != null ? String(r.unit) : '',
         qtyPerUnit: r.qty != null ? String(r.qty) : '',
+        rateSom: price,
       });
     }
   }
@@ -100,12 +115,26 @@ export default function CreateOrderModelSections({
     sewing: true,
     otk: true,
   });
+  const [previewPhoto, setPreviewPhoto] = useState(null);
 
-  const fmtTotal = (qtyPerUnitStr) => {
+  const fmtTotal = (qtyPerUnitStr, qtyTotalStr) => {
     const q = parseFloat(String(qtyPerUnitStr || '').replace(',', '.')) || 0;
-    const t = q * (Number.isFinite(totalQty) ? totalQty : 0);
+    const override = parseFloat(String(qtyTotalStr || '').replace(',', '.')) || 0;
+    const t = q * (override > 0 ? override : Number.isFinite(totalQty) ? totalQty : 0);
     if (!Number.isFinite(t)) return '—';
     return Number.isInteger(t) ? String(t) : t.toFixed(2).replace(/\.?0+$/, '');
+  };
+
+  const fmtFabricSumSom = (qtyStr, rateStr, qtyTotalStr) => {
+    const s = fabricRowSumSom(qtyStr, rateStr, totalQty, qtyTotalStr);
+    if (!s) return '—';
+    return formatSom(s);
+  };
+
+  const fmtOpSumSom = (rateStr) => {
+    const s = opsRowSumSom(rateStr, totalQty);
+    if (!s) return '—';
+    return formatSom(s);
   };
 
   const addFabricRow = (setter) => setter((prev) => [...prev, emptyFabricRow()]);
@@ -125,7 +154,7 @@ export default function CreateOrderModelSections({
 
   const fabricTable = (rows, setRows) => (
     <div className={tableShell}>
-      <table className="w-full border-collapse text-sm min-w-[520px]">
+      <table className="w-full border-collapse text-sm min-w-[820px]">
         <thead>
           <tr style={{ background: '#2a2a2a' }}>
             <th className="px-2 py-2 border border-[#333] text-center w-10" style={thStyle}>
@@ -133,6 +162,12 @@ export default function CreateOrderModelSections({
             </th>
             <th className="px-3 py-2 text-left border border-[#333]" style={thStyle}>
               Наименование
+            </th>
+            <th
+              className="px-3 py-2 text-center border border-[#333] w-[56px]"
+              style={thStyle}
+            >
+              Фото
             </th>
             <th className="px-3 py-2 text-left border border-[#333] w-24" style={thStyle}>
               Ед.изм
@@ -142,6 +177,12 @@ export default function CreateOrderModelSections({
             </th>
             <th className="px-3 py-2 text-left border border-[#333] w-28" style={thStyle}>
               Итого (авто)
+            </th>
+            <th className="px-3 py-2 text-left border border-[#333] w-32" style={thStyle}>
+              Расценка (сом/ед.изм.)
+            </th>
+            <th className="px-3 py-2 text-left border border-[#333] w-28" style={thStyle}>
+              Сумма (авто)
             </th>
             <th className="px-2 py-2 border border-[#333] w-12 text-center" style={thStyle}>
               {' '}
@@ -163,6 +204,43 @@ export default function CreateOrderModelSections({
                   placeholder="—"
                 />
               </td>
+              <td className="px-2 py-2 align-middle border border-[#333] text-center">
+                {row.photo ? (
+                  <button
+                    type="button"
+                    className="inline-block border-0 bg-transparent p-0"
+                    onClick={() => setPreviewPhoto(row.photo)}
+                    title="Увеличить"
+                  >
+                    <img
+                      src={row.photo}
+                      alt=""
+                      style={{
+                        width: 48,
+                        height: 48,
+                        objectFit: 'cover',
+                        borderRadius: 6,
+                        cursor: 'pointer',
+                        border: '1px solid #333',
+                        verticalAlign: 'middle',
+                      }}
+                    />
+                  </button>
+                ) : (
+                  <div
+                    className="inline-flex items-center justify-center mx-auto bg-[#2a2a2a] text-xl leading-none"
+                    style={{
+                      width: 48,
+                      height: 48,
+                      borderRadius: 6,
+                      color: '#666',
+                    }}
+                    aria-hidden
+                  >
+                    🖼️
+                  </div>
+                )}
+              </td>
               <td className="px-2 py-2 align-top border border-[#333]">
                 <input
                   type="text"
@@ -183,7 +261,20 @@ export default function CreateOrderModelSections({
                 />
               </td>
               <td className="px-2 py-2 align-middle border border-[#333] text-[#ECECEC]">
-                {fmtTotal(row.qtyPerUnit)}
+                {fmtTotal(row.qtyPerUnit, row.qtyTotal)}
+              </td>
+              <td className="px-2 py-2 align-top border border-[#333]">
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={row.rateSom}
+                  onChange={(e) => patchFabric(setRows, row.id, 'rateSom', e.target.value)}
+                  className={tdInput}
+                  placeholder="0"
+                />
+              </td>
+              <td className="px-2 py-2 align-middle border border-[#333] text-[#ECECEC]">
+                {fmtFabricSumSom(row.qtyPerUnit, row.rateSom, row.qtyTotal)}
               </td>
               <td className="px-2 py-2 align-middle text-center border border-[#333]">
                 <button
@@ -209,7 +300,7 @@ export default function CreateOrderModelSections({
 
   const opsTable = (rows, setRows) => (
     <div className={tableShell}>
-      <table className="w-full border-collapse text-sm min-w-[520px]">
+      <table className="w-full border-collapse text-sm min-w-[640px]">
         <thead>
           <tr style={{ background: '#2a2a2a' }}>
             <th className="px-2 py-2 border border-[#333] text-center w-10" style={thStyle}>
@@ -223,6 +314,9 @@ export default function CreateOrderModelSections({
             </th>
             <th className="px-3 py-2 text-left border border-[#333] w-32" style={thStyle}>
               Расценка (сом)
+            </th>
+            <th className="px-3 py-2 text-left border border-[#333] w-28" style={thStyle}>
+              Сумма (авто)
             </th>
             <th className="px-2 py-2 border border-[#333] w-12 text-center" style={thStyle}>
               {' '}
@@ -264,6 +358,9 @@ export default function CreateOrderModelSections({
                   placeholder="0"
                 />
               </td>
+              <td className="px-2 py-2 align-middle border border-[#333] text-[#ECECEC]">
+                {fmtOpSumSom(row.rateSom)}
+              </td>
               <td className="px-2 py-2 align-middle text-center border border-[#333]">
                 <button
                   type="button"
@@ -298,19 +395,58 @@ export default function CreateOrderModelSections({
   );
 
   return (
-    <div className="pt-2 mt-2">
-      <h2 className="text-lg font-semibold text-[#ECECEC] dark:text-dark-text mb-4">
-        Ткань, фурнитура и операции
-      </h2>
-      <p className="text-xs text-[#ECECEC]/70 mb-4">
-        Итого по ткани/фурнитуре: кол-во на ед. × общее количество изделий ({totalQty || 0}). Подставить строки
-        можно кнопкой «Загрузить из базы моделей» (под полями ТЗ и названия модели).
-      </p>
-      {block('fabric', 'Ткань', fabricTable(fabric, setFabric))}
-      {block('accessories', 'Фурнитура', fabricTable(accessories, setAccessories))}
-      {block('cutting', 'Раскрой — операции', opsTable(cuttingOps, setCuttingOps))}
-      {block('sewing', 'Пошив — операции', opsTable(sewingOps, setSewingOps))}
-      {block('otk', 'ОТК — операции', opsTable(otkOps, setOtkOps))}
-    </div>
+    <>
+      <div className="pt-2 mt-2">
+        <h2 className="text-lg font-semibold text-[#ECECEC] dark:text-dark-text mb-4">
+          Ткань, фурнитура и операции
+        </h2>
+        <p className="text-xs text-[#ECECEC]/70 mb-4">
+          Итого по ткани/фурнитуре: кол-во на ед. × общее количество изделий ({totalQty || 0}). Сумма в сомах:
+          итого количество × расценка за ед. изм. Операции: сумма строки = расценка × общее количество. Подставить
+          строки можно кнопкой «Загрузить из базы моделей».
+        </p>
+        {block('fabric', 'Ткань', fabricTable(fabric, setFabric))}
+        {block('accessories', 'Фурнитура', fabricTable(accessories, setAccessories))}
+        {block('cutting', 'Раскрой — операции', opsTable(cuttingOps, setCuttingOps))}
+        {block('sewing', 'Пошив — операции', opsTable(sewingOps, setSewingOps))}
+        {block('otk', 'ОТК — операции', opsTable(otkOps, setOtkOps))}
+      </div>
+      {previewPhoto && (
+        <div
+          onClick={() => setPreviewPhoto(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.8)',
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Просмотр фото"
+        >
+          <button
+            type="button"
+            className="absolute right-4 top-4 z-[2001] rounded-lg bg-white/10 px-3 py-1 text-2xl leading-none text-white hover:bg-white/20"
+            onClick={(e) => {
+              e.stopPropagation();
+              setPreviewPhoto(null);
+            }}
+            aria-label="Закрыть"
+          >
+            ×
+          </button>
+          <img
+            src={previewPhoto}
+            alt=""
+            style={{ maxWidth: 500, maxHeight: 500, borderRadius: 12 }}
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
+    </>
   );
 }

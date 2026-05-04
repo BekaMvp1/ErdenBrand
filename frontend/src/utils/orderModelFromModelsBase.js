@@ -8,9 +8,25 @@ function newId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+function fabricRateFromFlatItem(item) {
+  if (item.price_per_unit != null && item.price_per_unit !== '') return String(item.price_per_unit);
+  if (item.price != null && item.price !== '') return String(item.price);
+  return '';
+}
+
+/** Фото из плоского массива API или из строк fabric_data / fittings_data (base64 / data URL). */
+function mergeFabricRowPhoto(flatItem, fromGroupsRow) {
+  const a = flatItem?.photo;
+  if (typeof a === 'string' && a.trim() !== '') return a;
+  const b = fromGroupsRow?.photo;
+  if (typeof b === 'string' && b.trim() !== '') return b;
+  return null;
+}
+
 export function fabricRowsFromModel(model) {
+  const fromGroups = flattenFabricLike(model.fabric_data);
   if (Array.isArray(model.fabric) && model.fabric.length > 0) {
-    return model.fabric.map((item) => ({
+    return model.fabric.map((item, i) => ({
       id: newId('fab'),
       name: item.name != null ? String(item.name) : '',
       unit: item.unit != null ? String(item.unit) : '',
@@ -20,14 +36,17 @@ export function fabricRowsFromModel(model) {
           : item.qty != null && item.qty !== ''
             ? String(item.qty)
             : '',
+      rateSom: fabricRateFromFlatItem(item),
+      photo: item?.photo || mergeFabricRowPhoto(item, fromGroups[i]) || null,
     }));
   }
-  return flattenFabricLike(model.fabric_data);
+  return fromGroups;
 }
 
 export function accessoriesRowsFromModel(model) {
+  const fromGroups = flattenFabricLike(model.fittings_data);
   if (Array.isArray(model.accessories) && model.accessories.length > 0) {
-    return model.accessories.map((item) => ({
+    return model.accessories.map((item, i) => ({
       id: newId('acc'),
       name: item.name != null ? String(item.name) : '',
       unit: item.unit != null ? String(item.unit) : '',
@@ -37,9 +56,11 @@ export function accessoriesRowsFromModel(model) {
           : item.qty != null && item.qty !== ''
             ? String(item.qty)
             : '',
+      rateSom: fabricRateFromFlatItem(item),
+      photo: item?.photo || mergeFabricRowPhoto(item, fromGroups[i]) || null,
     }));
   }
-  return flattenFabricLike(model.fittings_data);
+  return fromGroups;
 }
 
 export function opsRowsFromModel(model, groupsKey, flatKey) {

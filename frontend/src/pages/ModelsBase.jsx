@@ -830,18 +830,25 @@ function opsKindFromFieldKey(fieldKey) {
 
 function defaultFabricFittingsRows() {
   return [
-    { id: 'op-0', name: '', qty: '', unit: '', reserve_qty: '', photo: null },
-    { id: 'op-1', name: '', qty: '', unit: '', reserve_qty: '', photo: null },
-    { id: 'op-2', name: '', qty: '', unit: '', reserve_qty: '', photo: null },
+    { id: 'op-0', name: '', qty: '', unit: '', price_per_unit: '', reserve_qty: '', photo: null },
+    { id: 'op-1', name: '', qty: '', unit: '', price_per_unit: '', reserve_qty: '', photo: null },
+    { id: 'op-2', name: '', qty: '', unit: '', price_per_unit: '', reserve_qty: '', photo: null },
   ];
 }
 
 function normalizeFabricFittingsRow(r, i) {
+  const ppu =
+    r.price_per_unit != null && String(r.price_per_unit).trim() !== ''
+      ? String(r.price_per_unit)
+      : r.price != null && String(r.price).trim() !== ''
+        ? String(r.price)
+        : '';
   return {
     id: r.id != null ? String(r.id) : `op-${i}`,
     name: r.name != null ? String(r.name) : '',
     qty: r.qty != null ? String(r.qty) : '',
     unit: r.unit != null ? String(r.unit) : '',
+    price_per_unit: ppu,
     reserve_qty: r.reserve_qty != null ? String(r.reserve_qty) : '',
     photo: r.photo != null && typeof r.photo === 'string' ? r.photo : null,
   };
@@ -893,7 +900,7 @@ function normalizeFabricFittingsData(raw, kind) {
 }
 
 function emptyFabricFittingsRow(id) {
-  return { id, name: '', qty: '', unit: '', reserve_qty: '', photo: null };
+  return { id, name: '', qty: '', unit: '', price_per_unit: '', reserve_qty: '', photo: null };
 }
 
 function normalizeDraft(row) {
@@ -1540,7 +1547,7 @@ export default function ModelsBase() {
   const renderFabricFittingsTab = (fieldKey) => {
     const kind = fieldKey === 'fabric_data' ? 'fabric' : 'fittings';
     const data = normalizeFabricFittingsData(editing[fieldKey], kind);
-    const colCount = readOnly ? 6 : 7;
+    const colCount = readOnly ? 7 : 8;
     return (
       <div className="space-y-3">
         {!readOnly && (
@@ -1553,7 +1560,7 @@ export default function ModelsBase() {
           </Button>
         )}
         <div className="overflow-x-auto rounded border border-[#2a2a2a]">
-          <table className="w-full border-collapse text-sm min-w-[800px]">
+          <table className="w-full border-collapse text-sm min-w-[960px]">
             <tbody>
               {(data.groups || []).map((group, groupIndex) => (
                 <Fragment key={String(group.id ?? groupIndex)}>
@@ -1628,15 +1635,21 @@ export default function ModelsBase() {
                     </th>
                     <th
                       className="px-3 py-2 text-left border border-[#333]"
-                      style={{ color: '#aaa', fontSize: 12, width: 80 }}
+                      style={{ color: '#aaa', fontSize: 12, width: 100 }}
                     >
-                      Кол-во
+                      Ед.изм
                     </th>
                     <th
                       className="px-3 py-2 text-left border border-[#333]"
-                      style={{ color: '#aaa', fontSize: 12, width: 100 }}
+                      style={{ color: '#aaa', fontSize: 12, width: 88 }}
                     >
-                      Ед. измер
+                      Кол-во на ед.
+                    </th>
+                    <th
+                      className="px-3 py-2 text-left border border-[#333]"
+                      style={{ color: '#aaa', fontSize: 12, width: 120 }}
+                    >
+                      Расценка (сом/ед.изм.)
                     </th>
                     <th
                       className="px-3 py-2 text-left border border-[#333]"
@@ -1713,25 +1726,6 @@ export default function ModelsBase() {
                             />
                           )}
                         </td>
-                        <td className="px-2 py-2 align-top border border-[#333]" style={{ width: 80 }}>
-                          <Input
-                            readOnly={readOnly}
-                            value={row.qty}
-                            onChange={(e) =>
-                              updateFabricFittingsCell(
-                                fieldKey,
-                                kind,
-                                groupIndex,
-                                rowIndex,
-                                'qty',
-                                e.target.value,
-                              )
-                            }
-                            placeholder="—"
-                            variant="borderless"
-                            style={modelOpsInputStyle}
-                          />
-                        </td>
                         <td className="px-2 py-2 align-top border border-[#333]" style={{ width: 100 }}>
                           {kind === 'fabric' ? (
                             <SelectWithAdd
@@ -1777,6 +1771,44 @@ export default function ModelsBase() {
                               }}
                             />
                           )}
+                        </td>
+                        <td className="px-2 py-2 align-top border border-[#333]" style={{ width: 88 }}>
+                          <Input
+                            readOnly={readOnly}
+                            value={row.qty}
+                            onChange={(e) =>
+                              updateFabricFittingsCell(
+                                fieldKey,
+                                kind,
+                                groupIndex,
+                                rowIndex,
+                                'qty',
+                                e.target.value,
+                              )
+                            }
+                            placeholder="—"
+                            variant="borderless"
+                            style={modelOpsInputStyle}
+                          />
+                        </td>
+                        <td className="px-2 py-2 align-top border border-[#333]" style={{ width: 120 }}>
+                          <Input
+                            readOnly={readOnly}
+                            value={row.price_per_unit}
+                            onChange={(e) =>
+                              updateFabricFittingsCell(
+                                fieldKey,
+                                kind,
+                                groupIndex,
+                                rowIndex,
+                                'price_per_unit',
+                                e.target.value,
+                              )
+                            }
+                            placeholder="0"
+                            variant="borderless"
+                            style={modelOpsInputStyle}
+                          />
                         </td>
                         <td className="px-2 py-2 align-top border border-[#333]" style={{ width: 110 }}>
                           <Input

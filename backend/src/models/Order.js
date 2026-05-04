@@ -156,11 +156,13 @@ module.exports = (sequelize, DataTypes) => {
     fabric_data: {
       type: DataTypes.JSONB,
       allowNull: true,
+      defaultValue: [],
     },
     /** Строки фурнитуры с формы создания заказа */
     fittings_data: {
       type: DataTypes.JSONB,
       allowNull: true,
+      defaultValue: [],
     },
   }, {
     tableName: 'orders',

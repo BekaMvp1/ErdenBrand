@@ -88,7 +88,7 @@ function normalizeOrderMaterialsPayload(input) {
 
   const normalizeRow = (r) => {
     if (!r || typeof r !== 'object') return null;
-    const name = String(r.name ?? r.title ?? '').trim().slice(0, 500);
+    const name = String(r.name ?? r.baseName ?? r.title ?? '').trim().slice(0, 500);
     const unit = String(r.unit ?? '').trim().slice(0, 80);
     const qtyPu =
       r.qty_per_unit != null && r.qty_per_unit !== ''
@@ -437,8 +437,24 @@ router.post('/', async (req, res, next) => {
     }
     const gridQtys = normalizeSizeGridQuantities(size_grid_quantities);
 
+    console.log(
+      'SAVING ORDER fabric_data (req.body):',
+      typeof fabric_data === 'undefined'
+        ? '[undefined]'
+        : JSON.stringify(fabric_data).slice(0, 80000)
+    );
+    console.log(
+      'SAVING ORDER fittings_data (req.body):',
+      typeof fittings_data === 'undefined'
+        ? '[undefined]'
+        : JSON.stringify(fittings_data).slice(0, 80000)
+    );
+
     const fabricDataNorm = normalizeOrderMaterialsPayload(fabric_data);
     const fittingsDataNorm = normalizeOrderMaterialsPayload(fittings_data);
+
+    console.log('SAVING ORDER fabric_data (normalized):', JSON.stringify(fabricDataNorm)?.slice(0, 80000));
+    console.log('SAVING ORDER fittings_data (normalized):', JSON.stringify(fittingsDataNorm)?.slice(0, 80000));
 
     const t = await db.sequelize.transaction();
     let order;

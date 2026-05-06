@@ -1663,13 +1663,21 @@ export default function PlanningDraft({ viewMode = 'month' }) {
       setSewingFactsByOrderId({});
       return;
     }
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
     try {
-      const data = await api.sewing.factsByOrder(orderIdsQuery);
+      const data = await api.get(
+        `/api/sewing/facts-by-order${orderIdsQuery ? `?order_ids=${encodeURIComponent(orderIdsQuery)}` : ''}`,
+        { signal: controller.signal }
+      );
       if (data && typeof data === 'object') setSewingFactsByOrderId(data);
       else setSewingFactsByOrderId({});
     } catch (e) {
+      if (e?.name === 'AbortError') return;
       console.warn('PlanningDraft sewing facts:', e);
       setSewingFactsByOrderId({});
+    } finally {
+      clearTimeout(timeoutId);
     }
   }, [orderIdsQuery]);
 
@@ -3149,172 +3157,14 @@ export default function PlanningDraft({ viewMode = 'month' }) {
             </div>
           </div>
         </div>
-      ) : (
-        <div className="border-b px-3 py-3" style={{ background: 'var(--bg2)', borderColor: 'var(--border)' }}>
-          <div className="mb-3 flex items-center justify-center gap-3">
-            <button
-              type="button"
-              className="rounded border px-2 py-1 text-sm"
-              style={{ borderColor: 'var(--border)', color: 'var(--text)', background: 'var(--surface)' }}
-              onClick={() => setMonthKey((prev) => addMonths(prev, -1))}
-            >
-              ‹
-            </button>
-            <span className="rounded px-2 py-0.5 text-xs font-bold text-white" style={{ background: 'var(--accent)' }}>
-              МЕСЯЦ
-            </span>
-            <span className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
-              {(MONTH_NAMES_RU[(Number(effectiveMonthKey.slice(5, 7)) || 1) - 1] || '')} {effectiveMonthKey.slice(0, 4)}
-            </span>
-            <button
-              type="button"
-              className="rounded border px-2 py-1 text-sm"
-              style={{ borderColor: 'var(--border)', color: 'var(--text)', background: 'var(--surface)' }}
-              onClick={() => setMonthKey((prev) => addMonths(prev, 1))}
-            >
-              ›
-            </button>
-          </div>
-          <div className="planning-draft-scroll overflow-x-auto overflow-y-auto" style={{ maxHeight: 'calc(100vh - 240px)' }}>
-            <table className="w-full border-collapse text-xs">
-              <thead>
-                <tr>
-                  <th className="border px-2 py-2 sticky left-0 z-[14]" style={{ width: 45, minWidth: 45, top: 0, borderColor: 'var(--border)', background: 'var(--bg2)' }}>№</th>
-                  <th className="border px-2 py-2 sticky z-[14]" style={{ width: 55, minWidth: 55, left: 45, top: 0, borderColor: 'var(--border)', background: 'var(--bg2)' }}>Фото</th>
-                  <th className="border px-2 py-2 text-left sticky z-[14]" style={{ width: 200, minWidth: 200, maxWidth: 200, left: 100, top: 0, borderColor: 'var(--border)', background: 'var(--bg2)' }}>Наименование ГП</th>
-                  <th className="border px-2 py-2 text-left sticky z-[14]" style={{ width: 120, minWidth: 120, left: 300, top: 0, borderColor: 'var(--border)', background: 'var(--bg2)' }}>Заказчик</th>
-                  <th className="border px-2 py-2 sticky z-[14]" style={{ width: 110, minWidth: 110, left: 420, top: 0, borderColor: 'var(--border)', background: 'var(--bg2)' }}>Кол-во</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(() => {
-                  const { mainWsId, aksyId, outsourceId } = resolveWorkshopIds(workshops);
-                  const workshopById = new Map((workshops || []).map((w) => [String(w.id), w]));
-                  const getOrderWorkshopName = (o) =>
-                    String(o?.Workshop?.name || o?.workshop_name || o?.sewing_workshop || '').toLowerCase();
-                  const getOrderWorkshopId = (o) => String(o?.workshop_id ?? o?.Workshop?.id ?? '');
-                  const getOrderFloorId = (o) => Number(o?.building_floor_id ?? o?.floor_id ?? o?.BuildingFloor?.id ?? 0);
-
-                  const matchesSection = (o, sec, wsId) => {
-                    const workshopName = getOrderWorkshopName(o);
-                    const workshopId = getOrderWorkshopId(o);
-                    const floorId = getOrderFloorId(o);
-
-                    if (sec.id === 'floor_4' || sec.id === 'floor_3' || sec.id === 'floor_2') {
-                      if (floorId === Number(sec.building_floor_id)) return true;
-                      if (wsId && workshopId && workshopId === String(wsId) && floorId === Number(sec.building_floor_id)) {
-                        return true;
-                      }
-                      // fallback по title цеха/этажа, если floor_id не сохранён
-                      if (workshopName.includes('этаж')) {
-                        if (sec.id === 'floor_4' && workshopName.includes('4')) return true;
-                        if (sec.id === 'floor_3' && workshopName.includes('3')) return true;
-                        if (sec.id === 'floor_2' && workshopName.includes('2')) return true;
-                      }
-                      return false;
-                    }
-
-                    if (sec.id === 'aksy') {
-                      if (workshopName.includes('аксы')) return true;
-                      return wsId ? workshopId === String(wsId) : false;
-                    }
-
-                    // outsource
-                    if (workshopName.includes('аутсорс')) return true;
-                    return wsId ? workshopId === String(wsId) : false;
-                  };
-
-                  const groups = PD_PRODUCTION_SECTIONS.map((sec) => {
-                    let wsId = null;
-                    let items = [];
-                    if (sec.id === 'floor_4' || sec.id === 'floor_3' || sec.id === 'floor_2') {
-                      wsId = mainWsId;
-                      items = monthOrders.filter((o) => matchesSection(o, sec, wsId));
-                    } else if (sec.id === 'aksy') {
-                      wsId = aksyId;
-                      items = monthOrders.filter((o) => matchesSection(o, sec, wsId));
-                    } else {
-                      wsId = outsourceId;
-                      items = monthOrders.filter((o) => matchesSection(o, sec, wsId));
-                    }
-                    items.sort((a, b) => orderDisplayName(a).localeCompare(orderDisplayName(b), 'ru'));
-                    console.log('WORKSHOP:', sec.label, 'ORDERS:', items.length);
-                    const capSrc = workshopById.get(String(wsId));
-                    const capacity = Number(capSrc?.capacity ?? capSrc?.monthly_capacity ?? capSrc?.plan_capacity ?? 0) || 0;
-                    const loadingQty = items.reduce((s, o) => s + getOrderedQty(o), 0);
-                    return { key: sec.id, label: sec.label, workshop_id: wsId, items, capacity, loadingQty, freeQty: capacity - loadingQty };
-                  });
-
-                  return groups.map((group) => (
-                    <React.Fragment key={`grp-${group.key}`}>
-                      <tr>
-                        <td colSpan={5} className="border px-3 py-2 text-sm font-semibold" style={{ borderColor: 'var(--border)', color: '#c8ff00', background: 'rgba(200,255,0,0.04)' }}>
-                          {group.label}
-                        </td>
-                      </tr>
-                      <tr>
-                        <td colSpan={5} className="border px-3 py-1 text-[11px] uppercase tracking-wide" style={{ borderColor: 'var(--border)', color: 'var(--muted)', background: 'var(--bg)' }}>
-                          Заказчики
-                        </td>
-                      </tr>
-                      {group.items.map((o, idx) => {
-                        const ordered = getOrderedQty(o);
-                        const cut = getCutFactForOrder(o, cuttingFactsByOrderId) || 0;
-                        const sewn = getSewFactForOrder(o, sewingFactsByOrderId) || 0;
-                        const rest = Math.max(0, ordered - sewn);
-                        const photoSrc = orderModelImageSrc(o);
-                        return (
-                          <tr key={`row-${group.key}-${o.id}`} className="pd-data-row">
-                            <td className="border px-2 py-1.5 text-center sticky left-0 z-[6]" style={{ width: 45, minWidth: 45, borderColor: 'var(--border)', background: 'var(--bg)' }}>
-                              <span className="inline-block min-w-[22px] rounded bg-[#b91c1c] px-1.5 py-0.5 text-[10px] font-semibold text-white">{idx + 1}</span>
-                            </td>
-                            <td className="border px-2 py-1.5 text-center sticky z-[6]" style={{ width: 55, minWidth: 55, left: 45, borderColor: 'var(--border)', background: 'var(--bg)' }}>
-                              {photoSrc ? <img src={photoSrc} alt="" className="mx-auto h-10 w-10 rounded object-cover" /> : <div className="flex justify-center"><CameraPlaceholder compact /></div>}
-                            </td>
-                            <td className="border px-2 py-1.5 sticky z-[6]" style={{ width: 200, minWidth: 200, maxWidth: 200, left: 100, borderColor: 'var(--border)', background: 'var(--bg)' }}>
-                              <div className="flex items-center gap-2">
-                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160, display: 'block' }}>{orderDisplayName(o)}</span>
-                                <button type="button" className="rounded border px-1 text-[10px]" style={{ borderColor: 'var(--border)', color: 'var(--muted)' }}>▼</button>
-                              </div>
-                            </td>
-                            <td className="border px-2 py-1.5 sticky z-[6]" style={{ width: 120, minWidth: 120, left: 300, borderColor: 'var(--border)', background: 'var(--bg)' }}>{orderClientLabel(o)}</td>
-                            <td className="border px-2 py-1.5 sticky z-[6]" style={{ width: 110, minWidth: 110, left: 420, borderColor: 'var(--border)', background: 'var(--bg)' }}>
-                              <div style={{ fontSize: 11, lineHeight: '14px' }}>
-                                <div><span style={{ color: 'var(--muted)' }}>Зак:</span> {ordered}</div>
-                                <div><span style={{ color: 'var(--muted)' }}>Рас:</span> {cut}</div>
-                                <div><span style={{ color: 'var(--muted)' }}>Пош:</span> {sewn}</div>
-                                <div><span style={{ color: 'var(--muted)' }}>Ост:</span> {rest}</div>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                      <tr>
-                        <td colSpan={5} className="border px-2 py-2" style={{ borderColor: 'var(--border)' }}>
-                          <Link to={`/orders/create?workshop_id=${group.workshop_id ?? ''}`} className="inline-flex rounded border px-2 py-1 text-xs" style={{ borderColor: 'var(--border)', color: '#c8ff00' }}>
-                            + Добавить заказ
-                          </Link>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td colSpan={5} className="border px-2 py-2 text-[12px]" style={{ borderColor: 'var(--border)', color: 'var(--muted)', background: 'var(--bg)' }}>
-                          Мощность: {group.capacity} | Загрузка: {group.loadingQty} | Свободно: {group.freeQty}
-                        </td>
-                      </tr>
-                    </React.Fragment>
-                  ));
-                })()}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+      ) : null}
+      
 
       {/* Table */}
       <div
         ref={tableScrollRef}
         className="planning-draft-scroll overflow-x-auto overflow-y-auto"
-        style={{ maxHeight: 'calc(100vh - 195px)', display: isWeek ? 'block' : 'none' }}
+        style={{ maxHeight: 'calc(100vh - 195px)', display: 'block' }}
       >
         <table
           className="pd-draft-table border-collapse"

@@ -69,7 +69,8 @@ export default function App() {
                 <Route path="production-dashboard" element={<ProductionDashboard />} />
                 <Route path="orders/create" element={<CreateOrder />} />
                 <Route path="orders/:id" element={<OrderDetails />} />
-                <Route path="planning" element={<PlanningMonth />} />
+                <Route path="planning" element={<PlanningDraft />} />
+                <Route path="planning/month" element={<PlanningMonth />} />
                 <Route path="planning-draft" element={<Navigate to="/planning" replace />} />
                 <Route path="planning-week" element={<PlanningDraft viewMode="week" />} />
                 <Route path="procurement" element={<StageTabsLayout title="Закуп" />}>

@@ -4687,66 +4687,41 @@ export default function PlanningDraft({ viewMode = 'month' }) {
                     </tr>
                   );
                 } else {
-                  const monthSumPlanTd = (wi) => ({
-                    minWidth: weekColWidths.plan,
-                    width: weekColWidths.plan,
+                  const monthWeekCellTd = (wi) => ({
+                    minWidth: weekColWidths.plan + weekColWidths.fact,
+                    width: weekColWidths.plan + weekColWidths.fact,
                     borderColor: 'var(--border)',
                     borderLeft: wi === 0 ? '2px solid #e3b341' : PD_BR_WEEK_GAP,
+                    borderRight: PD_BR_WEEK_GAP,
                     background: 'rgba(227,179,65,0.1)',
                   });
-                  const monthSumFactTd = (wi) => ({
-                    minWidth: weekColWidths.fact,
-                    width: weekColWidths.fact,
-                    borderColor: 'var(--border)',
-                    borderRight: PD_BR_WEEK_GAP,
-                    background: 'rgba(0,0,0,0.22)',
-                  });
+                  const weekIndices = displayWeeks.map((_, wi) => wi);
                   out.push(
                     <tr key={`${sec.key}-cap`} className="summary-row">
                       <td colSpan={5} className="border text-left uppercase tracking-wide">
                         МОЩНОСТЬ
                       </td>
-                      {[0, 1, 2, 3].map((wi) => (
-                        <React.Fragment key={`cap-m-${wi}`}>
-                          <td className="border p-0" style={monthSumPlanTd(wi)}>
-                            <div
-                              className="grid grid-cols-2 gap-px p-0.5"
-                              style={{ minHeight: 36 }}
-                            >
-                              {sumFields.map((field) => (
-                                <input
-                                  key={`${wi}-${field}`}
-                                  type="text"
-                                  inputMode="decimal"
-                                  className="w-full min-w-0 border-0 bg-transparent px-0.5 py-1 text-center text-[10px] outline-none"
-                                  style={{ color: 'var(--text)' }}
-                                  value={capGrid[wi]?.[field] ?? ''}
-                                  onChange={(e) =>
-                                    setSectionTree((t) =>
-                                      setSectionCapacityCellInTree(
-                                        t,
-                                        sec.key,
-                                        wi,
-                                        field,
-                                        e.target.value
-                                      )
-                                    )
-                                  }
-                                />
-                              ))}
-                            </div>
+                      {weekIndices.map((wi) => (
+                        <td key={`cap-m-${wi}`} className="border p-0" style={monthWeekCellTd(wi)} colSpan={2}>
+                          <div className="p-0.5" style={{ minHeight: 36 }}>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              className="w-full min-w-0 border-0 bg-transparent px-0.5 py-1 text-center text-[11px] outline-none"
+                              style={{ color: 'var(--text)' }}
+                              value={capGrid[wi]?.pp ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setSectionTree((t) => {
+                                  let next = t;
+                                  sumFields.forEach((field) => {
+                                    next = setSectionCapacityCellInTree(next, sec.key, wi, field, v);
+                                  });
+                                  return next;
+                                });
+                              }}
+                            />
                           </td>
-                          <td
-                            className="border px-0.5 text-center text-[10px] uppercase tracking-wide"
-                            style={{
-                              ...monthSumFactTd(wi),
-                              color: 'var(--muted)',
-                              verticalAlign: 'middle',
-                            }}
-                          >
-                            —
-                          </td>
-                        </React.Fragment>
                       ))}
                       <td className="border" style={{ minWidth: weekColWidths.plan }} />
                       <td className="border" style={{ minWidth: weekColWidths.fact }} />
@@ -4757,35 +4732,17 @@ export default function PlanningDraft({ viewMode = 'month' }) {
                       <td colSpan={5} className="border text-left uppercase tracking-wide">
                         ЗАГРУЗКА
                       </td>
-                      {[0, 1, 2, 3].map((wi) => {
+                      {weekIndices.map((wi) => {
                         const loadPlan = sectionWeekPlanLoadSum(sec, wi);
-                        const loadFact = sectionMonthManualFactSumForWeek(
-                          sec,
-                          orders,
-                          monthFactsByOrderId,
-                          wi
-                        );
                         return (
-                          <React.Fragment key={`load-m-${wi}`}>
-                            <td
-                              className="border px-0.5 text-center text-xs font-bold"
-                              style={{
-                                ...monthSumPlanTd(wi),
-                                color: 'var(--accent)',
-                              }}
-                            >
-                              {loadPlan === 0 ? '' : loadPlan}
-                            </td>
-                            <td
-                              className="border px-0.5 text-center text-xs font-bold"
-                              style={{
-                                ...monthSumFactTd(wi),
-                                color: '#4caf50',
-                              }}
-                            >
-                              {loadFact === 0 ? '' : loadFact}
-                            </td>
-                          </React.Fragment>
+                          <td
+                            key={`load-m-${wi}`}
+                            className="border px-0.5 text-center text-xs font-bold"
+                            style={{ ...monthWeekCellTd(wi), color: 'var(--accent)' }}
+                            colSpan={2}
+                          >
+                            {loadPlan === 0 ? '' : loadPlan}
+                          </td>
                         );
                       })}
                       <td
@@ -4802,18 +4759,7 @@ export default function PlanningDraft({ viewMode = 'month' }) {
                         className="border px-0.5 text-center text-xs font-bold"
                         style={{ color: '#4caf50', minWidth: weekColWidths.fact }}
                       >
-                        {(() => {
-                          let s = 0;
-                          for (let wi = 0; wi < 4; wi++) {
-                            s += sectionMonthManualFactSumForWeek(
-                              sec,
-                              orders,
-                              monthFactsByOrderId,
-                              wi
-                            );
-                          }
-                          return s === 0 ? '' : s;
-                        })()}
+                        {''}
                       </td>
                     </tr>
                   );
@@ -4822,41 +4768,22 @@ export default function PlanningDraft({ viewMode = 'month' }) {
                       <td colSpan={5} className="border text-left uppercase tracking-wide">
                         СВОБОДНО
                       </td>
-                      {[0, 1, 2, 3].map((wi) => {
-                        const capPlan =
-                          parseCellNum(capGrid[wi]?.pp) + parseCellNum(capGrid[wi]?.mp);
-                        const capFact =
-                          parseCellNum(capGrid[wi]?.pf) + parseCellNum(capGrid[wi]?.mf);
+                      {weekIndices.map((wi) => {
+                        const capPlan = parseCellNum(capGrid[wi]?.pp);
                         const loadPlan = sectionWeekPlanLoadSum(sec, wi);
-                        const loadMan = sectionMonthManualFactSumForWeek(
-                          sec,
-                          orders,
-                          monthFactsByOrderId,
-                          wi
-                        );
                         const freePlan = capPlan - loadPlan;
-                        const freeFact = capFact - loadMan;
                         return (
-                          <React.Fragment key={`free-m-${wi}`}>
-                            <td
-                              className="border px-0.5 text-center text-xs font-bold"
-                              style={{
-                                ...monthSumPlanTd(wi),
-                                color: freePlan < 0 ? '#f87171' : 'var(--text)',
-                              }}
-                            >
-                              {capPlan === 0 && loadPlan === 0 ? '' : freePlan}
-                            </td>
-                            <td
-                              className="border px-0.5 text-center text-xs font-bold"
-                              style={{
-                                ...monthSumFactTd(wi),
-                                color: freeFact < 0 ? '#f87171' : 'var(--text)',
-                              }}
-                            >
-                              {capFact === 0 && loadMan === 0 ? '' : freeFact}
-                            </td>
-                          </React.Fragment>
+                          <td
+                            key={`free-m-${wi}`}
+                            className="border px-0.5 text-center text-xs font-bold"
+                            style={{
+                              ...monthWeekCellTd(wi),
+                              color: freePlan < 0 ? '#f87171' : freePlan > 0 ? '#22c55e' : 'var(--text)',
+                            }}
+                            colSpan={2}
+                          >
+                            {capPlan === 0 && loadPlan === 0 ? '' : freePlan}
+                          </td>
                         );
                       })}
                       <td
@@ -4865,9 +4792,8 @@ export default function PlanningDraft({ viewMode = 'month' }) {
                       >
                         {(() => {
                           let s = 0;
-                          for (let wi = 0; wi < 4; wi++) {
-                            const capPlan =
-                              parseCellNum(capGrid[wi]?.pp) + parseCellNum(capGrid[wi]?.mp);
+                          for (let wi = 0; wi < weekIndices.length; wi++) {
+                            const capPlan = parseCellNum(capGrid[wi]?.pp);
                             const loadPlan = sectionWeekPlanLoadSum(sec, wi);
                             s += capPlan - loadPlan;
                           }
@@ -4878,21 +4804,7 @@ export default function PlanningDraft({ viewMode = 'month' }) {
                         className="border px-0.5 text-center text-xs font-bold"
                         style={{ minWidth: weekColWidths.fact, color: 'var(--text)' }}
                       >
-                        {(() => {
-                          let s = 0;
-                          for (let wi = 0; wi < 4; wi++) {
-                            const capFact =
-                              parseCellNum(capGrid[wi]?.pf) + parseCellNum(capGrid[wi]?.mf);
-                            const loadMan = sectionMonthManualFactSumForWeek(
-                              sec,
-                              orders,
-                              monthFactsByOrderId,
-                              wi
-                            );
-                            s += capFact - loadMan;
-                          }
-                          return s === 0 ? '' : s;
-                        })()}
+                        {''}
                       </td>
                     </tr>
                   );

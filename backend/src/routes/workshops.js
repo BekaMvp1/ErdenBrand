@@ -21,7 +21,7 @@ router.get('/', async (req, res, next) => {
     const workshops = await db.Workshop.findAll({
       where,
       order: [['id']],
-      attributes: ['id', 'name', 'floors_count', 'is_active'],
+      attributes: ['id', 'name', 'floors_count', 'capacity', 'is_active'],
     });
     res.json(workshops);
   } catch (err) {
@@ -78,6 +78,32 @@ router.delete('/:id', async (req, res, next) => {
     }
     await workshop.update({ is_active: false });
     res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PUT /api/workshops/:id/capacity
+ * Обновить месячную мощность цеха (admin/manager)
+ */
+router.put('/:id/capacity', async (req, res, next) => {
+  try {
+    if (!['admin', 'manager'].includes(req.user?.role)) {
+      return res.status(403).json({ error: 'Недостаточно прав' });
+    }
+
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Неверный ID' });
+
+    const parsed = Number(req.body?.capacity);
+    const capacity = Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : 0;
+
+    const workshop = await db.Workshop.findByPk(id);
+    if (!workshop) return res.status(404).json({ error: 'Цех не найден' });
+
+    await workshop.update({ capacity });
+    res.json({ ok: true, id, capacity });
   } catch (err) {
     next(err);
   }

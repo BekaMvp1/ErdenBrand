@@ -14,6 +14,7 @@ import Dashboard from "./pages/Dashboard";
 import CreateOrder from "./pages/CreateOrder";
 import OrderDetails from "./pages/OrderDetails";
 import PlanningDraft from "./pages/PlanningDraft";
+import PlanningMonth from "./pages/PlanningMonth";
 import Sewing from "./pages/Sewing";
 import Procurement from "./pages/Procurement";
 import Dekatirovka from "./pages/Dekatirovka";
@@ -40,6 +41,9 @@ import ModelsBase from "./pages/ModelsBase";
 import OrdersBoard from "./pages/OrdersBoard";
 import ProductionDashboard from "./pages/ProductionDashboard";
 import ServerStatus from "./components/ServerStatus";
+import StageTabsLayout from "./components/stage/StageTabsLayout";
+import StageReportPlaceholder from "./pages/stage/StageReportPlaceholder";
+import StageExpensesPlaceholder from "./pages/stage/StageExpensesPlaceholder";
 
 export default function App() {
   return (
@@ -65,22 +69,48 @@ export default function App() {
                 <Route path="production-dashboard" element={<ProductionDashboard />} />
                 <Route path="orders/create" element={<CreateOrder />} />
                 <Route path="orders/:id" element={<OrderDetails />} />
-                <Route path="planning" element={<PlanningDraft />} />
+                <Route path="planning" element={<PlanningMonth />} />
                 <Route path="planning-draft" element={<Navigate to="/planning" replace />} />
                 <Route path="planning-week" element={<PlanningDraft viewMode="week" />} />
-                <Route path="procurement" element={<Procurement />} />
+                <Route path="procurement" element={<StageTabsLayout title="Закуп" />}>
+                  <Route index element={<Navigate to="plan" replace />} />
+                  <Route path="plan" element={<Procurement />} />
+                  <Route path="report" element={<StageReportPlaceholder />} />
+                  <Route path="expenses" element={<StageExpensesPlaceholder />} />
+                </Route>
+                <Route path="purchase" element={<StageTabsLayout title="Закуп" />}>
+                  <Route index element={<Navigate to="plan" replace />} />
+                  <Route path="plan" element={<Procurement />} />
+                  <Route path="report" element={<StageReportPlaceholder />} />
+                  <Route path="expenses" element={<StageExpensesPlaceholder />} />
+                </Route>
                 <Route path="production-chain" element={<ProductionChain />} />
-                <Route path="sewing" element={<Sewing />} />
+                <Route path="sewing" element={<StageTabsLayout title="Пошив" />}>
+                  <Route index element={<Navigate to="plan" replace />} />
+                  <Route path="plan" element={<Sewing />} />
+                  <Route path="report" element={<StageReportPlaceholder />} />
+                  <Route path="expenses" element={<StageExpensesPlaceholder />} />
+                </Route>
                 <Route path="floor-tasks" element={<Navigate to="/sewing" replace />} />
                 <Route path="print/procurement/:id" element={<PrintProcurement />} />
                 <Route path="print/planning/:month" element={<PrintPlanning />} />
                 <Route path="print/cutting/:id" element={<PrintCutting />} />
                 <Route path="print/sewing/:id" element={<PrintSewing />} />
                 <Route path="print/qc/:id" element={<PrintQc />} />
-                <Route path="cutting" element={<Cutting />} />
+                <Route path="cutting" element={<StageTabsLayout title="Раскройный" />}>
+                  <Route index element={<Navigate to="plan" replace />} />
+                  <Route path="plan" element={<Cutting />} />
+                  <Route path="report" element={<StageReportPlaceholder />} />
+                  <Route path="expenses" element={<StageExpensesPlaceholder />} />
+                </Route>
                 <Route path="cutting/:type" element={<Cutting />} />
                 <Route path="warehouse" element={<Warehouse />} />
-                <Route path="otk" element={<Otk />} />
+                <Route path="otk" element={<StageTabsLayout title="ОТК" />}>
+                  <Route index element={<Navigate to="plan" replace />} />
+                  <Route path="plan" element={<Otk />} />
+                  <Route path="report" element={<StageReportPlaceholder />} />
+                  <Route path="expenses" element={<StageExpensesPlaceholder />} />
+                </Route>
                 <Route path="/dekatirovka" element={<Dekatirovka />} />
                 <Route path="/proverka" element={<Proverka />} />
                 <Route path="qc" element={<Qc />} />

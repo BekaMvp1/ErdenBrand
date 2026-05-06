@@ -136,12 +136,31 @@ export default function Layout() {
     try { return sessionStorage.getItem(SIDEBAR_LOCK_EXPANDED_KEY) === '1'; } catch { return false; }
   });
 
-  const DEKAT_MENU_PATHS = ['/dekatirovka', '/proverka'];
-  const isDekatSectionActive = DEKAT_MENU_PATHS.includes(location.pathname);
-  const [dekatGroupOpen, setDekatGroupOpen] = useState(isDekatSectionActive);
+  const GROUP_PATHS = {
+    procurement: ['/procurement', '/procurement/plan', '/procurement/report', '/procurement/expenses', '/purchase', '/purchase/plan', '/purchase/report', '/purchase/expenses'],
+    cutting: ['/cutting', '/cutting/plan', '/cutting/report', '/cutting/expenses'],
+    sewing: ['/sewing', '/sewing/plan', '/sewing/report', '/sewing/expenses'],
+    otk: ['/otk', '/otk/plan', '/otk/report', '/otk/expenses'],
+    dekat: ['/dekatirovka', '/proverka'],
+  };
+  const [groupOpen, setGroupOpen] = useState({
+    procurement: false,
+    cutting: false,
+    sewing: false,
+    otk: false,
+    dekat: false,
+  });
   useEffect(() => {
-    if (isDekatSectionActive) setDekatGroupOpen(true);
-  }, [isDekatSectionActive]);
+    setGroupOpen((prev) => {
+      const next = { ...prev };
+      Object.entries(GROUP_PATHS).forEach(([id, paths]) => {
+        if (paths.some((p) => location.pathname === p || location.pathname.startsWith(`${p}/`))) {
+          next[id] = true;
+        }
+      });
+      return next;
+    });
+  }, [location.pathname]);
 
   // При фиксации: сохраняем текущее состояние (открыт/закрыт). Если открыт — фиксируем открытым.
   const toggleSidebarLock = () => {
@@ -274,7 +293,17 @@ export default function Layout() {
   const canSeeProduction = ['admin', 'manager', 'technologist'].includes(userRole);
   const productionBlockItems = canSeeProduction
     ? [
-        { type: 'item', to: '/procurement', label: 'Закуп', icon: 'procurement' },
+        {
+          type: 'group',
+          id: 'procurement',
+          label: 'Закуп',
+          icon: 'procurement',
+          children: [
+            { to: '/procurement/plan', label: 'План' },
+            { to: '/procurement/report', label: 'Внесение отчета' },
+            { to: '/procurement/expenses', label: 'Планирование расходов' },
+          ],
+        },
         {
           type: 'group',
           id: 'dekat',
@@ -285,9 +314,39 @@ export default function Layout() {
             { to: '/proverka', label: 'Проверка' },
           ],
         },
-        { type: 'item', to: '/cutting', label: 'Раскрой', icon: 'cutting' },
-        { type: 'item', to: '/sewing', label: 'Пошив', icon: 'floorTasks' },
-        { type: 'item', to: '/otk', label: 'ОТК', icon: 'qc' },
+        {
+          type: 'group',
+          id: 'cutting',
+          label: 'Раскройный',
+          icon: 'cutting',
+          children: [
+            { to: '/cutting/plan', label: 'План' },
+            { to: '/cutting/report', label: 'Внесение отчета' },
+            { to: '/cutting/expenses', label: 'Планирование расходов' },
+          ],
+        },
+        {
+          type: 'group',
+          id: 'sewing',
+          label: 'Пошив',
+          icon: 'floorTasks',
+          children: [
+            { to: '/sewing/plan', label: 'План' },
+            { to: '/sewing/report', label: 'Внесение отчета' },
+            { to: '/sewing/expenses', label: 'Планирование расходов' },
+          ],
+        },
+        {
+          type: 'group',
+          id: 'otk',
+          label: 'ОТК',
+          icon: 'qc',
+          children: [
+            { to: '/otk/plan', label: 'План' },
+            { to: '/otk/report', label: 'Внесение отчета' },
+            { to: '/otk/expenses', label: 'Планирование расходов' },
+          ],
+        },
         { type: 'item', to: '/shipping-plan', label: 'План отгрузки', icon: 'shipments' },
         { type: 'item', to: '/warehouse', label: 'Склад', icon: 'warehouse' },
         { type: 'item', to: '/shipments', label: 'Отгрузка', icon: 'shipments' },
@@ -386,12 +445,13 @@ export default function Layout() {
               return <div key={`spacer-${idx}`} className="py-2" aria-hidden="true" />;
             }
             if (entry.type === 'group') {
-              const isChildActive = entry.children.some((c) => location.pathname === c.to);
+              const isChildActive = entry.children.some((c) => location.pathname === c.to || location.pathname.startsWith(`${c.to}/`));
+              const isOpen = !!groupOpen[entry.id];
               return (
                 <div key={entry.id} className="space-y-0.5">
                   <button
                     type="button"
-                    onClick={() => setDekatGroupOpen((o) => !o)}
+                    onClick={() => setGroupOpen((prev) => ({ ...prev, [entry.id]: !isOpen }))}
                     className={`flex w-full items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors duration-300 ease-out min-w-0 text-left ${
                       isChildActive
                         ? 'bg-white/10 text-neon-text'
@@ -405,7 +465,7 @@ export default function Layout() {
                       {entry.label}
                     </span>
                     <svg
-                      className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${dekatGroupOpen ? 'rotate-180' : ''} ${mobileMenuOpen ? 'inline' : 'max-lg:hidden'} ${sidebarExpanded ? 'lg:inline' : 'lg:hidden'}`}
+                      className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''} ${mobileMenuOpen ? 'inline' : 'max-lg:hidden'} ${sidebarExpanded ? 'lg:inline' : 'lg:hidden'}`}
                       fill="none"
                       stroke="currentColor"
                       viewBox="0 0 24 24"
@@ -414,7 +474,7 @@ export default function Layout() {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                     </svg>
                   </button>
-                  {dekatGroupOpen && (
+                  {isOpen && (
                     <div className="ml-2 border-l border-white/10 pl-1 space-y-0.5">
                       {entry.children.map((child) => (
                         <NavLink

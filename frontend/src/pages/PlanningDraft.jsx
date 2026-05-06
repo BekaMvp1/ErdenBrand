@@ -4,6 +4,7 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { useOrderProgress } from '../context/OrderProgressContext';
@@ -226,6 +227,57 @@ function formatWeekPeriodTitle(mondayIso) {
   }
   return `${d1} ${M1} ${y1} — ${d2} ${M2} ${y2}`;
 }
+
+const WEEKDAY_LABELS_FULL = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+function getWeekDatesFull(weekStart) {
+  const dates = [];
+  const d = new Date(`${weekStart}T12:00:00`);
+  for (let i = 0; i < 7; i++) {
+    dates.push(d.toISOString().slice(0, 10));
+    d.setDate(d.getDate() + 1);
+  }
+  return dates;
+}
+
+function monthKeyFromIso(isoDate) {
+  if (typeof isoDate !== 'string') return '';
+  const s = isoDate.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return '';
+  return s.slice(0, 7);
+}
+
+function orderPlanDateIso(order) {
+  const candidates = [
+    order?.deadline,
+    order?.plan_date,
+    order?.planned_date,
+    order?.planned_deadline,
+    order?.date_plan,
+  ];
+  for (const raw of candidates) {
+    if (typeof raw !== 'string') continue;
+    const s = raw.slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  }
+  return '';
+}
+
+function formatDeadlineLabelRu(isoDate) {
+  if (!isoDate) return '—';
+  const dt = new Date(`${isoDate}T12:00:00`);
+  if (Number.isNaN(dt.getTime())) return isoDate;
+  return dt.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+}
+
+const MONTH_STAGE_COLUMNS = [
+  { key: 'prep', label: 'ПОДГОТОВКА' },
+  { key: 'main', label: 'ОСНОВНОЕ' },
+  { key: 'cut', label: 'РАСКРОЙ' },
+  { key: 'sew', label: 'ПОШИВ' },
+  { key: 'otk', label: 'ОТК' },
+  { key: 'stock', label: 'СКЛАД' },
+];
 
 function buildDayCellsMapFromApi(rows) {
   const m = {};
@@ -1541,7 +1593,9 @@ export default function PlanningDraft({ viewMode = 'month' }) {
           api.workshops.list(true),
         ]);
         if (cancelled) return;
-        setOrders(normalizeList(o));
+        const normalizedOrders = normalizeList(o);
+        console.log('ORDERS LOADED:', normalizedOrders.length, normalizedOrders[0]);
+        setOrders(normalizedOrders);
         setClients(normalizeList(c));
         setWorkshops(Array.isArray(w) ? w : normalizeList(w));
       } catch (e) {
@@ -1981,6 +2035,173 @@ export default function PlanningDraft({ viewMode = 'month' }) {
       return name.includes(q) || art.includes(q) || cl.includes(q);
     });
   }, [orders, ddSearch]);
+
+  const scheduleOrders = useMemo(() => {
+    return (orders || []).filter((o) => {
+      const orderWorkshopId = o?.workshop_id ?? o?.Workshop?.id ?? null;
+      const orderFloorId = o?.building_floor_id ?? o?.floor_id ?? o?.Floor?.id ?? null;
+      if (workshopId && String(orderWorkshopId) !== String(workshopId)) return false;
+      if (floorId && String(orderFloorId) !== String(floorId)) return false;
+      if (customerFilterClientId != null && Number(o?.client_id) !== Number(customerFilterClientId)) {
+        return false;
+      }
+      if (debouncedSearch) {
+        const hay = [
+          orderDisplayName(o),
+          o?.article || '',
+          o?.tz_code || '',
+          orderClientLabel(o),
+        ]
+          .join(' ')
+          .toLowerCase();
+        if (!hay.includes(debouncedSearch)) return false;
+      }
+      return true;
+    });
+  }, [orders, workshopId, floorId, customerFilterClientId, debouncedSearch]);
+
+  const weeklyScheduleDates = useMemo(
+    () => (isWeek ? getWeekDatesFull(weekStartMonday) : []),
+    [isWeek, weekStartMonday]
+  );
+
+  const weeklyScheduleByDate = useMemo(() => {
+    const map = {};
+    for (const d of weeklyScheduleDates) map[d] = [];
+    for (const order of scheduleOrders) {
+      const dateIso = orderPlanDateIso(order);
+      if (!dateIso || !map[dateIso]) continue;
+      map[dateIso].push(order);
+    }
+    for (const d of weeklyScheduleDates) {
+      map[d].sort((a, b) => orderDisplayName(a).localeCompare(orderDisplayName(b), 'ru'));
+    }
+    return map;
+  }, [scheduleOrders, weeklyScheduleDates]);
+
+  const monthCalendarData = useMemo(() => {
+    if (isWeek) return { leading: 0, dates: [] };
+    const [y, m] = effectiveMonthKey.split('-').map(Number);
+    if (!Number.isFinite(y) || !Number.isFinite(m)) return { leading: 0, dates: [] };
+    const first = new Date(y, m - 1, 1);
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const mondayBased = (first.getDay() + 6) % 7;
+    const dates = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      dates.push(`${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+    }
+    return { leading: mondayBased, dates };
+  }, [effectiveMonthKey, isWeek]);
+
+  const monthScheduleByDate = useMemo(() => {
+    const map = {};
+    for (const d of monthCalendarData.dates) map[d] = [];
+    for (const order of scheduleOrders) {
+      const dateIso = orderPlanDateIso(order);
+      if (!dateIso) continue;
+      if (monthKeyFromIso(dateIso) !== effectiveMonthKey) continue;
+      if (!map[dateIso]) continue;
+      map[dateIso].push(order);
+    }
+    for (const d of monthCalendarData.dates) {
+      map[d].sort((a, b) => orderDisplayName(a).localeCompare(orderDisplayName(b), 'ru'));
+    }
+    return map;
+  }, [scheduleOrders, monthCalendarData, effectiveMonthKey]);
+
+  const monthPlanStorageKey = useMemo(
+    () => `erden_month_stage_cells:${effectiveMonthKey}`,
+    [effectiveMonthKey]
+  );
+  const [monthStageCells, setMonthStageCells] = useState({});
+  const [savingMonthCell, setSavingMonthCell] = useState(null);
+
+  useEffect(() => {
+    if (isWeek) return;
+    try {
+      const raw = localStorage.getItem(monthPlanStorageKey);
+      const parsed = raw ? JSON.parse(raw) : {};
+      setMonthStageCells(parsed && typeof parsed === 'object' ? parsed : {});
+    } catch (_) {
+      setMonthStageCells({});
+    }
+  }, [isWeek, monthPlanStorageKey]);
+
+  useEffect(() => {
+    if (isWeek) return;
+    try {
+      localStorage.setItem(monthPlanStorageKey, JSON.stringify(monthStageCells || {}));
+    } catch (_) {
+      // ignore localStorage errors
+    }
+  }, [isWeek, monthPlanStorageKey, monthStageCells]);
+
+  const monthOrders = useMemo(() => {
+    if (isWeek) return [];
+    return scheduleOrders.filter((o) => {
+      const dateIso = orderPlanDateIso(o);
+      const monthByDate = monthKeyFromIso(dateIso);
+      const monthByPlan = String(o?.planned_month || '').slice(0, 7);
+      // Мягкий фильтр: если в заказе нет явного месяца/даты плана — не скрываем заказ.
+      if (!monthByDate && !monthByPlan) return true;
+      return monthByDate === effectiveMonthKey || monthByPlan === effectiveMonthKey;
+    });
+  }, [isWeek, scheduleOrders, effectiveMonthKey]);
+
+  const monthGroups = useMemo(() => {
+    const map = new Map();
+    monthOrders.forEach((o) => {
+      const wkId = String(o?.workshop_id ?? o?.Workshop?.id ?? 'none');
+      if (!map.has(wkId)) {
+        map.set(wkId, {
+          key: wkId,
+          workshop_id: o?.workshop_id ?? o?.Workshop?.id ?? null,
+          label: o?.Workshop?.name || (wkId === 'none' ? 'Без цеха' : `Цех #${wkId}`),
+          items: [],
+        });
+      }
+      map.get(wkId).items.push(o);
+    });
+    const list = Array.from(map.values());
+    list.forEach((g) => {
+      g.items.sort((a, b) => orderDisplayName(a).localeCompare(orderDisplayName(b), 'ru'));
+    });
+    list.sort((a, b) => String(a.label).localeCompare(String(b.label), 'ru'));
+    return list;
+  }, [monthOrders]);
+
+  const getMonthStageCellValue = useCallback(
+    (orderId, dayIso, stageKey, kind) =>
+      monthStageCells?.[String(orderId)]?.[`${dayIso}_${stageKey}_${kind}`] || '',
+    [monthStageCells]
+  );
+
+  const setMonthStageCell = useCallback((orderId, dayIso, stageKey, kind, value) => {
+    setMonthStageCells((prev) => ({
+      ...prev,
+      [String(orderId)]: {
+        ...(prev[String(orderId)] || {}),
+        [`${dayIso}_${stageKey}_${kind}`]: value || '',
+      },
+    }));
+  }, []);
+
+  const saveMonthStageCell = useCallback(
+    async (order, dayIso, stageKey, kind, value) => {
+      if (!order?.id) return;
+      setSavingMonthCell(`${order.id}:${dayIso}:${stageKey}:${kind}`);
+      try {
+        // Backend route остается прежним; фиксируем принадлежность к выбранному месяцу.
+        await api.orders.update(order.id, { planned_month: effectiveMonthKey });
+        setMonthStageCell(order.id, dayIso, stageKey, kind, value);
+      } catch (e) {
+        alert(e?.message || 'Ошибка сохранения даты');
+      } finally {
+        setSavingMonthCell(null);
+      }
+    },
+    [effectiveMonthKey, setMonthStageCell]
+  );
 
   const rowMatchesFilter = useCallback(
     (r) => {
@@ -2803,20 +3024,6 @@ export default function PlanningDraft({ viewMode = 'month' }) {
             ⛓ Сформировать план цеха
           </button>
         ) : null}
-        {import.meta.env.DEV && canBuildProductionChain ? (
-          <button
-            type="button"
-            className="rounded border px-3 py-1.5 text-[11px] font-medium"
-            style={{
-              background: 'rgba(239,68,68,0.12)',
-              borderColor: 'rgba(239,68,68,0.45)',
-              color: '#f87171',
-            }}
-            onClick={createDevTestProductionChain}
-          >
-            [DEV] Тест цепочки
-          </button>
-        ) : null}
         {draftSaveHint ? (
           <span className="text-xs" style={{ color: 'var(--muted)' }}>
             {draftSaveHint}
@@ -2845,57 +3052,269 @@ export default function PlanningDraft({ viewMode = 'month' }) {
         </button>
       </div>
 
-      {/* Фильтр по заказчику — над таблицей */}
-      <div
-        className="flex flex-wrap items-center gap-2 border-b px-3 py-2.5"
-        style={{ background: 'var(--bg)', borderColor: 'var(--border)' }}
-      >
-        <span className="shrink-0 text-xs font-medium" style={{ color: 'var(--muted)' }}>
-          Заказчик:
-        </span>
-        <div className="flex min-w-0 flex-1 flex-wrap gap-2">
-          <button
-            type="button"
-            className="rounded-full border px-3 py-1 text-xs font-medium transition-colors"
-            style={{
-              borderColor: customerFilterClientId == null ? 'var(--accent)' : 'var(--border)',
-              background:
-                customerFilterClientId == null ? 'rgba(107,175,0,0.18)' : 'var(--surface)',
-              color: customerFilterClientId == null ? '#a8d870' : 'var(--text)',
-              boxShadow:
-                customerFilterClientId == null ? '0 0 0 1px rgba(107,175,0,0.35)' : 'none',
-            }}
-            onClick={() => setCustomerFilterClientId(null)}
-          >
-            Все
-          </button>
-          {clientsSorted.map((c) => {
-            const active = Number(customerFilterClientId) === Number(c.id);
-            return (
-              <button
-                key={c.id}
-                type="button"
-                className="rounded-full border px-3 py-1 text-xs font-medium transition-colors"
-                style={{
-                  borderColor: active ? 'var(--accent)' : 'var(--border)',
-                  background: active ? 'rgba(107,175,0,0.18)' : 'var(--surface)',
-                  color: active ? '#a8d870' : 'var(--text)',
-                  boxShadow: active ? '0 0 0 1px rgba(107,175,0,0.35)' : 'none',
-                }}
-                onClick={() => setCustomerFilterClientId(c.id)}
-              >
-                {c.name || c.title || `Клиент ${c.id}`}
-              </button>
-            );
-          })}
+      {isWeek ? (
+        <div
+          className="flex flex-wrap items-center gap-2 border-b px-3 py-2.5"
+          style={{ background: 'var(--bg)', borderColor: 'var(--border)' }}
+        >
+          <span className="shrink-0 text-xs font-medium" style={{ color: 'var(--muted)' }}>
+            Заказчик:
+          </span>
+          <div className="flex min-w-0 flex-1 flex-wrap gap-2">
+            <button
+              type="button"
+              className="rounded-full border px-3 py-1 text-xs font-medium transition-colors"
+              style={{
+                borderColor: customerFilterClientId == null ? 'var(--accent)' : 'var(--border)',
+                background:
+                  customerFilterClientId == null ? 'rgba(107,175,0,0.18)' : 'var(--surface)',
+                color: customerFilterClientId == null ? '#a8d870' : 'var(--text)',
+                boxShadow:
+                  customerFilterClientId == null ? '0 0 0 1px rgba(107,175,0,0.35)' : 'none',
+              }}
+              onClick={() => setCustomerFilterClientId(null)}
+            >
+              Все
+            </button>
+            {clientsSorted.map((c) => {
+              const active = Number(customerFilterClientId) === Number(c.id);
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  className="rounded-full border px-3 py-1 text-xs font-medium transition-colors"
+                  style={{
+                    borderColor: active ? 'var(--accent)' : 'var(--border)',
+                    background: active ? 'rgba(107,175,0,0.18)' : 'var(--surface)',
+                    color: active ? '#a8d870' : 'var(--text)',
+                    boxShadow: active ? '0 0 0 1px rgba(107,175,0,0.35)' : 'none',
+                  }}
+                  onClick={() => setCustomerFilterClientId(c.id)}
+                >
+                  {c.name || c.title || `Клиент ${c.id}`}
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      ) : null}
+
+      {isWeek ? (
+        <div className="border-b px-3 py-3" style={{ background: 'var(--bg2)', borderColor: 'var(--border)' }}>
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>
+            Заказы в плане (неделя)
+          </div>
+          <div className="planning-draft-scroll overflow-x-auto">
+            <div className="grid min-w-[980px] grid-cols-7 gap-2">
+              {weeklyScheduleDates.map((iso, idx) => {
+                const items = weeklyScheduleByDate[iso] || [];
+                const dayNum = String(iso).slice(8, 10);
+                return (
+                  <div
+                    key={iso}
+                    className="rounded border p-2"
+                    style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
+                  >
+                    <div className="mb-2 flex items-center justify-between text-xs font-semibold" style={{ color: 'var(--muted)' }}>
+                      <span>{WEEKDAY_LABELS_FULL[idx]}</span>
+                      <span>{dayNum}</span>
+                    </div>
+                    <div className="space-y-2">
+                      {items.length === 0 ? (
+                        <div className="rounded border px-2 py-2 text-[11px]" style={{ borderColor: 'var(--border)', color: 'var(--muted)' }}>
+                          Нет заказов
+                        </div>
+                      ) : (
+                        items.map((o) => (
+                          <div
+                            key={`wk-${iso}-${o.id}`}
+                            className="rounded border px-2 py-2 text-xs"
+                            style={{ background: 'var(--bg)', borderColor: 'var(--border)', color: 'var(--text)' }}
+                          >
+                            <div className="font-semibold">{o.tz_code || o.article || `#${o.id}`}</div>
+                            <div className="truncate">{o.model_name || orderDisplayName(o)}</div>
+                            <div style={{ color: 'var(--muted)' }}>Клиент: {orderClientLabel(o)}</div>
+                            <div style={{ color: 'var(--muted)' }}>Кол-во: {getOrderedQty(o)} шт</div>
+                            <div style={{ color: 'var(--muted)' }}>Дедлайн: {formatDeadlineLabelRu(orderPlanDateIso(o))}</div>
+                            <div style={{ color: 'var(--muted)' }}>
+                              Цех: {o.Workshop?.name || (o.workshop_id ? `Цех #${o.workshop_id}` : '—')}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="border-b px-3 py-3" style={{ background: 'var(--bg2)', borderColor: 'var(--border)' }}>
+          <div className="mb-3 flex items-center justify-center gap-3">
+            <button
+              type="button"
+              className="rounded border px-2 py-1 text-sm"
+              style={{ borderColor: 'var(--border)', color: 'var(--text)', background: 'var(--surface)' }}
+              onClick={() => setMonthKey((prev) => addMonths(prev, -1))}
+            >
+              ‹
+            </button>
+            <span className="rounded px-2 py-0.5 text-xs font-bold text-white" style={{ background: 'var(--accent)' }}>
+              МЕСЯЦ
+            </span>
+            <span className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
+              {(MONTH_NAMES_RU[(Number(effectiveMonthKey.slice(5, 7)) || 1) - 1] || '')} {effectiveMonthKey.slice(0, 4)}
+            </span>
+            <button
+              type="button"
+              className="rounded border px-2 py-1 text-sm"
+              style={{ borderColor: 'var(--border)', color: 'var(--text)', background: 'var(--surface)' }}
+              onClick={() => setMonthKey((prev) => addMonths(prev, 1))}
+            >
+              ›
+            </button>
+          </div>
+          <div className="planning-draft-scroll overflow-x-auto overflow-y-auto" style={{ maxHeight: 'calc(100vh - 240px)' }}>
+            <table className="w-full border-collapse text-xs">
+              <thead>
+                <tr>
+                  <th className="border px-2 py-2 sticky left-0 z-[14]" style={{ width: 45, minWidth: 45, top: 0, borderColor: 'var(--border)', background: 'var(--bg2)' }}>№</th>
+                  <th className="border px-2 py-2 sticky z-[14]" style={{ width: 55, minWidth: 55, left: 45, top: 0, borderColor: 'var(--border)', background: 'var(--bg2)' }}>Фото</th>
+                  <th className="border px-2 py-2 text-left sticky z-[14]" style={{ width: 200, minWidth: 200, maxWidth: 200, left: 100, top: 0, borderColor: 'var(--border)', background: 'var(--bg2)' }}>Наименование ГП</th>
+                  <th className="border px-2 py-2 text-left sticky z-[14]" style={{ width: 120, minWidth: 120, left: 300, top: 0, borderColor: 'var(--border)', background: 'var(--bg2)' }}>Заказчик</th>
+                  <th className="border px-2 py-2 sticky z-[14]" style={{ width: 110, minWidth: 110, left: 420, top: 0, borderColor: 'var(--border)', background: 'var(--bg2)' }}>Кол-во</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(() => {
+                  const { mainWsId, aksyId, outsourceId } = resolveWorkshopIds(workshops);
+                  const workshopById = new Map((workshops || []).map((w) => [String(w.id), w]));
+                  const getOrderWorkshopName = (o) =>
+                    String(o?.Workshop?.name || o?.workshop_name || o?.sewing_workshop || '').toLowerCase();
+                  const getOrderWorkshopId = (o) => String(o?.workshop_id ?? o?.Workshop?.id ?? '');
+                  const getOrderFloorId = (o) => Number(o?.building_floor_id ?? o?.floor_id ?? o?.BuildingFloor?.id ?? 0);
+
+                  const matchesSection = (o, sec, wsId) => {
+                    const workshopName = getOrderWorkshopName(o);
+                    const workshopId = getOrderWorkshopId(o);
+                    const floorId = getOrderFloorId(o);
+
+                    if (sec.id === 'floor_4' || sec.id === 'floor_3' || sec.id === 'floor_2') {
+                      if (floorId === Number(sec.building_floor_id)) return true;
+                      if (wsId && workshopId && workshopId === String(wsId) && floorId === Number(sec.building_floor_id)) {
+                        return true;
+                      }
+                      // fallback по title цеха/этажа, если floor_id не сохранён
+                      if (workshopName.includes('этаж')) {
+                        if (sec.id === 'floor_4' && workshopName.includes('4')) return true;
+                        if (sec.id === 'floor_3' && workshopName.includes('3')) return true;
+                        if (sec.id === 'floor_2' && workshopName.includes('2')) return true;
+                      }
+                      return false;
+                    }
+
+                    if (sec.id === 'aksy') {
+                      if (workshopName.includes('аксы')) return true;
+                      return wsId ? workshopId === String(wsId) : false;
+                    }
+
+                    // outsource
+                    if (workshopName.includes('аутсорс')) return true;
+                    return wsId ? workshopId === String(wsId) : false;
+                  };
+
+                  const groups = PD_PRODUCTION_SECTIONS.map((sec) => {
+                    let wsId = null;
+                    let items = [];
+                    if (sec.id === 'floor_4' || sec.id === 'floor_3' || sec.id === 'floor_2') {
+                      wsId = mainWsId;
+                      items = monthOrders.filter((o) => matchesSection(o, sec, wsId));
+                    } else if (sec.id === 'aksy') {
+                      wsId = aksyId;
+                      items = monthOrders.filter((o) => matchesSection(o, sec, wsId));
+                    } else {
+                      wsId = outsourceId;
+                      items = monthOrders.filter((o) => matchesSection(o, sec, wsId));
+                    }
+                    items.sort((a, b) => orderDisplayName(a).localeCompare(orderDisplayName(b), 'ru'));
+                    console.log('WORKSHOP:', sec.label, 'ORDERS:', items.length);
+                    const capSrc = workshopById.get(String(wsId));
+                    const capacity = Number(capSrc?.capacity ?? capSrc?.monthly_capacity ?? capSrc?.plan_capacity ?? 0) || 0;
+                    const loadingQty = items.reduce((s, o) => s + getOrderedQty(o), 0);
+                    return { key: sec.id, label: sec.label, workshop_id: wsId, items, capacity, loadingQty, freeQty: capacity - loadingQty };
+                  });
+
+                  return groups.map((group) => (
+                    <React.Fragment key={`grp-${group.key}`}>
+                      <tr>
+                        <td colSpan={5} className="border px-3 py-2 text-sm font-semibold" style={{ borderColor: 'var(--border)', color: '#c8ff00', background: 'rgba(200,255,0,0.04)' }}>
+                          {group.label}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td colSpan={5} className="border px-3 py-1 text-[11px] uppercase tracking-wide" style={{ borderColor: 'var(--border)', color: 'var(--muted)', background: 'var(--bg)' }}>
+                          Заказчики
+                        </td>
+                      </tr>
+                      {group.items.map((o, idx) => {
+                        const ordered = getOrderedQty(o);
+                        const cut = getCutFactForOrder(o, cuttingFactsByOrderId) || 0;
+                        const sewn = getSewFactForOrder(o, sewingFactsByOrderId) || 0;
+                        const rest = Math.max(0, ordered - sewn);
+                        const photoSrc = orderModelImageSrc(o);
+                        return (
+                          <tr key={`row-${group.key}-${o.id}`} className="pd-data-row">
+                            <td className="border px-2 py-1.5 text-center sticky left-0 z-[6]" style={{ width: 45, minWidth: 45, borderColor: 'var(--border)', background: 'var(--bg)' }}>
+                              <span className="inline-block min-w-[22px] rounded bg-[#b91c1c] px-1.5 py-0.5 text-[10px] font-semibold text-white">{idx + 1}</span>
+                            </td>
+                            <td className="border px-2 py-1.5 text-center sticky z-[6]" style={{ width: 55, minWidth: 55, left: 45, borderColor: 'var(--border)', background: 'var(--bg)' }}>
+                              {photoSrc ? <img src={photoSrc} alt="" className="mx-auto h-10 w-10 rounded object-cover" /> : <div className="flex justify-center"><CameraPlaceholder compact /></div>}
+                            </td>
+                            <td className="border px-2 py-1.5 sticky z-[6]" style={{ width: 200, minWidth: 200, maxWidth: 200, left: 100, borderColor: 'var(--border)', background: 'var(--bg)' }}>
+                              <div className="flex items-center gap-2">
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160, display: 'block' }}>{orderDisplayName(o)}</span>
+                                <button type="button" className="rounded border px-1 text-[10px]" style={{ borderColor: 'var(--border)', color: 'var(--muted)' }}>▼</button>
+                              </div>
+                            </td>
+                            <td className="border px-2 py-1.5 sticky z-[6]" style={{ width: 120, minWidth: 120, left: 300, borderColor: 'var(--border)', background: 'var(--bg)' }}>{orderClientLabel(o)}</td>
+                            <td className="border px-2 py-1.5 sticky z-[6]" style={{ width: 110, minWidth: 110, left: 420, borderColor: 'var(--border)', background: 'var(--bg)' }}>
+                              <div style={{ fontSize: 11, lineHeight: '14px' }}>
+                                <div><span style={{ color: 'var(--muted)' }}>Зак:</span> {ordered}</div>
+                                <div><span style={{ color: 'var(--muted)' }}>Рас:</span> {cut}</div>
+                                <div><span style={{ color: 'var(--muted)' }}>Пош:</span> {sewn}</div>
+                                <div><span style={{ color: 'var(--muted)' }}>Ост:</span> {rest}</div>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      <tr>
+                        <td colSpan={5} className="border px-2 py-2" style={{ borderColor: 'var(--border)' }}>
+                          <Link to={`/orders/create?workshop_id=${group.workshop_id ?? ''}`} className="inline-flex rounded border px-2 py-1 text-xs" style={{ borderColor: 'var(--border)', color: '#c8ff00' }}>
+                            + Добавить заказ
+                          </Link>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td colSpan={5} className="border px-2 py-2 text-[12px]" style={{ borderColor: 'var(--border)', color: 'var(--muted)', background: 'var(--bg)' }}>
+                          Мощность: {group.capacity} | Загрузка: {group.loadingQty} | Свободно: {group.freeQty}
+                        </td>
+                      </tr>
+                    </React.Fragment>
+                  ));
+                })()}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Table */}
       <div
         ref={tableScrollRef}
         className="planning-draft-scroll overflow-x-auto overflow-y-auto"
-        style={{ maxHeight: 'calc(100vh - 195px)' }}
+        style={{ maxHeight: 'calc(100vh - 195px)', display: isWeek ? 'block' : 'none' }}
       >
         <table
           className="pd-draft-table border-collapse"

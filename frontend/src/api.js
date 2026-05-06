@@ -33,14 +33,7 @@ async function request(path, options = {}) {
   let lastError;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    const timeoutController = new AbortController();
-    const timeoutId = window.setTimeout(() => timeoutController.abort(), timeoutMs);
     const externalSignal = options.signal;
-    const onAbort = () => timeoutController.abort();
-    if (externalSignal) {
-      if (externalSignal.aborted) timeoutController.abort();
-      else externalSignal.addEventListener('abort', onAbort, { once: true });
-    }
     try {
       const { timeout: _timeout, ...fetchOptions } = options;
       const res = await fetch(`${API_URL}${path}`, {
@@ -49,7 +42,7 @@ async function request(path, options = {}) {
         mode: 'cors',
         credentials: 'include',
         cache: 'no-store',
-        signal: timeoutController.signal,
+        signal: externalSignal,
       });
 
       if (res.status === 502) {
@@ -89,7 +82,7 @@ async function request(path, options = {}) {
     } catch (err) {
       lastError = err;
       if (err?.name === 'AbortError') {
-        console.error('[API] Таймаут запроса:', path);
+        throw err;
       } else if (!err?.status) {
         console.error('[API] Сервер недоступен:', path);
       }
@@ -97,18 +90,12 @@ async function request(path, options = {}) {
       if (err && typeof err.status === 'number' && err.status !== 502 && err.status >= 400) {
         throw err;
       }
-      if (err?.name === 'AbortError') throw err;
       if (attempt < maxRetries && isLikelyNetworkError(err)) {
         console.log(`[API] сеть попытка ${attempt}/${maxRetries}:`, err?.message || err);
         await new Promise((r) => setTimeout(r, attempt * 1000));
         continue;
       }
       throw err;
-    } finally {
-      window.clearTimeout(timeoutId);
-      if (externalSignal) {
-        externalSignal.removeEventListener('abort', onAbort);
-      }
     }
   }
 
@@ -394,6 +381,14 @@ export const api = {
       request('/api/planning/chain/sync-documents', {
         method: 'POST',
         body: JSON.stringify({ chain_ids }),
+      }),
+  },
+  planningMonth: {
+    get: (month) => request(`/api/planning-month?month=${String(month).slice(0, 7)}`),
+    save: (body) =>
+      request('/api/planning-month', {
+        method: 'POST',
+        body: JSON.stringify(body),
       }),
   },
   orderOperations: {
@@ -733,6 +728,11 @@ export const api = {
       request('/api/workshops', {
         method: 'POST',
         body: JSON.stringify(data),
+      }),
+    updateCapacity: (id, capacity) =>
+      request(`/api/workshops/${id}/capacity`, {
+        method: 'PUT',
+        body: JSON.stringify({ capacity }),
       }),
     delete: (id) => request(`/api/workshops/${id}`, { method: 'DELETE' }),
   },

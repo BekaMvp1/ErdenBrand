@@ -21,8 +21,9 @@ export function OrderProgressProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
   const intervalRef = useRef(null);
+  const activeControllerRef = useRef(null);
 
-  const loadProgress = useCallback(async (options = {}) => {
+  const loadProgress = useCallback(async (options = {}, signal) => {
     const silent = options.silent === true;
     const token =
       typeof sessionStorage !== 'undefined'
@@ -35,10 +36,7 @@ export function OrderProgressProvider({ children }) {
       return;
     }
     if (!silent) setLoading(true);
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 10000);
     try {
-      const signal = controller.signal;
       const [progressRes, statsRes] = await Promise.all([
         api.progress.ordersProgress({ signal }),
         api.progress.dashboardStats({ signal }),
@@ -51,25 +49,42 @@ export function OrderProgressProvider({ children }) {
         console.error('[Progress] Ошибка загрузки:', err?.message || err);
       }
     } finally {
-      window.clearTimeout(timeoutId);
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    loadProgress({ silent: false });
+    const triggerLoad = (silent) => {
+      if (activeControllerRef.current) {
+        activeControllerRef.current.abort();
+      }
+      const controller = new AbortController();
+      activeControllerRef.current = controller;
+      const timeoutId = window.setTimeout(() => controller.abort(), 8000);
+      loadProgress({ silent }, controller.signal)
+        .catch(() => {})
+        .finally(() => {
+          window.clearTimeout(timeoutId);
+        });
+    };
+
+    triggerLoad(false);
 
     intervalRef.current = window.setInterval(() => {
-      loadProgress({ silent: true });
+      triggerLoad(true);
     }, POLL_MS);
 
-    const onFocus = () => loadProgress({ silent: true });
+    const onFocus = () => triggerLoad(true);
     window.addEventListener('focus', onFocus);
 
     return () => {
       if (intervalRef.current != null) {
         window.clearInterval(intervalRef.current);
         intervalRef.current = null;
+      }
+      if (activeControllerRef.current) {
+        activeControllerRef.current.abort();
+        activeControllerRef.current = null;
       }
       window.removeEventListener('focus', onFocus);
     };

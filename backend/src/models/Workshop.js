@@ -22,6 +22,11 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         defaultValue: 1,
       },
+      capacity: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        defaultValue: 0,
+      },
       is_active: {
         type: DataTypes.BOOLEAN,
         allowNull: false,

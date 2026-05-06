@@ -19,14 +19,9 @@ async function wakeUpServer() {
   if (!base) return
   const health = `${base}/api/health`
   console.log('[App] будим сервер…')
-  const fetchWithTimeout = (url, ms = 10000) => {
-    const ctrl = new AbortController()
-    const t = window.setTimeout(() => ctrl.abort(), ms)
-    return fetch(url, { signal: ctrl.signal }).finally(() => window.clearTimeout(t))
-  }
   for (let i = 0; i < 5; i++) {
     try {
-      const res = await fetchWithTimeout(health, 10000)
+      const res = await fetch(health)
       if (res.ok) {
         console.log('[App] сервер проснулся ✓')
         return

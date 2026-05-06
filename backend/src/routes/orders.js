@@ -760,8 +760,17 @@ router.get('/', async (req, res, next) => {
     if (offsetVal !== undefined) options.offset = offsetVal;
 
     const orders = await db.Order.findAll(options);
+    const normalized = orders.map((orderItem) => {
+      const plain = typeof orderItem?.toJSON === 'function' ? orderItem.toJSON() : orderItem;
+      return {
+        ...plain,
+        tz: plain.tz ?? plain.tz_code ?? null,
+        total_qty: plain.total_qty ?? plain.total_quantity ?? plain.quantity ?? 0,
+        client_name: plain.client_name ?? plain.Client?.name ?? null,
+      };
+    });
 
-    res.json(orders);
+    res.json(normalized);
   } catch (err) {
     next(err);
   }

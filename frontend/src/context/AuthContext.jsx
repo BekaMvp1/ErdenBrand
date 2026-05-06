@@ -19,7 +19,7 @@ export function AuthProvider({ children }) {
       return;
     }
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 10000);
+    let cancelled = false;
     // Проверяем токен на сервере — иначе без логина заходило
     fetch(`${API_URL}/api/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -36,13 +36,13 @@ export function AuthProvider({ children }) {
         return res.json();
       })
       .then((data) => {
-        if (data?.user) setUser(data.user);
+        if (!cancelled && data?.user) setUser(data.user);
       })
       .catch((e) => {
-        if (e?.name === 'AbortError') {
+        if (e?.name === 'AbortError' || cancelled) {
           try {
             const u = JSON.parse(storedUser);
-            if (u && typeof u === 'object') setUser(u);
+            if (u && typeof u === 'object' && !cancelled) setUser(u);
           } catch (_) {}
           return;
         }
@@ -51,9 +51,13 @@ export function AuthProvider({ children }) {
         setUser(null);
       })
       .finally(() => {
-        window.clearTimeout(timeoutId);
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, []);
 
   const login = (data) => {

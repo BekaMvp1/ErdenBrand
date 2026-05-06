@@ -16,8 +16,8 @@ import {
 } from '../utils/planningDraftPrintHtml';
 import { getPhoto } from '../utils/planningDraftPrintRowFields';
 
-/** Число колонок: №, Фото, Наименование, Заказчик, Кол-во + 4×(План|Факт) + Итого(План|Факт) */
-const DATA_COL_COUNT_MONTH = 15;
+/** Число колонок месяца рассчитывается динамически от числа недель в срезе. */
+const DATA_COL_COUNT_MONTH = 23;
 /** Режим «неделя»: те же 5 ведущих + 6 дней × 4 ячейки + Итого */
 const DATA_COL_COUNT_WEEK = 30;
 
@@ -1400,10 +1400,24 @@ export default function PlanningDraft({ viewMode = 'month' }) {
     () => (isWeek ? getWeekDates(weekStartMonday) : []),
     [isWeek, weekStartMonday]
   );
+  const allWeeks = useMemo(() => getWeeksInMonth(effectiveMonthKey), [effectiveMonthKey]);
+  const displayWeeks = useMemo(() => {
+    const slice = allWeeks.slice(weekSliceStart, weekSliceStart + 4);
+    const out = [...slice];
+    while (out.length < 4) {
+      out.push({
+        weekNum: '—',
+        label: '—',
+        dateFrom: '',
+        dateTo: '',
+      });
+    }
+    return out;
+  }, [allWeeks, weekSliceStart]);
 
-  const dataColCount = isWeek ? DATA_COL_COUNT_WEEK : DATA_COL_COUNT_MONTH;
+  const dataColCount = isWeek ? DATA_COL_COUNT_WEEK : 5 + displayWeeks.length * 4 + 2;
   const addRowTailColSpan = dataColCount - 3;
-  const leadHeadRowSpan = isWeek ? 3 : 2;
+  const leadHeadRowSpan = 3;
 
   const [monthFactsByOrderId, setMonthFactsByOrderId] = useState({});
   const [editingMonthFactCell, setEditingMonthFactCell] = useState(null);
@@ -1636,8 +1650,6 @@ export default function PlanningDraft({ viewMode = 'month' }) {
     };
   }, [workshopId]);
 
-  const allWeeks = useMemo(() => getWeeksInMonth(effectiveMonthKey), [effectiveMonthKey]);
-
   useEffect(() => {
     const maxStart = Math.max(0, allWeeks.length - 4);
     setWeekSliceStart((s) => Math.min(s, maxStart));
@@ -1700,20 +1712,6 @@ export default function PlanningDraft({ viewMode = 'month' }) {
       document.removeEventListener('visibilitychange', onVis);
     };
   }, [refreshCuttingFacts, refreshSewingFacts]);
-
-  const displayWeeks = useMemo(() => {
-    const slice = allWeeks.slice(weekSliceStart, weekSliceStart + 4);
-    const out = [...slice];
-    while (out.length < 4) {
-      out.push({
-        weekNum: '—',
-        label: '—',
-        dateFrom: '',
-        dateTo: '',
-      });
-    }
-    return out;
-  }, [allWeeks, weekSliceStart]);
 
   const gridPeriods = useMemo(() => {
     if (isWeek) {
@@ -3337,7 +3335,7 @@ export default function PlanningDraft({ viewMode = 'month' }) {
               {gridPeriods.map((p) => (
                 <th
                   key={p.key}
-                  colSpan={isWeek ? 4 : 2}
+                  colSpan={4}
                   className="border px-1 text-center text-xs font-medium"
                   style={{
                     position: 'sticky',
@@ -3577,102 +3575,177 @@ export default function PlanningDraft({ viewMode = 'month' }) {
                 </tr>
               </>
             ) : (
-              <tr style={{ height: PD_HEAD_MONTH_ROW2 }}>
-                {gridPeriods.map((p) => (
-                  <React.Fragment key={`mh2-${p.key}`}>
-                    <th
-                      className="border px-0.5 text-[10px] font-normal"
-                      style={{
-                        position: 'sticky',
-                        top: PD_HEAD_H1,
-                        zIndex: 12,
-                        minWidth: weekColWidths.plan,
-                        width: weekColWidths.plan,
-                        height: PD_HEAD_MONTH_ROW2,
-                        borderLeft: p.di === 0 ? '2px solid #e3b341' : PD_BR_WEEK_GAP,
-                        background: 'rgba(227,179,65,0.08)',
-                        color: 'var(--text)',
-                        borderColor: 'var(--border)',
-                        boxSizing: 'border-box',
-                      }}
-                    >
-                      <span className="relative block pr-1">
+              <>
+                <tr style={{ height: PD_HEAD_H2 }}>
+                  {gridPeriods.map((p) => (
+                    <React.Fragment key={`mh2-${p.key}`}>
+                      <th
+                        colSpan={2}
+                        className="border px-1 text-center text-[10px] font-medium"
+                        style={{
+                          position: 'sticky',
+                          top: PD_HEAD_TOP2,
+                          zIndex: 11,
+                          height: PD_HEAD_H2,
+                          borderLeft: p.di === 0 ? '2px solid #e3b341' : PD_BR_WEEK_GAP,
+                          borderRight: PD_BR_PREP_HDR,
+                          borderColor: 'var(--border)',
+                          background: 'rgba(227,179,65,0.12)',
+                          color: '#e3b341',
+                          boxSizing: 'border-box',
+                        }}
+                      >
+                        Подготовка
+                      </th>
+                      <th
+                        colSpan={2}
+                        className="border px-1 text-center text-[10px] font-medium"
+                        style={{
+                          position: 'sticky',
+                          top: PD_HEAD_TOP2,
+                          zIndex: 11,
+                          height: PD_HEAD_H2,
+                          borderLeft: '2px solid var(--accent)',
+                          borderColor: 'var(--border)',
+                          background: 'var(--bg2)',
+                          color: 'var(--text)',
+                          boxSizing: 'border-box',
+                        }}
+                      >
+                        Основное
+                      </th>
+                    </React.Fragment>
+                  ))}
+                  <th
+                    colSpan={2}
+                    className="border px-1 text-center text-[10px] font-medium"
+                    style={{
+                      position: 'sticky',
+                      top: PD_HEAD_TOP2,
+                      zIndex: 11,
+                      height: PD_HEAD_H2,
+                      borderColor: 'var(--border)',
+                      background: 'var(--bg2)',
+                      color: 'var(--text)',
+                      boxSizing: 'border-box',
+                    }}
+                  >
+                    Итого
+                  </th>
+                </tr>
+                <tr style={{ height: PD_HEAD_H3 }}>
+                  {gridPeriods.map((p) => (
+                    <React.Fragment key={`mh3-${p.key}`}>
+                      <th
+                        className="border px-0.5 text-[10px] font-normal"
+                        style={{
+                          position: 'sticky',
+                          top: PD_HEAD_TOP3,
+                          zIndex: 12,
+                          minWidth: weekColWidths.plan,
+                          width: weekColWidths.plan,
+                          height: PD_HEAD_H3,
+                          borderLeft: p.di === 0 ? '2px solid #e3b341' : PD_BR_WEEK_GAP,
+                          background: 'rgba(227,179,65,0.08)',
+                          color: '#e3b341',
+                          borderColor: 'var(--border)',
+                          boxSizing: 'border-box',
+                        }}
+                      >
                         План
-                        <div
-                          className={`col-resize-handle${draggingResize === 'week-plan' ? ' active' : ''}`}
-                          onMouseDown={(e) => startResizeWeek(e, 'plan')}
-                          role="separator"
-                          aria-orientation="vertical"
-                          aria-hidden
-                        />
-                      </span>
-                    </th>
-                    <th
-                      className="border px-0.5 text-[10px] font-normal"
-                      style={{
-                        position: 'sticky',
-                        top: PD_HEAD_H1,
-                        zIndex: 12,
-                        minWidth: weekColWidths.fact,
-                        width: weekColWidths.fact,
-                        height: PD_HEAD_MONTH_ROW2,
-                        background: 'var(--bg2)',
-                        color: '#4caf50',
-                        fontWeight: 700,
-                        borderColor: 'var(--border)',
-                        borderRight: PD_BR_WEEK_GAP,
-                        boxSizing: 'border-box',
-                      }}
-                    >
-                      <span className="relative block pr-1">
+                      </th>
+                      <th
+                        className="border px-0.5 text-[10px] font-normal"
+                        style={{
+                          position: 'sticky',
+                          top: PD_HEAD_TOP3,
+                          zIndex: 12,
+                          minWidth: weekColWidths.fact,
+                          width: weekColWidths.fact,
+                          height: PD_HEAD_H3,
+                          background: 'rgba(227,179,65,0.08)',
+                          color: '#e3b341',
+                          borderRight: PD_BR_PREP_FACT,
+                          borderColor: 'var(--border)',
+                          boxSizing: 'border-box',
+                        }}
+                      >
                         Факт
-                        <div
-                          className={`col-resize-handle${draggingResize === 'week-fact' ? ' active' : ''}`}
-                          onMouseDown={(e) => startResizeWeek(e, 'fact')}
-                          role="separator"
-                          aria-orientation="vertical"
-                          aria-hidden
-                        />
-                      </span>
-                    </th>
-                  </React.Fragment>
-                ))}
-                <th
-                  className="border px-0.5 text-[10px] font-normal"
-                  style={{
-                    position: 'sticky',
-                    top: PD_HEAD_H1,
-                    zIndex: 12,
-                    minWidth: weekColWidths.plan,
-                    width: weekColWidths.plan,
-                    height: PD_HEAD_MONTH_ROW2,
-                    background: 'var(--bg2)',
-                    color: 'var(--text)',
-                    borderColor: 'var(--border)',
-                    boxSizing: 'border-box',
-                  }}
-                >
-                  План
-                </th>
-                <th
-                  className="border px-0.5 text-[10px] font-normal"
-                  style={{
-                    position: 'sticky',
-                    top: PD_HEAD_H1,
-                    zIndex: 12,
-                    minWidth: weekColWidths.fact,
-                    width: weekColWidths.fact,
-                    height: PD_HEAD_MONTH_ROW2,
-                    background: 'var(--bg2)',
-                    color: '#4caf50',
-                    fontWeight: 700,
-                    borderColor: 'var(--border)',
-                    boxSizing: 'border-box',
-                  }}
-                >
-                  Факт
-                </th>
-              </tr>
+                      </th>
+                      <th
+                        className="border px-0.5 text-[10px] font-normal"
+                        style={{
+                          position: 'sticky',
+                          top: PD_HEAD_TOP3,
+                          zIndex: 12,
+                          minWidth: weekColWidths.plan,
+                          width: weekColWidths.plan,
+                          height: PD_HEAD_H3,
+                          borderLeft: '2px solid var(--accent)',
+                          background: 'var(--bg2)',
+                          color: 'var(--text)',
+                          borderColor: 'var(--border)',
+                          boxSizing: 'border-box',
+                        }}
+                      >
+                        План
+                      </th>
+                      <th
+                        className="border px-0.5 text-[10px] font-normal"
+                        style={{
+                          position: 'sticky',
+                          top: PD_HEAD_TOP3,
+                          zIndex: 12,
+                          minWidth: weekColWidths.fact,
+                          width: weekColWidths.fact,
+                          height: PD_HEAD_H3,
+                          background: 'var(--bg2)',
+                          color: 'var(--text)',
+                          borderRight: PD_BR_WEEK_GAP,
+                          borderColor: 'var(--border)',
+                          boxSizing: 'border-box',
+                        }}
+                      >
+                        Факт
+                      </th>
+                    </React.Fragment>
+                  ))}
+                  <th
+                    className="border px-0.5 text-[10px] font-normal"
+                    style={{
+                      position: 'sticky',
+                      top: PD_HEAD_TOP3,
+                      zIndex: 12,
+                      minWidth: weekColWidths.plan,
+                      width: weekColWidths.plan,
+                      height: PD_HEAD_H3,
+                      background: 'var(--bg2)',
+                      color: 'var(--text)',
+                      borderColor: 'var(--border)',
+                      boxSizing: 'border-box',
+                    }}
+                  >
+                    План
+                  </th>
+                  <th
+                    className="border px-0.5 text-[10px] font-normal"
+                    style={{
+                      position: 'sticky',
+                      top: PD_HEAD_TOP3,
+                      zIndex: 12,
+                      minWidth: weekColWidths.fact,
+                      width: weekColWidths.fact,
+                      height: PD_HEAD_H3,
+                      background: 'var(--bg2)',
+                      color: '#4caf50',
+                      borderColor: 'var(--border)',
+                      boxSizing: 'border-box',
+                    }}
+                  >
+                    Факт
+                  </th>
+                </tr>
+              </>
             )}
           </thead>
           <tbody>
@@ -4168,20 +4241,6 @@ export default function PlanningDraft({ viewMode = 'month' }) {
                               );
                             })
                           : r.weeks.map((w, wi) => {
-                              const oid = order?.id;
-                              const storedFact =
-                                oid != null
-                                  ? monthFactsByOrderId[String(oid)]?.[wi] ??
-                                    monthFactsByOrderId[Number(oid)]?.[wi]
-                                  : undefined;
-                              const factNum =
-                                storedFact != null && Number.isFinite(Number(storedFact))
-                                  ? Number(storedFact)
-                                  : null;
-                              const editingFact =
-                                oid != null &&
-                                editingMonthFactCell?.orderId === oid &&
-                                editingMonthFactCell?.weekIndex === wi;
                               return (
                                 <React.Fragment key={wi}>
                                   <td
@@ -4196,106 +4255,37 @@ export default function PlanningDraft({ viewMode = 'month' }) {
                                       verticalAlign: 'top',
                                     }}
                                   >
-                                    <div className="flex flex-col gap-0.5 px-0.5 py-0.5">
-                                      <input
-                                        type="number"
-                                        min={0}
-                                        title="Подготовка — план"
-                                        className={`${inputCls} !py-1 text-[10px]`}
-                                        value={w.pp === '' || w.pp === '0' ? '' : w.pp}
-                                        onChange={(e) =>
-                                          updateWeekCell(r.id, wi, 'pp', e.target.value)
-                                        }
-                                      />
-                                      <input
-                                        type="number"
-                                        min={0}
-                                        title="Основное — план"
-                                        className={`${inputCls} !py-1 text-[10px]`}
-                                        value={w.mp === '' || w.mp === '0' ? '' : w.mp}
-                                        onChange={(e) =>
-                                          updateWeekCell(r.id, wi, 'mp', e.target.value)
-                                        }
-                                      />
-                                    </div>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      title="План"
+                                      className={`${inputCls} !py-1 text-[10px]`}
+                                      value={w.pp === '' || w.pp === '0' ? '' : w.pp}
+                                      onChange={(e) =>
+                                        updateWeekCell(r.id, wi, 'pp', e.target.value)
+                                      }
+                                    />
                                   </td>
                                   <td
-                                    className="group-hover/row:bg-[var(--surface2)] border p-0 text-center text-xs transition-colors group-hover/row:!bg-[#1d2229]"
+                                    className="group-hover/row:bg-[var(--surface2)] border p-0 transition-colors group-hover/row:!bg-[#1d2229]"
                                     style={{
                                       borderColor: 'var(--border)',
-                                      borderRight: PD_BR_WEEK_GAP,
                                       minWidth: weekColWidths.fact,
                                       width: weekColWidths.fact,
-                                      verticalAlign: 'middle',
+                                      background: 'rgba(227,179,65,0.04)',
+                                      borderRight: PD_BR_PREP_FACT,
                                     }}
                                   >
-                                    {editingFact && canPersistDraft ? (
-                                      <input
-                                        key={`${oid}-${wi}`}
-                                        type="number"
-                                        min={0}
-                                        defaultValue={
-                                          factNum != null && factNum !== 0 ? String(factNum) : ''
-                                        }
-                                        autoFocus
-                                        className="mx-auto block outline-none"
-                                        style={{
-                                          width: 52,
-                                          maxWidth: '100%',
-                                          textAlign: 'center',
-                                          background: '#1a1f26',
-                                          color: '#fff',
-                                          border: 'none',
-                                          borderRadius: 4,
-                                          padding: '6px 4px',
-                                          fontWeight: 700,
-                                        }}
-                                        onBlur={(e) => {
-                                          if (skipMonthFactBlurSaveRef.current) {
-                                            skipMonthFactBlurSaveRef.current = false;
-                                            return;
-                                          }
-                                          void persistMonthFact(oid, wi, e.target.value);
-                                          setEditingMonthFactCell(null);
-                                        }}
-                                        onKeyDown={(e) => {
-                                          if (e.key === 'Enter') e.currentTarget.blur();
-                                          if (e.key === 'Escape') {
-                                            e.preventDefault();
-                                            skipMonthFactBlurSaveRef.current = true;
-                                            setEditingMonthFactCell(null);
-                                          }
-                                        }}
-                                      />
-                                    ) : (
-                                      <div
-                                        role={oid != null && canPersistDraft ? 'button' : undefined}
-                                        tabIndex={oid != null && canPersistDraft ? 0 : undefined}
-                                        className="mx-auto flex min-h-[28px] min-w-[40px] max-w-[72px] items-center justify-center rounded px-0.5 transition-colors hover:bg-[rgba(76,175,80,0.12)]"
-                                        style={{
-                                          cursor:
-                                            oid != null && canPersistDraft ? 'pointer' : 'default',
-                                          color: '#4caf50',
-                                          fontWeight: 700,
-                                        }}
-                                        onClick={() => {
-                                          if (oid == null || !canPersistDraft) return;
-                                          setEditingMonthFactCell({ orderId: oid, weekIndex: wi });
-                                        }}
-                                        onKeyDown={(e) => {
-                                          if (
-                                            (e.key === 'Enter' || e.key === ' ') &&
-                                            oid != null &&
-                                            canPersistDraft
-                                          ) {
-                                            e.preventDefault();
-                                            setEditingMonthFactCell({ orderId: oid, weekIndex: wi });
-                                          }
-                                        }}
-                                      >
-                                        {factNum != null && factNum !== 0 ? factNum : '—'}
-                                      </div>
-                                    )}
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      title="Факт"
+                                      className={`${inputCls} !py-1 text-[10px]`}
+                                      value={w.pf === '' || w.pf === '0' ? '' : w.pf}
+                                      onChange={(e) =>
+                                        updateWeekCell(r.id, wi, 'pf', e.target.value)
+                                      }
+                                    />
                                   </td>
                                 </React.Fragment>
                               );
@@ -4571,6 +4561,7 @@ export default function PlanningDraft({ viewMode = 'month' }) {
                                 });
                               }}
                             />
+                          </div>
                           </td>
                       ))}
                       <td className="border" style={{ minWidth: weekColWidths.plan }} />

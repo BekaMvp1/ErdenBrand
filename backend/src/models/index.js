@@ -76,6 +76,13 @@ const db = {
   CuttingTask: require('./CuttingTask')(sequelize, Sequelize.DataTypes),
   WarehouseItem: require('./WarehouseItem')(sequelize, Sequelize.DataTypes),
   WarehouseMovement: require('./WarehouseMovement')(sequelize, Sequelize.DataTypes),
+  WarehouseRef: require('./WarehouseRef')(sequelize, Sequelize.DataTypes),
+  WarehouseGood: require('./WarehouseGood')(sequelize, Sequelize.DataTypes),
+  WarehouseMaterial: require('./WarehouseMaterial')(sequelize, Sequelize.DataTypes),
+  MovementDocument: require('./MovementDocument')(sequelize, Sequelize.DataTypes),
+  MovementDocumentItem: require('./MovementDocumentItem')(sequelize, Sequelize.DataTypes),
+  StageReport: require('./StageReport')(sequelize, Sequelize.DataTypes),
+  StageReportItem: require('./StageReportItem')(sequelize, Sequelize.DataTypes),
   Size: require('./Size')(sequelize, Sequelize.DataTypes),
   OrderVariant: require('./OrderVariant')(sequelize, Sequelize.DataTypes),
   Workshop: require('./Workshop')(sequelize, Sequelize.DataTypes),
@@ -300,6 +307,32 @@ db.WarehouseItem.hasMany(db.WarehouseMovement, { foreignKey: 'item_id' });
 db.WarehouseMovement.belongsTo(db.WarehouseItem, { foreignKey: 'item_id' });
 db.Order.hasMany(db.WarehouseMovement, { foreignKey: 'order_id' });
 db.WarehouseMovement.belongsTo(db.Order, { foreignKey: 'order_id' });
+db.WarehouseRef.hasMany(db.WarehouseMovement, { foreignKey: 'from_warehouse_id', as: 'FromMovements' });
+db.WarehouseRef.hasMany(db.WarehouseMovement, { foreignKey: 'to_warehouse_id', as: 'ToMovements' });
+db.WarehouseMovement.belongsTo(db.WarehouseRef, { foreignKey: 'from_warehouse_id', as: 'FromWarehouse' });
+db.WarehouseMovement.belongsTo(db.WarehouseRef, { foreignKey: 'to_warehouse_id', as: 'ToWarehouse' });
+db.User.hasMany(db.WarehouseMovement, { foreignKey: 'user_id' });
+db.WarehouseMovement.belongsTo(db.User, { foreignKey: 'user_id', as: 'User' });
+db.WarehouseRef.hasMany(db.WarehouseGood, { foreignKey: 'warehouse_id' });
+db.WarehouseGood.belongsTo(db.WarehouseRef, { foreignKey: 'warehouse_id', as: 'Warehouse' });
+db.WarehouseRef.hasMany(db.WarehouseMaterial, { foreignKey: 'warehouse_id' });
+db.WarehouseMaterial.belongsTo(db.WarehouseRef, { foreignKey: 'warehouse_id', as: 'Warehouse' });
+db.MovementDocument.hasMany(db.MovementDocumentItem, { foreignKey: 'document_id', as: 'Items' });
+db.MovementDocumentItem.belongsTo(db.MovementDocument, { foreignKey: 'document_id', as: 'Document' });
+db.WarehouseRef.hasMany(db.MovementDocument, { foreignKey: 'from_warehouse_id', as: 'FromDocuments' });
+db.WarehouseRef.hasMany(db.MovementDocument, { foreignKey: 'to_warehouse_id', as: 'ToDocuments' });
+db.MovementDocument.belongsTo(db.WarehouseRef, { foreignKey: 'from_warehouse_id', as: 'FromWarehouse' });
+db.MovementDocument.belongsTo(db.WarehouseRef, { foreignKey: 'to_warehouse_id', as: 'ToWarehouse' });
+db.User.hasMany(db.MovementDocument, { foreignKey: 'created_by', as: 'CreatedDocuments' });
+db.MovementDocument.belongsTo(db.User, { foreignKey: 'created_by', as: 'CreatedBy' });
+db.StageReport.hasMany(db.StageReportItem, { foreignKey: 'report_id', as: 'Items' });
+db.StageReportItem.belongsTo(db.StageReport, { foreignKey: 'report_id', as: 'Report' });
+db.Order.hasMany(db.StageReport, { foreignKey: 'order_id', as: 'StageReports' });
+db.StageReport.belongsTo(db.Order, { foreignKey: 'order_id', as: 'Order' });
+db.User.hasMany(db.StageReport, { foreignKey: 'user_id', as: 'StageReports' });
+db.StageReport.belongsTo(db.User, { foreignKey: 'user_id', as: 'User' });
+db.Workshop.hasMany(db.StageReport, { foreignKey: 'workshop_id', as: 'StageReports' });
+db.StageReport.belongsTo(db.Workshop, { foreignKey: 'workshop_id', as: 'Workshop' });
 
 // План производства по дням
 db.Order.hasMany(db.ProductionPlanDay, { foreignKey: 'order_id' });

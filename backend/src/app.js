@@ -47,9 +47,21 @@ const dekatirovkaRouter = require("./routes/dekatirovka");
 const proverkaRouter = require("./routes/proverka");
 const modelsBaseRoutes = require("./routes/models-base");
 const modelRefsRoutes = require("./routes/model-refs");
+const stageReportsRoutes = require("./routes/stageReports");
+const { sequelize } = require("./models");
 
 const app = express();
 app.use(compression());
+
+// Keepalive пинг каждые 4 минуты
+setInterval(async () => {
+  try {
+    await sequelize.query("SELECT 1");
+    console.log("DB keepalive ping OK");
+  } catch (e) {
+    console.error("DB keepalive error:", e.message);
+  }
+}, 4 * 60 * 1000);
 
 // CORS: Vercel (erden-brand + preview *.vercel.app), Netlify, Railway/Render фронт через FRONTEND_URL, локальная сеть
 // Render / Railway: proxy HTTPS (x-forwarded-proto)
@@ -301,6 +313,13 @@ app.use(
   requireRole("admin", "manager", "technologist", "operator"),
   technologistFloorOnly,
   referencesRoutes,
+);
+app.use(
+  "/api/stage-reports",
+  authenticate,
+  requireRole("admin", "manager", "technologist", "operator"),
+  technologistFloorOnly,
+  stageReportsRoutes,
 );
 app.use(
   "/api/models-base",

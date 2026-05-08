@@ -26,6 +26,8 @@ import PrintSewing from "./pages/PrintSewing";
 import PrintQc from "./pages/PrintQc";
 import Cutting from "./pages/Cutting";
 import Warehouse from "./pages/Warehouse";
+import WarehouseMovements from "./pages/WarehouseMovements";
+import WarehouseMovementDocumentForm from "./pages/WarehouseMovementDocumentForm";
 import Qc from "./pages/Qc";
 import Otk from "./pages/Otk";
 import Shipments from "./pages/Shipments";
@@ -42,8 +44,10 @@ import OrdersBoard from "./pages/OrdersBoard";
 import ProductionDashboard from "./pages/ProductionDashboard";
 import ServerStatus from "./components/ServerStatus";
 import StageTabsLayout from "./components/stage/StageTabsLayout";
-import StageReportPlaceholder from "./pages/stage/StageReportPlaceholder";
 import StageExpensesPlaceholder from "./pages/stage/StageExpensesPlaceholder";
+import StageReportsPage from "./pages/stage/StageReportsPage";
+import PurchaseReportList from "./pages/stage/PurchaseReportList";
+import PurchaseReportForm from "./pages/stage/PurchaseReportForm";
 
 export default function App() {
   return (
@@ -76,20 +80,24 @@ export default function App() {
                 <Route path="procurement" element={<StageTabsLayout title="Закуп" />}>
                   <Route index element={<Navigate to="plan" replace />} />
                   <Route path="plan" element={<Procurement />} />
-                  <Route path="report" element={<StageReportPlaceholder />} />
+                  <Route path="report" element={<PurchaseReportList />} />
+                  <Route path="report/new" element={<PurchaseReportForm />} />
+                  <Route path="report/:id" element={<PurchaseReportForm />} />
                   <Route path="expenses" element={<StageExpensesPlaceholder />} />
                 </Route>
                 <Route path="purchase" element={<StageTabsLayout title="Закуп" />}>
                   <Route index element={<Navigate to="plan" replace />} />
                   <Route path="plan" element={<Procurement />} />
-                  <Route path="report" element={<StageReportPlaceholder />} />
+                  <Route path="report" element={<PurchaseReportList />} />
+                  <Route path="report/new" element={<PurchaseReportForm />} />
+                  <Route path="report/:id" element={<PurchaseReportForm />} />
                   <Route path="expenses" element={<StageExpensesPlaceholder />} />
                 </Route>
                 <Route path="production-chain" element={<ProductionChain />} />
                 <Route path="sewing" element={<StageTabsLayout title="Пошив" />}>
                   <Route index element={<Navigate to="plan" replace />} />
                   <Route path="plan" element={<Sewing />} />
-                  <Route path="report" element={<StageReportPlaceholder />} />
+                  <Route path="report" element={<StageReportsPage stage="sewing" />} />
                   <Route path="expenses" element={<StageExpensesPlaceholder />} />
                 </Route>
                 <Route path="floor-tasks" element={<Navigate to="/sewing" replace />} />
@@ -101,22 +109,30 @@ export default function App() {
                 <Route path="cutting" element={<StageTabsLayout title="Раскройный" />}>
                   <Route index element={<Navigate to="plan" replace />} />
                   <Route path="plan" element={<Cutting />} />
-                  <Route path="report" element={<StageReportPlaceholder />} />
+                  <Route path="report" element={<StageReportsPage stage="cutting" />} />
                   <Route path="expenses" element={<StageExpensesPlaceholder />} />
                 </Route>
                 <Route path="cutting/:type" element={<Cutting />} />
                 <Route path="warehouse" element={<Warehouse />} />
+                <Route path="warehouse/movements" element={<WarehouseMovements />} />
+                <Route path="warehouse/movements/new" element={<WarehouseMovementDocumentForm />} />
+                <Route path="warehouse/movements/:id" element={<WarehouseMovementDocumentForm />} />
                 <Route path="otk" element={<StageTabsLayout title="ОТК" />}>
                   <Route index element={<Navigate to="plan" replace />} />
                   <Route path="plan" element={<Otk />} />
-                  <Route path="report" element={<StageReportPlaceholder />} />
+                  <Route path="report" element={<StageReportsPage stage="otk" />} />
                   <Route path="expenses" element={<StageExpensesPlaceholder />} />
                 </Route>
                 <Route path="/dekatirovka" element={<Dekatirovka />} />
                 <Route path="/proverka" element={<Proverka />} />
                 <Route path="qc" element={<Qc />} />
                 <Route path="shipments" element={<Shipments />} />
-                <Route path="shipping-plan" element={<Shipping />} />
+                <Route path="shipping-plan" element={<StageTabsLayout title="Отгрузка" />}>
+                  <Route index element={<Navigate to="plan" replace />} />
+                  <Route path="plan" element={<Shipping />} />
+                  <Route path="report" element={<StageReportsPage stage="shipment" />} />
+                  <Route path="expenses" element={<StageExpensesPlaceholder />} />
+                </Route>
                 <Route path="finance" element={<Finance2026 />} />
                 <Route path="references" element={<References />} />
                 <Route path="models-base" element={<ModelsBase />} />

@@ -200,6 +200,7 @@ export default function Layout() {
     '/sewing': 'Пошив',
     '/finance': 'Финансы',
     '/warehouse': 'Склад',
+    '/warehouse/movements': 'Перемещение',
     '/otk': 'ОТК',
     '/shipping-plan': 'План отгрузки',
     '/qc': 'ОТК (партии)',
@@ -262,10 +263,7 @@ export default function Layout() {
 
   useEffect(() => {
     checkServer();
-    const ms = serverOk ? 5000 : 20000;
-    const interval = setInterval(checkServer, ms);
-    return () => clearInterval(interval);
-  }, [checkServer, serverOk]);
+  }, [checkServer]);
 
   useEffect(() => {
     if (serverOk && shouldShowSummary) {
@@ -349,6 +347,7 @@ export default function Layout() {
         },
         { type: 'item', to: '/shipping-plan', label: 'План отгрузки', icon: 'shipments' },
         { type: 'item', to: '/warehouse', label: 'Склад', icon: 'warehouse' },
+        { type: 'item', to: '/warehouse/movements', label: '🔄 Перемещение', icon: 'warehouse' },
         { type: 'item', to: '/shipments', label: 'Отгрузка', icon: 'shipments' },
       ]
     : [];

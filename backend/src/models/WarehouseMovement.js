@@ -11,11 +11,11 @@ module.exports = (sequelize, DataTypes) => {
     },
     item_id: {
       type: DataTypes.INTEGER,
-      allowNull: false,
+      allowNull: true,
     },
     type: {
       type: DataTypes.ENUM('ПРИХОД', 'РАСХОД'),
-      allowNull: false,
+      allowNull: true,
     },
     quantity: {
       type: DataTypes.DECIMAL(12, 3),
@@ -27,6 +27,38 @@ module.exports = (sequelize, DataTypes) => {
     },
     comment: {
       type: DataTypes.STRING(500),
+      allowNull: true,
+    },
+    movement_kind: {
+      type: DataTypes.ENUM('goods', 'materials', 'wip'),
+      allowNull: true,
+    },
+    ref_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    item_name: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    from_warehouse_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    to_warehouse_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    qty: {
+      type: DataTypes.DECIMAL(12, 2),
+      allowNull: true,
+    },
+    moved_at: {
+      type: DataTypes.DATEONLY,
+      allowNull: true,
+    },
+    user_id: {
+      type: DataTypes.INTEGER,
       allowNull: true,
     },
   }, {

@@ -1696,21 +1696,7 @@ export default function PlanningDraft({ viewMode = 'month' }) {
   useEffect(() => {
     refreshCuttingFacts();
     refreshSewingFacts();
-    const interval = setInterval(() => {
-      refreshCuttingFacts();
-      refreshSewingFacts();
-    }, 30000);
-    const onVis = () => {
-      if (document.visibilityState === 'visible') {
-        refreshCuttingFacts();
-        refreshSewingFacts();
-      }
-    };
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      clearInterval(interval);
-      document.removeEventListener('visibilitychange', onVis);
-    };
+    return () => {};
   }, [refreshCuttingFacts, refreshSewingFacts]);
 
   const gridPeriods = useMemo(() => {

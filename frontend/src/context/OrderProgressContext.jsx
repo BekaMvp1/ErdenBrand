@@ -13,8 +13,6 @@ import {
 import { api } from '../api';
 
 const OrderProgressContext = createContext(null);
-const POLL_MS = 30000;
-
 export function OrderProgressProvider({ children }) {
   const [ordersProgress, setOrdersProgress] = useState([]);
   const [dashboardStats, setDashboardStats] = useState(null);
@@ -22,6 +20,7 @@ export function OrderProgressProvider({ children }) {
   const [lastUpdated, setLastUpdated] = useState(null);
   const intervalRef = useRef(null);
   const activeControllerRef = useRef(null);
+  const hasFetched = useRef(false);
 
   const loadProgress = useCallback(async (options = {}, signal) => {
     const silent = options.silent === true;
@@ -54,6 +53,8 @@ export function OrderProgressProvider({ children }) {
   }, []);
 
   useEffect(() => {
+    if (hasFetched.current) return;
+    hasFetched.current = true;
     const triggerLoad = (silent) => {
       if (activeControllerRef.current) {
         activeControllerRef.current.abort();
@@ -70,13 +71,6 @@ export function OrderProgressProvider({ children }) {
 
     triggerLoad(false);
 
-    intervalRef.current = window.setInterval(() => {
-      triggerLoad(true);
-    }, POLL_MS);
-
-    const onFocus = () => triggerLoad(true);
-    window.addEventListener('focus', onFocus);
-
     return () => {
       if (intervalRef.current != null) {
         window.clearInterval(intervalRef.current);
@@ -86,7 +80,6 @@ export function OrderProgressProvider({ children }) {
         activeControllerRef.current.abort();
         activeControllerRef.current = null;
       }
-      window.removeEventListener('focus', onFocus);
     };
   }, [loadProgress]);
 

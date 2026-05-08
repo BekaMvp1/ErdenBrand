@@ -90,9 +90,10 @@ const remoteSsl =
 
 const poolDefaults = {
   max: parseInt(process.env.DB_POOL_MAX || '5', 10) || 5,
-  min: parseInt(process.env.DB_POOL_MIN || '0', 10) || 0,
-  acquire: parseInt(process.env.DB_POOL_ACQUIRE || '30000', 10) || 30000,
-  idle: parseInt(process.env.DB_POOL_IDLE || '10000', 10) || 10000,
+  min: parseInt(process.env.DB_POOL_MIN || '1', 10) || 1,
+  acquire: parseInt(process.env.DB_POOL_ACQUIRE || '60000', 10) || 60000,
+  idle: parseInt(process.env.DB_POOL_IDLE || '600000', 10) || 600000,
+  evict: parseInt(process.env.DB_POOL_EVICT || '10000', 10) || 10000,
 };
 
 module.exports = {
@@ -104,6 +105,8 @@ module.exports = {
     ...(remoteSsl && {
       dialectOptions: {
         ssl: remoteSsl,
+        keepAlive: true,
+        keepAliveInitialDelayMillis: 10000,
       },
     }),
   },
@@ -115,6 +118,8 @@ module.exports = {
     ...(remoteSsl && {
       dialectOptions: {
         ssl: remoteSsl,
+        keepAlive: true,
+        keepAliveInitialDelayMillis: 10000,
       },
     }),
   },
@@ -126,6 +131,8 @@ module.exports = {
     ...(remoteSsl && {
       dialectOptions: {
         ssl: remoteSsl,
+        keepAlive: true,
+        keepAliveInitialDelayMillis: 10000,
       },
     }),
   },

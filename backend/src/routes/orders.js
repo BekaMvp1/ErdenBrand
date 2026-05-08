@@ -848,6 +848,9 @@ router.get('/stats', async (req, res, next) => {
 router.get('/:id/stages', async (req, res, next) => {
   try {
     const orderId = Number(req.params.id);
+    if (Number.isNaN(orderId)) {
+      return res.status(400).json({ error: 'Invalid ID' });
+    }
     if (!orderId) return res.status(400).json({ error: 'Некорректный id заказа' });
 
     let stages = await db.OrderStage.findAll({
@@ -913,6 +916,9 @@ router.get('/:id/stages', async (req, res, next) => {
 router.get('/:id/procurement', async (req, res, next) => {
   try {
     const orderId = Number(req.params.id);
+    if (Number.isNaN(orderId)) {
+      return res.status(400).json({ error: 'Invalid ID' });
+    }
     if (!orderId) return res.status(400).json({ error: 'Некорректный id заказа' });
 
     const order = await db.Order.findByPk(orderId, {
@@ -1002,6 +1008,9 @@ async function saveProcurementPlanHandler(req, res, next) {
   let t;
   try {
     const orderId = Number(req.params.id);
+    if (Number.isNaN(orderId)) {
+      return res.status(400).json({ error: 'Invalid ID' });
+    }
     if (!orderId) return res.status(400).json({ error: 'Некорректный id заказа' });
 
     if (!['admin', 'manager', 'technologist'].includes(req.user.role)) {
@@ -1179,6 +1188,9 @@ router.delete('/:id/procurement', async (req, res, next) => {
   const t = await db.sequelize.transaction();
   try {
     const orderId = Number(req.params.id);
+    if (Number.isNaN(orderId)) {
+      return res.status(400).json({ error: 'Invalid ID' });
+    }
     if (!orderId) return res.status(400).json({ error: 'Некорректный id заказа' });
 
     if (!['admin', 'manager', 'technologist'].includes(req.user.role)) {
@@ -1231,6 +1243,9 @@ router.post('/:id/procurement/complete', async (req, res, next) => {
   const t = await db.sequelize.transaction();
   try {
     const orderId = Number(req.params.id);
+    if (Number.isNaN(orderId)) {
+      return res.status(400).json({ error: 'Invalid ID' });
+    }
     const { items: bodyItems } = req.body || {};
     if (!orderId) return res.status(400).json({ error: 'Некорректный id заказа' });
 
@@ -1361,6 +1376,9 @@ router.post('/:id/procurement/complete', async (req, res, next) => {
 router.post('/:id/planning/complete', async (req, res, next) => {
   try {
     const orderId = Number(req.params.id);
+    if (Number.isNaN(orderId)) {
+      return res.status(400).json({ error: 'Invalid ID' });
+    }
     if (!orderId) return res.status(400).json({ error: 'Некорректный id заказа' });
 
     if (!['admin', 'manager', 'technologist'].includes(req.user?.role)) {
@@ -1401,6 +1419,9 @@ router.post('/:id/planning/complete', async (req, res, next) => {
 router.post('/:id/warehouse/complete', async (req, res, next) => {
   try {
     const orderId = Number(req.params.id);
+    if (Number.isNaN(orderId)) {
+      return res.status(400).json({ error: 'Invalid ID' });
+    }
     if (!orderId) return res.status(400).json({ error: 'Некорректный id заказа' });
 
     if (!['admin', 'manager', 'technologist'].includes(req.user?.role)) {
@@ -2194,6 +2215,9 @@ router.get('/:id', async (req, res, next) => {
 router.get('/:id/production-stages', async (req, res, next) => {
   try {
     const orderId = Number(req.params.id);
+    if (Number.isNaN(orderId)) {
+      return res.status(400).json({ error: 'Invalid ID' });
+    }
     if (!orderId) return res.status(400).json({ error: 'Некорректный id заказа' });
 
     const order = await db.Order.findByPk(orderId);
@@ -2324,6 +2348,9 @@ router.get('/:id/production-stages', async (req, res, next) => {
 router.put('/:id/parts', async (req, res, next) => {
   try {
     const orderId = Number(req.params.id);
+    if (Number.isNaN(orderId)) {
+      return res.status(400).json({ error: 'Invalid ID' });
+    }
     const order = await db.Order.findByPk(orderId);
     if (!order) return res.status(404).json({ error: 'Заказ не найден' });
 
@@ -2410,6 +2437,9 @@ router.put('/:id/parts', async (req, res, next) => {
 router.post('/:id/comments', async (req, res, next) => {
   try {
     const orderId = Number(req.params.id);
+    if (Number.isNaN(orderId)) {
+      return res.status(400).json({ error: 'Invalid ID' });
+    }
     const order = await db.Order.findByPk(orderId);
     if (!order) return res.status(404).json({ error: 'Заказ не найден' });
 
@@ -2527,6 +2557,9 @@ router.delete('/:id/photos/:index', async (req, res, next) => {
     }
 
     const idx = parseInt(req.params.index, 10);
+    if (isNaN(idx)) {
+      return res.status(400).json({ error: 'Invalid ID' });
+    }
     const photos = Array.isArray(order.photos) ? [...order.photos] : [];
     if (isNaN(idx) || idx < 0 || idx >= photos.length) {
       return res.status(400).json({ error: 'Неверный индекс' });

@@ -662,6 +662,46 @@ export const api = {
       const q = new URLSearchParams(params).toString();
       return request(`/api/warehouse/movements${q ? `?${q}` : ''}`);
     },
+    movementDocs: (params = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return request(`/api/warehouse/movement-docs${q ? `?${q}` : ''}`);
+    },
+    movementDocGet: (id) => request(`/api/warehouse/movement-docs/${id}`),
+    movementDocCreate: (body) =>
+      request('/api/warehouse/movement-docs', { method: 'POST', body: JSON.stringify(body) }),
+    movementDocUpdate: (id, body) =>
+      request(`/api/warehouse/movement-docs/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    movementDocPost: (id) => request(`/api/warehouse/movement-docs/${id}/post`, { method: 'POST' }),
+    warehouses: () => request('/api/warehouse/warehouses'),
+    addWarehouse: (body) =>
+      request('/api/warehouse/warehouses', { method: 'POST', body: JSON.stringify(body) }),
+    deleteWarehouse: (id) => request(`/api/warehouse/warehouses/${id}`, { method: 'DELETE' }),
+    goods: (params = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return request(`/api/warehouse/goods${q ? `?${q}` : ''}`);
+    },
+    addGood: (body) => request('/api/warehouse/goods', { method: 'POST', body: JSON.stringify(body) }),
+    updateGood: (id, body) => request(`/api/warehouse/goods/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    deleteGood: (id) => request(`/api/warehouse/goods/${id}`, { method: 'DELETE' }),
+    materials: (params = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return request(`/api/warehouse/materials${q ? `?${q}` : ''}`);
+    },
+    addMaterial: (body) => request('/api/warehouse/materials', { method: 'POST', body: JSON.stringify(body) }),
+    updateMaterial: (id, body) =>
+      request(`/api/warehouse/materials/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    deleteMaterial: (id) => request(`/api/warehouse/materials/${id}`, { method: 'DELETE' }),
+  },
+  stageReports: {
+    list: (params = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return request(`/api/stage-reports${q ? `?${q}` : ''}`);
+    },
+    get: (id) => request(`/api/stage-reports/${id}`),
+    create: (body) => request('/api/stage-reports', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id, body) => request(`/api/stage-reports/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    approve: (id) => request(`/api/stage-reports/${id}/approve`, { method: 'POST' }),
+    users: () => request('/api/stage-reports/meta/users'),
   },
   // Склад по размерам/партиям (ОТК → склад → отгрузка), без ручного ввода
   warehouseStock: {

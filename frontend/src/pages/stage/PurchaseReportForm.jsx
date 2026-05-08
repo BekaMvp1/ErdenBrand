@@ -179,6 +179,107 @@ export default function PurchaseReportForm() {
     const sum = items.reduce((s, r) => s + toNum(r.fact_qty) * toNum(r.price), 0);
     return { positions: items.length, plan, fact, sum };
   }, [items]);
+  const currentOrder = useMemo(
+    () => orders.find((o) => String(o.id) === String(header.order_id || selectedOrderId)) || {},
+    [orders, header.order_id, selectedOrderId]
+  );
+
+  const handlePrintChecklist = () => {
+    const orderInfo = {
+      number: currentOrder.order_number || currentOrder.number || currentOrder.tz || currentOrder.id || '',
+      name: currentOrder.product_name || currentOrder.name || currentOrder.model_name || '',
+      quantity: currentOrder.quantity || currentOrder.total_qty || currentOrder.total_quantity || 0,
+      date: new Date().toLocaleDateString('ru-RU'),
+    };
+    const fabrics = items.filter((i) => i.type === 'fabric' || i.тип === 'Ткань' || i.category === 'fabric');
+    const accessories = items.filter((i) => i.type === 'accessories' || i.тип === 'Фурнитура' || i.category === 'accessories');
+    const renderRows = (list, startNum = 1) => list.map((item, idx) => `
+      <tr>
+        <td>${startNum + idx}</td>
+        <td>${item.material_name || item.name || item.materialName || '—'}</td>
+        <td style="text-align:center">
+          ${item.photo || item.image
+            ? `<img src="${item.photo || item.image}" style="width:50px;height:50px;object-fit:cover;border-radius:4px"/>`
+            : '—'}
+        </td>
+        <td>${item.unit || item.ед_изм || '—'}</td>
+        <td>${item.planned_qty || item.plan_qty || item.plan || '—'}</td>
+        <td>${item.quantity || item.qty || item.кол_во || item.fact_qty || 0}</td>
+        <td></td>
+        <td></td>
+        <td></td>
+      </tr>
+    `).join('');
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8"/>
+        <title>Чек-лист закупа — ${orderInfo.number}</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { font-family: Arial, sans-serif; font-size: 12px; color: #000; padding: 20px; }
+          .header { margin-bottom: 16px; }
+          .header h2 { font-size: 16px; font-weight: bold; margin-bottom: 4px; }
+          .header-info { display: flex; gap: 40px; margin-bottom: 8px; }
+          .header-info span { font-size: 12px; }
+          .header-info b { font-weight: bold; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+          th { background: #1a237e; color: #fff; padding: 7px 5px; text-align: left; font-size: 11px; }
+          td { padding: 6px 5px; border-bottom: 1px solid #ddd; vertical-align: middle; font-size: 11px; }
+          tr:nth-child(even) td { background: #f5f5f5; }
+          .group-header td { background: #283593; color: #fff; font-weight: bold; font-size: 11px; padding: 5px; }
+          .signatures { margin-top: 30px; display: flex; gap: 80px; }
+          .sig-line { border-top: 1px solid #000; width: 200px; margin-top: 40px; font-size: 11px; padding-top: 4px; }
+          .footer { margin-top: 20px; font-size: 10px; color: #666; }
+          @media print { body { padding: 10px; } button { display: none; } }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h2>ЧЕК-ЛИСТ ЗАКУПА МАТЕРИАЛОВ</h2>
+          <div class="header-info">
+            <span><b>Заказ:</b> ${orderInfo.number}</span>
+            <span><b>Изделие:</b> ${orderInfo.name}</span>
+            <span><b>Кол-во:</b> ${orderInfo.quantity} шт</span>
+            <span><b>Дата:</b> ${orderInfo.date}</span>
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width:30px">№</th>
+              <th style="width:160px">Наименование</th>
+              <th style="width:60px">Фото</th>
+              <th style="width:60px">Ед.изм</th>
+              <th style="width:80px">Плановое кол-во</th>
+              <th style="width:80px">Кол-во итого</th>
+              <th style="width:80px">Цена</th>
+              <th style="width:100px">Поставщик</th>
+              <th style="width:80px">Сумма</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${fabrics.length > 0 ? `<tr class="group-header"><td colspan="9">ТКАНЬ</td></tr>${renderRows(fabrics, 1)}` : ''}
+            ${accessories.length > 0 ? `<tr class="group-header"><td colspan="9">ФУРНИТУРА</td></tr>${renderRows(accessories, 1)}` : ''}
+          </tbody>
+        </table>
+        <div class="signatures">
+          <div><div class="sig-line">Закупщик: ________________</div></div>
+          <div><div class="sig-line">Кладовщик: ________________</div></div>
+          <div><div class="sig-line">Руководитель: ________________</div></div>
+        </div>
+        <div class="footer">Сформировано: ${orderInfo.date} | ErdenBrand</div>
+      </body>
+      </html>
+    `;
+    const win = window.open('', '_blank', 'width=900,height=700');
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    window.setTimeout(() => win.print(), 500);
+  };
 
   const saveDoc = async (approve = false) => {
     setSaving(true);
@@ -230,6 +331,12 @@ export default function PurchaseReportForm() {
             <div className={`mt-1 inline-flex rounded px-2 py-1 text-xs ${isApproved ? 'bg-green-900 text-green-300' : 'bg-slate-700 text-slate-200'}`}>{isApproved ? 'Утверждён ✅' : 'Черновик 📝'}</div>
           </div>
           <div className="flex gap-2">
+            <button
+              onClick={handlePrintChecklist}
+              className="rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+            >
+              🖨️ Печать чек-листа
+            </button>
             {!isApproved ? <button className="rounded bg-blue-600 px-3 py-2 text-sm" disabled={saving} onClick={() => saveDoc(false)}>Сохранить</button> : null}
             {!isApproved ? <button className="rounded bg-green-600 px-3 py-2 text-sm" disabled={saving} onClick={() => saveDoc(true)}>✅ Утвердить</button> : null}
           </div>

@@ -11,6 +11,7 @@ module.exports = (sequelize, DataTypes) => {
       plan_qty: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
       fact_qty: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
       price: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
+      supplier: { type: DataTypes.STRING(255), allowNull: true },
       note: { type: DataTypes.STRING(500), allowNull: true },
     },
     {

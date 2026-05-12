@@ -19,7 +19,7 @@ function isLikelyNetworkError(err) {
 
 async function request(path, options = {}) {
   const maxRetries = 3;
-  const timeoutMs =
+  const _timeoutMs =
     Number.isFinite(Number(options.timeout)) && Number(options.timeout) > 0
       ? Number(options.timeout)
       : API_TIMEOUT_MS;
@@ -673,6 +673,7 @@ export const api = {
       request(`/api/warehouse/movement-docs/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
     movementDocPost: (id) => request(`/api/warehouse/movement-docs/${id}/post`, { method: 'POST' }),
     warehouses: () => request('/api/warehouse/warehouses'),
+    refs: () => request('/api/warehouse/refs'),
     addWarehouse: (body) =>
       request('/api/warehouse/warehouses', { method: 'POST', body: JSON.stringify(body) }),
     deleteWarehouse: (id) => request(`/api/warehouse/warehouses/${id}`, { method: 'DELETE' }),
@@ -687,10 +688,27 @@ export const api = {
       const q = new URLSearchParams(params).toString();
       return request(`/api/warehouse/materials${q ? `?${q}` : ''}`);
     },
+    stock: (params = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return request(`/api/warehouse/stock${q ? `?${q}` : ''}`);
+    },
     addMaterial: (body) => request('/api/warehouse/materials', { method: 'POST', body: JSON.stringify(body) }),
     updateMaterial: (id, body) =>
       request(`/api/warehouse/materials/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
     deleteMaterial: (id) => request(`/api/warehouse/materials/${id}`, { method: 'DELETE' }),
+  },
+  movements: {
+    list: (params = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return request(`/api/movements${q ? `?${q}` : ''}`);
+    },
+    create: (body) =>
+      request('/api/movements', {
+        method: 'POST',
+        body: JSON.stringify(body ?? {}),
+      }),
+    get: (id) => request(`/api/movements/${id}`),
+    approve: (id) => request(`/api/movements/${id}/approve`, { method: 'PUT' }),
   },
   stageReports: {
     list: (params = {}) => {
@@ -819,6 +837,19 @@ export const api = {
     deleteOperation: (id) =>
       request(`/api/references/operations/${id}`, { method: 'DELETE' }),
     orderStatus: () => request('/api/references/order-status'),
+    suppliers: () => request('/api/references/suppliers'),
+    addSupplier: (data) =>
+      request('/api/references/suppliers', {
+        method: 'POST',
+        body: JSON.stringify(data ?? {}),
+      }),
+    updateSupplier: (id, data) =>
+      request(`/api/references/suppliers/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data ?? {}),
+      }),
+    deleteSupplier: (id) =>
+      request(`/api/references/suppliers/${id}`, { method: 'DELETE' }),
     cuttingTypes: (all) =>
       request(`/api/references/cutting-types${all ? '?all=1' : ''}`),
     addCuttingType: (name) =>

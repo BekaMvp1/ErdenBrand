@@ -11,6 +11,26 @@ function money(v) {
   return `${Math.round(toNum(v)).toLocaleString('ru-RU')} сом`;
 }
 
+function itemLineSum(item) {
+  const explicit =
+    item?.total_sum ?? item?.amount ?? item?.sum_total ?? item?.sum;
+  const sum = parseFloat(explicit);
+  if (Number.isFinite(sum) && sum > 0) return toNum(sum);
+
+  const qty = parseFloat(
+    item?.fact_qty ?? item?.purchased_qty ?? item?.quantity ?? 0
+  );
+  const price = parseFloat(
+    item?.price ?? item?.price_per_unit ?? item?.unit_price ?? 0
+  );
+  return toNum((Number.isFinite(qty) ? qty : 0) * (Number.isFinite(price) ? price : 0));
+}
+
+function docTotalFromItems(doc) {
+  const list = doc.Items || doc.items || [];
+  return list.reduce((acc, item) => acc + itemLineSum(item), 0);
+}
+
 export default function PurchaseReportList() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -67,7 +87,7 @@ export default function PurchaseReportList() {
   const metrics = useMemo(() => {
     const docs = rows.length;
     const approved = rows.filter((r) => r.status === 'approved').length;
-    const totalSum = rows.reduce((s, r) => s + (Array.isArray(r.Items) ? r.Items.reduce((ss, it) => ss + toNum(it.fact_qty) * toNum(it.price), 0) : 0), 0);
+    const totalSum = rows.reduce((s, r) => s + docTotalFromItems(r), 0);
     return { docs, approved, totalSum };
   }, [rows]);
 
@@ -100,7 +120,7 @@ export default function PurchaseReportList() {
       <div className="space-y-3">
         {loading ? <div className="rounded border border-white/10 p-4 text-center">Загрузка...</div> : null}
         {!loading && rows.map((r) => {
-          const sum = (r.Items || []).reduce((s, it) => s + toNum(it.fact_qty) * toNum(it.price), 0);
+          const sum = docTotalFromItems(r);
           return (
             <div key={r.id} className="rounded-xl border border-[#2a2a2a] bg-[#0d1117] p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -109,9 +129,19 @@ export default function PurchaseReportList() {
               <div className="mt-1 text-sm text-white/80">Заказ: {`${r.Order?.tz_code || r.order_id} · ${r.Order?.model_name || '—'}`}</div>
               <div className="mt-1 text-sm text-white/80">Позиций: {(r.Items || []).length} | Сумма: {money(sum)}</div>
               <div className="mt-1 text-sm text-white/80">Исполнитель: {r.User?.name || '—'}</div>
-              <div className="mt-2 flex justify-end gap-2">
-                <button className="rounded bg-white/10 px-2 py-1 text-xs" onClick={() => navigate(`/purchase/report/${r.id}`)}>👁 Просмотр</button>
-                {r.status !== 'approved' ? <button className="rounded bg-sky-700 px-2 py-1 text-xs" onClick={() => navigate(`/purchase/report/${r.id}`)}>✏️ Изменить</button> : null}
+              <div className="mt-2 flex flex-wrap justify-end gap-2">
+                <button type="button" className="rounded bg-white/10 px-2 py-1 text-xs" onClick={() => navigate(`/purchase/report/${r.id}`)}>👁 Просмотр</button>
+                {r.status === 'approved' ? (
+                  <button
+                    type="button"
+                    className="rounded bg-yellow-600 px-3 py-2 text-sm text-white hover:bg-yellow-700"
+                    onClick={() => navigate(`/purchase/report/${r.id}?edit=true`)}
+                  >
+                    ✏️ Редактировать
+                  </button>
+                ) : (
+                  <button type="button" className="rounded bg-sky-700 px-2 py-1 text-xs" onClick={() => navigate(`/purchase/report/${r.id}`)}>✏️ Изменить</button>
+                )}
               </div>
             </div>
           );

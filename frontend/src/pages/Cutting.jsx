@@ -1641,22 +1641,24 @@ export default function Cutting() {
     <div>
       <div className="no-print relative flex flex-wrap items-center justify-between gap-4 mb-4 sm:mb-6 pr-0">
         <h1 className="text-xl md:text-2xl lg:text-3xl font-bold text-[#ECECEC] dark:text-dark-text">Раскрой</h1>
-        <button
-          type="button"
-          onClick={async () => {
-            setIsPrinting(true);
-            try {
-              await printAllCuttingDocs();
-            } finally {
-              setIsPrinting(false);
-            }
-          }}
-          disabled={isPrinting}
-          className="no-print inline-flex items-center gap-1.5 sm:absolute sm:top-0 sm:right-0 px-[18px] py-2 rounded-md text-[13px] font-semibold text-white border-0 cursor-pointer shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
-          style={{ background: '#1a237e' }}
-        >
-          {isPrinting ? '⏳ Подготовка...' : '🖨 Печать'}
-        </button>
+        <div className="no-print flex flex-wrap gap-2 sm:absolute sm:top-0 sm:right-0 shrink-0">
+          <button
+            type="button"
+            onClick={async () => {
+              setIsPrinting(true);
+              try {
+                await printAllCuttingDocs();
+              } finally {
+                setIsPrinting(false);
+              }
+            }}
+            disabled={isPrinting}
+            className="inline-flex items-center gap-1.5 px-[18px] py-2 rounded-md text-[13px] font-semibold text-white border-0 cursor-pointer shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
+            style={{ background: '#1a237e' }}
+          >
+            {isPrinting ? '⏳ Подготовка...' : '🖨 Печать'}
+          </button>
+        </div>
       </div>
 
       <>

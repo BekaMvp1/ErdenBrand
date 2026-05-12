@@ -62,6 +62,176 @@ router.get('/items', async (req, res, next) => {
 });
 
 /**
+ * GET /api/warehouse/refs
+ * Справочник складов (для форм перемещений и т.п.)
+ */
+router.get('/refs', async (req, res, next) => {
+  try {
+    const refs = await db.WarehouseRef.findAll({
+      order: [['name', 'ASC']],
+    });
+    res.json(refs);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/warehouse/stock
+ * Остатки материалов (warehouse_materials) для вкладки «Остатки».
+ * query: order_id — только позиции, по которым были приходы с этим заказом
+ */
+router.get('/stock', async (req, res, next) => {
+  try {
+    const { order_id, type, warehouse_id } = req.query;
+    const where = { qty: { [Op.gt]: 0 } };
+    if (warehouse_id) {
+      const wid = toIntOrNaN(warehouse_id);
+      if (Number.isNaN(wid)) return res.status(400).json({ error: 'Invalid ID' });
+      where.warehouse_id = wid;
+    }
+    if (type && VALID_MATERIAL_TYPES.includes(String(type))) {
+      where.type = String(type);
+    }
+
+    if (order_id) {
+      const oid = toIntOrNaN(order_id);
+      if (Number.isNaN(oid)) return res.status(400).json({ error: 'Invalid ID' });
+      const movRows = await db.WarehouseMovement.findAll({
+        where: {
+          order_id: oid,
+          movement_kind: 'materials',
+          ref_id: { [Op.ne]: null },
+        },
+        attributes: ['ref_id'],
+        raw: true,
+      });
+      const refIds = [...new Set(movRows.map((m) => m.ref_id).filter(Boolean))];
+      if (refIds.length === 0) {
+        return res.json([]);
+      }
+      where.id = { [Op.in]: refIds };
+    }
+
+    const rows = await db.WarehouseMaterial.findAll({
+      where,
+      include: [{ model: db.WarehouseRef, as: 'Warehouse', attributes: ['id', 'name'] }],
+      order: [
+        ['warehouse_id', 'ASC'],
+        ['name', 'ASC'],
+        ['received_at', 'ASC'],
+        ['id', 'ASC'],
+      ],
+    });
+
+    /** @type {Record<string, object>} */
+    const grouped = {};
+    for (const b of rows) {
+      const key = `${b.warehouse_id}_${b.name}_${b.type}`;
+      if (!grouped[key]) {
+        grouped[key] = {
+          warehouse_id: b.warehouse_id,
+          warehouse_name: b.Warehouse?.name || `Склад #${b.warehouse_id}`,
+          name: b.name,
+          material_name: b.name,
+          type: b.type,
+          material_type: b.type,
+          unit: b.unit,
+          total_qty: 0,
+          total_sum: 0,
+          batches: [],
+          avg_price: 0,
+        };
+      }
+      const qty = toMoney(b.qty);
+      const price = toMoney(b.price);
+      const sum = toMoney(
+        parseFloat(b.total_sum || 0) ||
+          parseFloat(b.qty || 0) * parseFloat(b.price || 0)
+      );
+
+      grouped[key].total_qty = toMoney(grouped[key].total_qty + qty);
+      grouped[key].total_sum = toMoney(grouped[key].total_sum + sum);
+      grouped[key].batches.push({
+        id: b.id,
+        qty,
+        price,
+        sum,
+        batch_number: b.batch_number,
+        received_at: b.received_at || b.created_at,
+      });
+    }
+
+    for (const g of Object.values(grouped)) {
+      g.batches.sort((a, b) => {
+        const da = new Date(a.received_at || 0).getTime();
+        const db = new Date(b.received_at || 0).getTime();
+        if (da !== db) return da - db;
+        return (a.id || 0) - (b.id || 0);
+      });
+    }
+
+    const batchIdsForLabel = rows.map((r) => r.id).filter(Boolean);
+    let lastIncomeByRef = new Map();
+    if (batchIdsForLabel.length > 0) {
+      const incomeRows = await db.WarehouseMovement.findAll({
+        where: {
+          ref_id: { [Op.in]: batchIdsForLabel },
+          movement_kind: 'materials',
+          type: 'ПРИХОД',
+        },
+        attributes: ['ref_id', 'order_id', 'comment', 'created_at'],
+        order: [['created_at', 'DESC']],
+        raw: true,
+      });
+      for (const ir of incomeRows) {
+        if (ir.ref_id != null && !lastIncomeByRef.has(ir.ref_id)) {
+          lastIncomeByRef.set(ir.ref_id, ir);
+        }
+      }
+    }
+
+    const result = Object.values(grouped).map((g) => {
+      const fifoFirst = g.batches[0];
+      const inc = fifoFirst ? lastIncomeByRef.get(fifoFirst.id) : null;
+      let source_label = '—';
+      if (inc) {
+        const prMatch = String(inc.comment || '').match(/закупа\s*#(\d+)/i);
+        source_label = `Заказ ${inc.order_id ?? '—'}${prMatch ? ` / Закуп ${prMatch[1]}` : ''}`;
+      }
+      const avg_price =
+        g.total_qty > 0 ? Math.round((g.total_sum / g.total_qty) * 100) / 100 : 0;
+      const qtyNum = toMoney(g.total_qty);
+      return {
+        id: fifoFirst?.id ?? null,
+        warehouse_id: g.warehouse_id,
+        warehouse_name: g.warehouse_name,
+        name: g.name,
+        material_name: g.material_name,
+        type: g.type,
+        material_type: g.material_type,
+        unit: g.unit,
+        total_qty: qtyNum,
+        total_sum: toMoney(g.total_sum),
+        avg_price,
+        quantity: qtyNum,
+        qty: qtyNum,
+        price: avg_price,
+        price_per_unit: avg_price,
+        batches: g.batches,
+        supplier: '',
+        source_label,
+      };
+    });
+
+    res.json(result);
+  } catch (err) {
+    console.error('[warehouse/stock]:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * POST /api/warehouse/items
  * Создать позицию (admin/manager)
  */
@@ -289,11 +459,23 @@ router.post('/movements', async (req, res, next) => {
  */
 router.get('/movements', async (req, res, next) => {
   try {
-    const { item_id, order_id, movement_kind, from_warehouse_id, to_warehouse_id, date_from, date_to } = req.query;
+    const {
+      item_id,
+      order_id,
+      movement_kind,
+      from_warehouse_id,
+      to_warehouse_id,
+      date_from,
+      date_to,
+      movement_type,
+    } = req.query;
     const where = {};
     if (item_id) where.item_id = item_id;
     if (order_id) where.order_id = order_id;
     if (movement_kind) where.movement_kind = movement_kind;
+    if (movement_type && VALID_MOVEMENT_TYPES.includes(String(movement_type))) {
+      where.type = String(movement_type);
+    }
     if (from_warehouse_id) {
       const fromId = toIntOrNaN(from_warehouse_id);
       if (Number.isNaN(fromId)) return res.status(400).json({ error: 'Invalid ID' });
@@ -490,13 +672,17 @@ router.post('/materials', async (req, res, next) => {
     if (!VALID_MATERIAL_TYPES.includes(type)) {
       return res.status(400).json({ error: 'Тип должен быть fabric или accessories' });
     }
+    const q = toMoney(body.qty);
+    const p = toMoney(body.price);
     const payload = {
       name: String(body.name || '').trim(),
       type,
       unit: String(body.unit || 'шт').trim() || 'шт',
       warehouse_id: toIntOrNaN(body.warehouse_id),
-      qty: toMoney(body.qty),
-      price: toMoney(body.price),
+      qty: q,
+      price: p,
+      total_sum: toMoney(q * p),
+      batch_number: body.batch_number ? String(body.batch_number).slice(0, 80) : null,
       received_at: body.received_at || null,
     };
     if (!payload.name) return res.status(400).json({ error: 'Укажите наименование' });
@@ -522,13 +708,16 @@ router.put('/materials/:id', async (req, res, next) => {
     if (!VALID_MATERIAL_TYPES.includes(nextType)) {
       return res.status(400).json({ error: 'Тип должен быть fabric или accessories' });
     }
+    const nextQty = body.qty != null ? toMoney(body.qty) : toMoney(row.qty);
+    const nextPrice = body.price != null ? toMoney(body.price) : toMoney(row.price);
     await row.update({
       name: body.name != null ? String(body.name).trim() : row.name,
       type: nextType,
       unit: body.unit != null ? String(body.unit).trim() || 'шт' : row.unit,
       warehouse_id: body.warehouse_id != null ? toIntOrNaN(body.warehouse_id) : row.warehouse_id,
-      qty: body.qty != null ? toMoney(body.qty) : row.qty,
-      price: body.price != null ? toMoney(body.price) : row.price,
+      qty: nextQty,
+      price: nextPrice,
+      total_sum: toMoney(nextQty * nextPrice),
       received_at: body.received_at != null ? (body.received_at || null) : row.received_at,
     });
     res.json(row);

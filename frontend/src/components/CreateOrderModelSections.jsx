@@ -107,6 +107,7 @@ export default function CreateOrderModelSections({
   setSewingOps,
   otkOps,
   setOtkOps,
+  onPrintPurchaseChecklist,
 }) {
   const [open, setOpen] = useState({
     fabric: true,
@@ -397,9 +398,20 @@ export default function CreateOrderModelSections({
   return (
     <>
       <div className="pt-2 mt-2">
-        <h2 className="text-lg font-semibold text-[#ECECEC] dark:text-dark-text mb-4">
-          Ткань, фурнитура и операции
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <h2 className="text-lg font-semibold text-[#ECECEC] dark:text-dark-text m-0">
+            Ткань, фурнитура и операции
+          </h2>
+          {typeof onPrintPurchaseChecklist === 'function' ? (
+            <button
+              type="button"
+              onClick={onPrintPurchaseChecklist}
+              className="rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+            >
+              🖨️ Чек-лист закупа
+            </button>
+          ) : null}
+        </div>
         <p className="text-xs text-[#ECECEC]/70 mb-4">
           Итого по ткани/фурнитуре: кол-во на ед. × общее количество изделий ({totalQty || 0}). Сумма в сомах:
           итого количество × расценка за ед. изм. Операции: сумма строки = расценка × общее количество. Подставить

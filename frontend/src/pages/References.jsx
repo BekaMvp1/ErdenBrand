@@ -2,7 +2,7 @@
  * Справочники
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { useRefreshOnVisible } from '../hooks/useRefreshOnVisible';
@@ -83,6 +83,19 @@ export default function References() {
   const [addingWorkshop, setAddingWorkshop] = useState(false);
   const [deletingWorkshopId, setDeletingWorkshopId] = useState(null);
 
+  const emptySupplierForm = () => ({
+    id: null,
+    name: '',
+    contact: '',
+    phone: '',
+    address: '',
+    note: '',
+  });
+  const [supplierForm, setSupplierForm] = useState(emptySupplierForm);
+  const [savingSupplier, setSavingSupplier] = useState(false);
+  const [deletingSupplierId, setDeletingSupplierId] = useState(null);
+  const excelImportRef = useRef(null);
+
   const load = async () => {
     if (MODEL_REF_TAB_IDS.has(tab)) {
       setData([]);
@@ -98,6 +111,7 @@ export default function References() {
       else if (tab === 'clients') res = await api.references.clients();
       else if (tab === 'operations') res = await api.references.operations();
       else if (tab === 'order-status') res = await api.references.orderStatus();
+      else if (tab === 'suppliers') res = await api.references.suppliers();
       else if (tab === 'workshops') res = await api.workshops.list(!!['admin', 'manager'].includes(user?.role));
       setData(res);
     } catch (err) {
@@ -295,6 +309,81 @@ export default function References() {
     }
   };
 
+  const handleSupplierSave = async (e) => {
+    e.preventDefault();
+    const name = supplierForm.name.trim();
+    if (!name) {
+      alert('Укажите название');
+      return;
+    }
+    setSavingSupplier(true);
+    try {
+      const payload = {
+        name,
+        contact: supplierForm.contact.trim() || null,
+        phone: supplierForm.phone.trim() || null,
+        address: supplierForm.address.trim() || null,
+        note: supplierForm.note.trim() || null,
+      };
+      if (supplierForm.id) {
+        await api.references.updateSupplier(supplierForm.id, payload);
+      } else {
+        await api.references.addSupplier(payload);
+      }
+      setSupplierForm(emptySupplierForm());
+      load();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSavingSupplier(false);
+    }
+  };
+
+  const handleDeleteSupplier = async (id) => {
+    if (!window.confirm('Удалить поставщика?')) return;
+    setDeletingSupplierId(id);
+    try {
+      await api.references.deleteSupplier(id);
+      if (supplierForm.id === id) setSupplierForm(emptySupplierForm());
+      load();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setDeletingSupplierId(null);
+    }
+  };
+
+  const handleExcelImport = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const XLSX = await import('xlsx');
+        const wb = XLSX.read(evt.target.result, { type: 'binary' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws);
+        for (const row of rows) {
+          const name = row.name || row['Название'] || row['Поставщик'];
+          if (!name) continue;
+          await api.references.addSupplier({
+            name: String(name).trim(),
+            contact: row.contact || row['Контакт'] || '',
+            phone: row.phone || row['Телефон'] || '',
+            address: row.address || row['Адрес'] || '',
+            note: row.note || row['Примечание'] || '',
+          });
+        }
+        load();
+        alert('Импорт завершён');
+      } catch (err) {
+        alert(`Ошибка импорта: ${err.message}`);
+      }
+    };
+    reader.readAsBinaryString(file);
+    e.target.value = '';
+  };
+
   const handleAddBuildingFloor = async (e) => {
     e.preventDefault();
     const name = newBuildingFloorName.trim();
@@ -449,6 +538,7 @@ export default function References() {
     { id: 'building-floors', label: 'Этажи' },
     { id: 'cutting-types', label: 'Типы раскроя' },
     { id: 'clients', label: 'Клиенты' },
+    { id: 'suppliers', label: 'Поставщики' },
     { id: 'operations', label: 'Операции' },
     { id: 'order-status', label: 'Статусы заказов' },
     { id: 'fabric-names', label: 'Ткани' },
@@ -604,6 +694,94 @@ export default function References() {
           </button>
         </form>
       )}
+      {tab === 'suppliers' && ['admin', 'manager'].includes(user?.role) && (
+        <div className="mb-4 flex flex-col gap-3">
+          <div className="flex flex-wrap gap-2 items-center">
+            <button
+              type="button"
+              onClick={() => setSupplierForm(emptySupplierForm())}
+              className="px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700"
+            >
+              + Добавить поставщика
+            </button>
+            <button
+              type="button"
+              onClick={() => excelImportRef.current?.click()}
+              className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 text-[#ECECEC] dark:text-dark-text hover:bg-accent-2"
+            >
+              📥 Импорт Excel
+            </button>
+            <input
+              ref={excelImportRef}
+              type="file"
+              accept=".xlsx,.xls"
+              className="hidden"
+              onChange={handleExcelImport}
+            />
+          </div>
+          <form onSubmit={handleSupplierSave} className="flex flex-col gap-2 rounded-lg border border-white/20 p-4">
+            <div className="text-sm font-medium text-[#ECECEC] dark:text-dark-text">
+              {supplierForm.id ? `Редактирование #${supplierForm.id}` : 'Новый поставщик'}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <input
+                type="text"
+                required
+                value={supplierForm.name}
+                onChange={(e) => setSupplierForm((p) => ({ ...p, name: e.target.value }))}
+                placeholder="Название *"
+                className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
+              />
+              <input
+                type="text"
+                value={supplierForm.contact}
+                onChange={(e) => setSupplierForm((p) => ({ ...p, contact: e.target.value }))}
+                placeholder="Контакт (ФИО)"
+                className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
+              />
+              <input
+                type="text"
+                value={supplierForm.phone}
+                onChange={(e) => setSupplierForm((p) => ({ ...p, phone: e.target.value }))}
+                placeholder="Телефон"
+                className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
+              />
+              <input
+                type="text"
+                value={supplierForm.address}
+                onChange={(e) => setSupplierForm((p) => ({ ...p, address: e.target.value }))}
+                placeholder="Адрес"
+                className="px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
+              />
+              <input
+                type="text"
+                value={supplierForm.note}
+                onChange={(e) => setSupplierForm((p) => ({ ...p, note: e.target.value }))}
+                placeholder="Примечание"
+                className="md:col-span-2 px-4 py-2 rounded-lg bg-accent-2/80 dark:bg-dark-800 border border-white/25 dark:border-white/25 text-[#ECECEC] dark:text-dark-text"
+              />
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                disabled={savingSupplier || !supplierForm.name.trim()}
+                className="px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50"
+              >
+                {savingSupplier ? 'Сохранение...' : supplierForm.id ? 'Сохранить изменения' : 'Сохранить'}
+              </button>
+              {supplierForm.id ? (
+                <button
+                  type="button"
+                  onClick={() => setSupplierForm(emptySupplierForm())}
+                  className="px-4 py-2 rounded-lg bg-slate-600 text-white"
+                >
+                  Отмена
+                </button>
+              ) : null}
+            </div>
+          </form>
+        </div>
+      )}
       {tab === 'operations' && ['admin', 'manager'].includes(user?.role) && (
         <form onSubmit={handleAddOperation} className="mb-4 flex flex-wrap gap-2 items-end">
           <input
@@ -660,7 +838,88 @@ export default function References() {
         </form>
       )}
 
-      {MODEL_REF_SECTIONS[tab] ? (
+      {tab === 'suppliers' ? (
+        <NeonCard className="overflow-hidden p-0">
+          {loading ? (
+            <div className="p-8 text-center text-[#ECECEC]/80 dark:text-dark-text/80">Загрузка...</div>
+          ) : Array.isArray(data) ? (
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-white/20 dark:border-white/20">
+                  <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">№</th>
+                  <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Название</th>
+                  <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Контакт</th>
+                  <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Телефон</th>
+                  <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Адрес</th>
+                  <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">Примечание</th>
+                  <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">✏️</th>
+                  <th className="text-left px-4 py-3 text-sm font-medium text-[#ECECEC] dark:text-dark-text/90">🗑</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-8 text-[#ECECEC]/80 dark:text-dark-text/80">
+                      Нет данных
+                    </td>
+                  </tr>
+                ) : (
+                  data.map((row, idx) => (
+                    <tr key={row.id} className="border-b border-white/15 dark:border-white/15">
+                      <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80">{idx + 1}</td>
+                      <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80">{row.name ?? '—'}</td>
+                      <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80">{row.contact ?? '—'}</td>
+                      <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80">{row.phone ?? '—'}</td>
+                      <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80">{row.address ?? '—'}</td>
+                      <td className="px-4 py-3 text-[#ECECEC]/90 dark:text-dark-text/80">{row.note ?? '—'}</td>
+                      <td className="px-4 py-3">
+                        {['admin', 'manager'].includes(user?.role) ? (
+                          <button
+                            type="button"
+                            title="Редактировать"
+                            onClick={() =>
+                              setSupplierForm({
+                                id: row.id,
+                                name: row.name || '',
+                                contact: row.contact || '',
+                                phone: row.phone || '',
+                                address: row.address || '',
+                                note: row.note || '',
+                              })
+                            }
+                            className="px-2 py-1 text-sm rounded bg-slate-600/90 hover:bg-slate-600 text-white"
+                          >
+                            ✏️
+                          </button>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {['admin', 'manager'].includes(user?.role) ? (
+                          <button
+                            type="button"
+                            title="Удалить"
+                            onClick={() => handleDeleteSupplier(row.id)}
+                            disabled={deletingSupplierId === row.id}
+                            className="px-2 py-1 text-sm rounded bg-red-600/80 hover:bg-red-600 text-white disabled:opacity-50"
+                          >
+                            {deletingSupplierId === row.id ? '...' : '🗑'}
+                          </button>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          ) : (
+            <div className="p-8 text-[#ECECEC]/80 dark:text-dark-text/80">Нет данных</div>
+          )}
+        </NeonCard>
+      ) : MODEL_REF_SECTIONS[tab] ? (
         <NeonCard className="overflow-hidden p-4 md:p-6">
           <RefSection
             title={MODEL_REF_SECTIONS[tab].title}

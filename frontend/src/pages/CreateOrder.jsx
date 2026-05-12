@@ -391,6 +391,129 @@ export default function CreateOrder() {
     });
   };
 
+  const handlePrintPurchaseChecklist = () => {
+    const orderNum = String(form?.tz_code ?? '').trim() || '—';
+    const productName = String(form?.model_name ?? '').trim() || '—';
+    const qty = totalQty || 0;
+    const date = new Date().toLocaleDateString('ru-RU');
+
+    const fabricsList = filterMaterialRowsForSubmit(fabric);
+    const accessoriesList = filterMaterialRowsForSubmit(accessories);
+
+    const escHtml = (v) =>
+      String(v ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+
+    const fmtRowTotal = (item) => {
+      const q = parseFloat(String(item.qtyPerUnit ?? '').replace(',', '.')) || 0;
+      const override = parseFloat(String(item.qtyTotal ?? '').replace(',', '.')) || 0;
+      const t = q * (override > 0 ? override : Number.isFinite(totalQty) ? totalQty : 0);
+      if (!Number.isFinite(t)) return '—';
+      return Number.isInteger(t) ? String(t) : t.toFixed(2).replace(/\.?0+$/, '');
+    };
+
+    const renderRows = (list, startNum = 1) =>
+      list
+        .map(
+          (item, idx) => `
+    <tr>
+      <td style="padding:6px;border-bottom:1px solid #ddd">${startNum + idx}</td>
+      <td style="padding:6px;border-bottom:1px solid #ddd">
+        ${escHtml(item.name || item.baseName || '—')}
+      </td>
+      <td style="padding:6px;border-bottom:1px solid #ddd;text-align:center">
+        ${
+          item.photo || item.image
+            ? `<img src="${escHtml(item.photo || item.image)}" alt="" style="width:48px;height:48px;object-fit:cover;border-radius:4px"/>`
+            : '—'
+        }
+      </td>
+      <td style="padding:6px;border-bottom:1px solid #ddd">${escHtml(item.unit || '—')}</td>
+      <td style="padding:6px;border-bottom:1px solid #ddd">${escHtml(item.qtyPerUnit || item.qty_per_unit || '—')}</td>
+      <td style="padding:6px;border-bottom:1px solid #ddd">${escHtml(fmtRowTotal(item))}</td>
+      <td style="padding:6px;border-bottom:1px solid #ddd"></td>
+      <td style="padding:6px;border-bottom:1px solid #ddd"></td>
+      <td style="padding:6px;border-bottom:1px solid #ddd"></td>
+    </tr>`,
+        )
+        .join('');
+
+    const groupHeader = (title) => `
+    <tr>
+      <td colspan="9" style="background:#1a237e;color:#fff;font-weight:bold;padding:6px 8px;font-size:12px">
+        ${escHtml(title)}
+      </td>
+    </tr>`;
+
+    const accStart = fabricsList.length > 0 ? fabricsList.length + 1 : 1;
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Чек-лист закупа — ${escHtml(orderNum)}</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box }
+    body { font-family:Arial,sans-serif; font-size:12px; color:#000; padding:20px }
+    h2 { font-size:16px; font-weight:bold; margin-bottom:8px }
+    .info { display:flex; gap:30px; margin-bottom:14px; flex-wrap:wrap }
+    .info span { font-size:12px }
+    table { width:100%; border-collapse:collapse; margin-bottom:16px }
+    th { background:#1a237e; color:#fff; padding:7px 6px; text-align:left; font-size:11px }
+    tr:nth-child(even) td { background:#f9f9f9 }
+    .sig { margin-top:36px; display:flex; gap:60px }
+    .sig-line { border-top:1px solid #000; width:200px; margin-top:40px; font-size:11px; padding-top:4px }
+    .footer { margin-top:16px; font-size:10px; color:#888 }
+    @media print { body { padding:10px } }
+  </style>
+</head>
+<body>
+  <h2>ЧЕК-ЛИСТ ЗАКУПА МАТЕРИАЛОВ</h2>
+  <div class="info">
+    <span><b>Заказ:</b> ${escHtml(orderNum)}</span>
+    <span><b>Изделие:</b> ${escHtml(productName)}</span>
+    <span><b>Кол-во:</b> ${qty} шт</span>
+    <span><b>Дата:</b> ${escHtml(date)}</span>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:28px">№</th>
+        <th style="width:150px">Наименование</th>
+        <th style="width:58px">Фото</th>
+        <th style="width:55px">Ед.изм</th>
+        <th style="width:80px">Кол-во на ед.</th>
+        <th style="width:75px">Итого</th>
+        <th style="width:75px">Цена</th>
+        <th style="width:100px">Поставщик</th>
+        <th style="width:75px">Сумма</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${fabricsList.length > 0 ? groupHeader('ТКАНЬ') + renderRows(fabricsList, 1) : ''}
+      ${accessoriesList.length > 0 ? groupHeader('ФУРНИТУРА') + renderRows(accessoriesList, accStart) : ''}
+    </tbody>
+  </table>
+  <div class="sig">
+    <div><div class="sig-line">Закупщик: ________________</div></div>
+    <div><div class="sig-line">Кладовщик: ________________</div></div>
+    <div><div class="sig-line">Руководитель: ________________</div></div>
+  </div>
+  <div class="footer">Сформировано: ${escHtml(date)} | ErdenBrand</div>
+</body>
+</html>`;
+
+    const win = window.open('', '_blank', 'width=900,height=700');
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => win.print(), 500);
+  };
+
   const handleAddSizeFromInput = () => {
     if (newSizeInput.trim()) addSize(newSizeInput.trim());
   };
@@ -947,6 +1070,7 @@ export default function CreateOrder() {
           setSewingOps={setSewingOps}
           otkOps={otkOps}
           setOtkOps={setOtkOps}
+          onPrintPurchaseChecklist={handlePrintPurchaseChecklist}
         />
 
         <div

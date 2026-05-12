@@ -23,6 +23,7 @@ const procurementRoutes = require("./routes/procurement");
 const purchaseDocumentsRoutes = require("./routes/purchaseDocuments");
 const cuttingRoutes = require("./routes/cutting");
 const warehouseRoutes = require("./routes/warehouse");
+const movementsRoutes = require("./routes/movements");
 const warehouseStockRoutes = require("./routes/warehouseStock");
 // sewingPlans отключён: единая цепочка через production_plan_day + sewing_fact + sewing_batches
 // const sewingPlansRoutes = require("./routes/sewingPlans");
@@ -276,6 +277,14 @@ app.use(
   technologistFloorOnly,
   operatorRestricted,
   warehouseRoutes,
+);
+app.use(
+  "/api/movements",
+  authenticate,
+  requireRole("admin", "manager", "technologist"),
+  technologistFloorOnly,
+  operatorRestricted,
+  movementsRoutes,
 );
 app.use(
   "/api/warehouse-stock",

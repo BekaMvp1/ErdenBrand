@@ -11,6 +11,115 @@ const express = require('express');
 const router = express.Router();
 const VALID_STATUSES = ['sent', 'received'];
 
+function toMoney(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
+}
+
+function normalizeMaterialKey(name) {
+  return String(name || '').trim().toLowerCase();
+}
+
+function collectMaterialNamesFromJson(raw, intoSet) {
+  if (!raw || !intoSet) return;
+  if (Array.isArray(raw)) {
+    raw.forEach((r) => {
+      const name = r?.name ?? r?.baseName ?? '';
+      if (name && String(name).trim()) intoSet.add(normalizeMaterialKey(name));
+    });
+    return;
+  }
+  if (typeof raw === 'object' && Array.isArray(raw.groups)) {
+    raw.groups.forEach((g) => {
+      (g?.rows || []).forEach((r) => {
+        const name = r?.name ?? '';
+        if (name && String(name).trim()) intoSet.add(normalizeMaterialKey(name));
+      });
+    });
+  }
+}
+
+/** По совпадению имени с fabric_data / fittings_data заказа */
+function resolveProcurementMaterialType(order, materialName) {
+  const key = normalizeMaterialKey(materialName);
+  const fabricNames = new Set();
+  const fittingNames = new Set();
+  collectMaterialNamesFromJson(order?.fabric_data, fabricNames);
+  collectMaterialNamesFromJson(order?.fittings_data, fittingNames);
+  if (fittingNames.has(key)) return 'accessories';
+  if (fabricNames.has(key)) return 'fabric';
+  return 'fabric';
+}
+
+async function getDefaultMaterialsWarehouseId(transaction) {
+  const first = await db.WarehouseRef.findOne({
+    order: [['id', 'ASC']],
+    attributes: ['id'],
+    transaction,
+  });
+  return first?.id || 1;
+}
+
+/**
+ * Приход материалов на склад после завершения закупа.
+ */
+async function applyProcurementReceiptToWarehouse(pr, orderRow, userId, transaction) {
+  const warehouseId = await getDefaultMaterialsWarehouseId(transaction);
+  const items = pr.ProcurementItems || [];
+
+  for (const item of items) {
+    const pq = toMoney(item.purchased_qty);
+    if (!(pq > 0)) continue;
+
+    const name = String(item.material_name || '').trim();
+    if (!name) continue;
+
+    const matType = resolveProcurementMaterialType(orderRow, name);
+    const unit = String(item.unit || 'шт').trim() || 'шт';
+    const psum = toMoney(item.purchased_sum);
+    const pprice = toMoney(item.purchased_price);
+
+    const lineQty = toMoney(pq);
+    const linePrice = toMoney(pprice);
+    const lineSum = psum > 0 ? toMoney(psum) : toMoney(lineQty * linePrice);
+
+    const mat = await db.WarehouseMaterial.create(
+      {
+        name,
+        type: matType,
+        unit,
+        warehouse_id: warehouseId,
+        qty: lineQty,
+        price: linePrice,
+        total_sum: lineSum,
+        procurement_id: pr.id,
+        received_at: new Date().toISOString().slice(0, 10),
+        batch_number: `ЗКП-${pr.id}-${Date.now()}`,
+      },
+      { transaction }
+    );
+
+    await db.WarehouseMovement.create(
+      {
+        type: 'ПРИХОД',
+        quantity: pq,
+        qty: pq,
+        order_id: pr.order_id,
+        comment: `Приход от закупа #${pr.id}`,
+        movement_kind: 'materials',
+        ref_id: mat.id,
+        item_name: name,
+        from_warehouse_id: null,
+        to_warehouse_id: warehouseId,
+        moved_at: new Date().toISOString().slice(0, 10),
+        user_id: userId || null,
+        item_id: null,
+      },
+      { transaction }
+    );
+  }
+}
+
 /**
  * Operator может только просматривать
  */
@@ -238,10 +347,27 @@ router.put('/:id/complete', async (req, res, next) => {
       }
     }
 
-    const order = await db.Order.findByPk(pr.order_id, {
-      attributes: ['id', 'quantity', 'total_quantity', 'floor_id', 'building_floor_id'],
+    await pr.reload({
+      include: [{ model: db.ProcurementItem, as: 'ProcurementItems' }],
       transaction: t,
     });
+
+    const order = await db.Order.findByPk(pr.order_id, {
+      attributes: [
+        'id',
+        'quantity',
+        'total_quantity',
+        'floor_id',
+        'building_floor_id',
+        'fabric_data',
+        'fittings_data',
+      ],
+      transaction: t,
+    });
+
+    if (order) {
+      await applyProcurementReceiptToWarehouse(pr, order, req.user?.id, t);
+    }
 
     await pr.update(
       {

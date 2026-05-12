@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../../api';
+import StageMovementsSection from '../../components/movements/StageMovementsSection';
 
 const STAGE_LABEL = {
   purchase: 'Закуп',
@@ -79,6 +81,7 @@ function extractShipmentRows(order) {
 }
 
 export default function StageReportsPage({ stage }) {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -238,11 +241,67 @@ export default function StageReportsPage({ stage }) {
     }
   };
 
+  const MOVEMENT_BTN_STYLE = {
+    background: '#16a34a',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 6,
+    padding: '8px 16px',
+    cursor: 'pointer',
+    fontSize: 13,
+    fontWeight: 600,
+  };
+
   return (
     <div className="space-y-4">
+      {(stage === 'cutting' || stage === 'sewing' || stage === 'otk') ? (
+        <>
+          <div style={{ marginBottom: 16 }}>
+            {stage === 'cutting' ? (
+              <button
+                type="button"
+                onClick={() => navigate('/movements/new?from=cutting&to=sewing')}
+                style={MOVEMENT_BTN_STYLE}
+              >
+                📦 Передать в Пошив
+              </button>
+            ) : null}
+            {stage === 'sewing' ? (
+              <button
+                type="button"
+                onClick={() => navigate('/movements/new?from=sewing&to=otk')}
+                style={MOVEMENT_BTN_STYLE}
+              >
+                📦 Передать в ОТК
+              </button>
+            ) : null}
+            {stage === 'otk' ? (
+              <button
+                type="button"
+                onClick={() => navigate('/movements/new?from=otk&to=shipment')}
+                style={MOVEMENT_BTN_STYLE}
+              >
+                📦 Передать в Отгрузку
+              </button>
+            ) : null}
+          </div>
+          <div style={{ marginBottom: 24 }}>
+            <h3 style={{ color: '#a3e635', marginBottom: 8 }}>Перемещения материалов</h3>
+            <StageMovementsSection
+              omitHeading
+              compact
+              incomingToStage={stage}
+              outgoingFromStage={stage}
+            />
+          </div>
+        </>
+      ) : null}
+
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-semibold text-neon-text">{`Отчет ${STAGE_LABEL[stage] || stage}`}</h2>
-        <button className="rounded bg-blue-600 px-3 py-2 text-sm" onClick={openNew}>+ Создать отчет</button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" className="rounded bg-blue-600 px-3 py-2 text-sm" onClick={openNew}>+ Создать отчет</button>
+        </div>
       </div>
 
       {error ? <div className="rounded bg-red-500/20 p-2 text-sm text-red-300">{error}</div> : null}

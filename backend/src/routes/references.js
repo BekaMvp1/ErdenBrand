@@ -559,6 +559,97 @@ router.delete('/cutting-types/:id', async (req, res, next) => {
 });
 
 /**
+ * GET /api/references/suppliers
+ */
+router.get('/suppliers', async (req, res, next) => {
+  try {
+    const list = await db.Supplier.findAll({ order: [['name', 'ASC']] });
+    res.json(list);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/references/suppliers
+ */
+router.post('/suppliers', async (req, res, next) => {
+  try {
+    const { name, contact, phone, address, note } = req.body || {};
+    const nameStr = name != null ? String(name).trim() : '';
+    if (!nameStr) {
+      return res.status(400).json({ error: 'name обязателен' });
+    }
+    const existing = await db.Supplier.findOne({ where: { name: nameStr } });
+    if (existing) {
+      return res.json(existing);
+    }
+    const supplier = await db.Supplier.create({
+      name: nameStr,
+      contact: contact != null ? String(contact).trim() || null : null,
+      phone: phone != null ? String(phone).trim() || null : null,
+      address: address != null ? String(address).trim() || null : null,
+      note: note != null ? String(note).trim() || null : null,
+    });
+    res.status(201).json(supplier);
+  } catch (err) {
+    if (err.name === 'SequelizeUniqueConstraintError') {
+      const row = await db.Supplier.findOne({ where: { name: String(req.body?.name || '').trim() } });
+      if (row) return res.json(row);
+      return res.status(400).json({ error: 'Поставщик с таким названием уже есть' });
+    }
+    next(err);
+  }
+});
+
+/**
+ * PUT /api/references/suppliers/:id
+ */
+router.put('/suppliers/:id', async (req, res, next) => {
+  try {
+    if (!['admin', 'manager'].includes(req.user?.role)) {
+      return res.status(403).json({ error: 'Недостаточно прав' });
+    }
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Неверный ID' });
+    const supplier = await db.Supplier.findByPk(id);
+    if (!supplier) return res.status(404).json({ error: 'не найден' });
+    const patch = {};
+    const { name, contact, phone, address, note } = req.body || {};
+    if (name !== undefined) {
+      const ns = String(name).trim();
+      if (!ns) return res.status(400).json({ error: 'Название не может быть пустым' });
+      patch.name = ns;
+    }
+    if (contact !== undefined) patch.contact = contact != null ? String(contact).trim() || null : null;
+    if (phone !== undefined) patch.phone = phone != null ? String(phone).trim() || null : null;
+    if (address !== undefined) patch.address = address != null ? String(address).trim() || null : null;
+    if (note !== undefined) patch.note = note != null ? String(note).trim() || null : null;
+    await supplier.update(patch);
+    res.json(supplier);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * DELETE /api/references/suppliers/:id
+ */
+router.delete('/suppliers/:id', async (req, res, next) => {
+  try {
+    if (!['admin', 'manager'].includes(req.user?.role)) {
+      return res.status(403).json({ error: 'Недостаточно прав' });
+    }
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Неверный ID' });
+    await db.Supplier.destroy({ where: { id } });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * GET /api/references/sewers
  * С опциональным technologist_id
  */

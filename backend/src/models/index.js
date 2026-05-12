@@ -130,6 +130,7 @@ const db = {
   OtkFactDetail: require('./OtkFactDetail')(sequelize, Sequelize.DataTypes),
   OtkWarehouseItem: require('./OtkWarehouseItem')(sequelize, Sequelize.DataTypes),
   ShippingDocument: require('./ShippingDocument')(sequelize, Sequelize.DataTypes),
+  Supplier: require('./Supplier')(sequelize, Sequelize.DataTypes),
 };
 
 // Связи

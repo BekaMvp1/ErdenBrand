@@ -16,6 +16,14 @@ function toIntOrNaN(v) {
   return Number.isInteger(n) ? n : NaN;
 }
 
+/** Сумма строки для API списка: явный total_sum или факт × цена */
+function lineTotalSum(item) {
+  const factQty = toNum(item?.fact_qty ?? item?.quantity);
+  const price = toNum(item?.price ?? item?.price_per_unit);
+  const explicit = toNum(item?.total_sum);
+  return explicit || factQty * price;
+}
+
 async function nextDocNumber(stage, transaction) {
   const last = await db.StageReport.findOne({ order: [['id', 'DESC']], attributes: ['id'], transaction });
   const prefix = stage === 'purchase' ? 'ЗКП' : 'ОТЧ';
@@ -32,6 +40,7 @@ function normalizeItems(items) {
       plan_qty: toNum(it?.plan_qty),
       fact_qty: toNum(it?.fact_qty),
       price: toNum(it?.price),
+      supplier: String(it?.supplier || '').trim() || null,
       note: String(it?.note || '').trim() || null,
     }))
     .filter((it) => it.name);
@@ -92,7 +101,11 @@ router.get('/', async (req, res, next) => {
         { model: db.Order, as: 'Order', attributes: ['id', 'tz_code', 'model_name', 'total_quantity'] },
         { model: db.User, as: 'User', attributes: ['id', 'name'] },
         { model: db.Workshop, as: 'Workshop', attributes: ['id', 'name'] },
-        { model: db.StageReportItem, as: 'Items', attributes: ['id', 'name', 'unit', 'plan_qty', 'fact_qty', 'note'] },
+        {
+          model: db.StageReportItem,
+          as: 'Items',
+          attributes: ['id', 'name', 'unit', 'material_type', 'warehouse_id', 'plan_qty', 'fact_qty', 'price', 'supplier', 'note'],
+        },
       ],
       order: [['created_at', 'DESC']],
       limit: 500,
@@ -100,10 +113,18 @@ router.get('/', async (req, res, next) => {
     res.json(
       rows.map((r) => {
         const plain = r.get({ plain: true });
-        const totalPlan = (plain.Items || []).reduce((s, it) => s + toNum(it.plan_qty), 0);
-        const totalFact = (plain.Items || []).reduce((s, it) => s + toNum(it.fact_qty), 0);
+        const rawItems = plain.Items || [];
+        const items = rawItems.map((it) => ({
+          ...it,
+          total_sum: lineTotalSum(it),
+        }));
+        const docSum = items.reduce((acc, i) => acc + toNum(i.total_sum), 0);
+        const totalPlan = rawItems.reduce((s, it) => s + toNum(it.plan_qty), 0);
+        const totalFact = rawItems.reduce((s, it) => s + toNum(it.fact_qty), 0);
         return {
           ...plain,
+          Items: items,
+          total_sum: docSum,
           plan_total: totalPlan,
           fact_total: totalFact,
           progress_percent: totalPlan > 0 ? Math.round((totalFact / totalPlan) * 100) : 0,
@@ -194,11 +215,17 @@ router.put('/:id', async (req, res, next) => {
       await t.rollback();
       return res.status(404).json({ error: 'Отчет не найден' });
     }
-    if (row.status === 'approved') {
-      await t.rollback();
-      return res.status(400).json({ error: 'Утвержденный отчет нельзя изменять' });
-    }
     const body = req.body || {};
+    if (row.status === 'approved') {
+      const canEditApprovedPurchase =
+        row.stage === 'purchase' &&
+        body.allow_edit_approved === true &&
+        ['admin', 'manager'].includes(req.user?.role);
+      if (!canEditApprovedPurchase) {
+        await t.rollback();
+        return res.status(400).json({ error: 'Утвержденный отчет нельзя изменять' });
+      }
+    }
     const nextOrderId = body.order_id ? toIntOrNaN(body.order_id) : row.order_id;
     if (body.order_id && Number.isNaN(nextOrderId)) {
       await t.rollback();

@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
+import StageMovementsSection from '../components/movements/StageMovementsSection';
 
 const TAB_GOODS = 'goods';
 const TAB_MATERIALS = 'materials';
+const TAB_STOCK = 'stock';
 const CARD_STYLE = { border: '1px solid #1e3a5f', background: '#0d1117', borderRadius: 12 };
 
 const emptyGood = { name: '', article: '', photo: '', warehouse_id: '', qty: '', price: '', received_at: '' };
@@ -12,6 +15,7 @@ const toNum = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const money = (v) => `${Math.round(toNum(v)).toLocaleString('ru-RU')} сом`;
 
 export default function Warehouse() {
+  const navigate = useNavigate();
   const [tab, setTab] = useState(TAB_GOODS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -29,15 +33,23 @@ export default function Warehouse() {
   const [editingItem, setEditingItem] = useState(null);
   const [goodForm, setGoodForm] = useState(emptyGood);
   const [materialForm, setMaterialForm] = useState(emptyMaterial);
+  const [stockRows, setStockRows] = useState([]);
+  const [expandedBatches, setExpandedBatches] = useState({});
 
   const loadAll = async () => {
     setLoading(true);
     setError('');
     try {
-      const [ww, gg, mm] = await Promise.all([api.warehouse.warehouses(), api.warehouse.goods(), api.warehouse.materials()]);
+      const [ww, gg, mm, ss] = await Promise.all([
+        api.warehouse.warehouses(),
+        api.warehouse.goods(),
+        api.warehouse.materials(),
+        api.warehouse.stock(),
+      ]);
       setWarehouses(Array.isArray(ww) ? ww : []);
       setGoods(Array.isArray(gg) ? gg : []);
       setMaterials(Array.isArray(mm) ? mm : []);
+      setStockRows(Array.isArray(ss) ? ss : []);
       setOpenGroups((prev) => {
         const next = { ...prev };
         (Array.isArray(ww) ? ww : []).forEach((w) => {
@@ -84,11 +96,37 @@ export default function Warehouse() {
     return { warehouse: w, rows, qty: rows.reduce((s, r) => s + toNum(r.qty), 0), sum: rows.reduce((s, r) => s + toNum(r.qty) * toNum(r.price), 0) };
   }), [warehouses, filteredMaterials]);
 
+  const filteredStock = useMemo(() => stockRows.filter((r) => {
+    if (warehouseFilter && String(r.warehouse_id) !== String(warehouseFilter)) return false;
+    if (typeFilter && String(r.material_type || r.type || '') !== String(typeFilter)) return false;
+    if (q.trim()) {
+      const s = q.trim().toLowerCase();
+      const nm = `${r.material_name || r.name || ''}`.toLowerCase();
+      if (!nm.includes(s)) return false;
+    }
+    return true;
+  }), [stockRows, warehouseFilter, typeFilter, q]);
+
   const dashboard = useMemo(() => {
     const goodsSum = goods.reduce((s, g) => s + toNum(g.qty) * toNum(g.price), 0);
     const matSum = materials.reduce((s, m) => s + toNum(m.qty) * toNum(m.price), 0);
     return { goodsCount: goods.length, goodsSum, matCount: materials.length, matSum, warehouseCount: warehouses.length, total: goodsSum + matSum };
   }, [goods, materials, warehouses]);
+
+  const fifoStockStats = useMemo(() => {
+    let sum = 0;
+    let positions = 0;
+    let batchCount = 0;
+    for (const r of stockRows) {
+      sum += toNum(r.total_sum ?? (toNum(r.quantity) * toNum(r.price_per_unit ?? r.price)));
+      positions += 1;
+      batchCount += Array.isArray(r.batches) ? r.batches.length : 1;
+    }
+    return { sum, positions, batchCount };
+  }, [stockRows]);
+
+  const toggleBatches = (key) =>
+    setExpandedBatches((prev) => ({ ...prev, [key]: !prev[key] }));
 
   const toggleGroup = (key) => setOpenGroups((p) => ({ ...p, [key]: !p[key] }));
 
@@ -181,11 +219,11 @@ export default function Warehouse() {
     setGoodForm((p) => ({ ...p, photo: data }));
   };
 
-  const groups = tab === TAB_GOODS ? groupedGoods : groupedMaterials;
+  const groups = tab === TAB_GOODS ? groupedGoods : tab === TAB_MATERIALS ? groupedMaterials : [];
 
   return (
     <div className="min-h-screen bg-slate-950 p-4 text-white">
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-bold">Склад</h1>
       </div>
 
@@ -198,25 +236,164 @@ export default function Warehouse() {
         <div style={CARD_STYLE} className="p-4"><div className="text-white/70">🏭 Складов</div><div className="mt-1 text-xl font-semibold">{dashboard.warehouseCount} склада</div></div>
         <div style={CARD_STYLE} className="p-4"><div className="text-white/70">💰 Итого сум</div><div className="mt-1 text-xl font-semibold text-emerald-400">{money(dashboard.total)}</div></div>
       </div>
+      <div className="mb-4 grid gap-3 md:grid-cols-3">
+        <div style={CARD_STYLE} className="p-4">
+          <div className="text-white/70">📋 Остатки (ФИФО) — итого по складу</div>
+          <div className="mt-1 text-xl font-semibold text-emerald-400">{money(fifoStockStats.sum)}</div>
+        </div>
+        <div style={CARD_STYLE} className="p-4">
+          <div className="text-white/70">Позиций (уник. материалов)</div>
+          <div className="mt-1 text-xl font-semibold">{fifoStockStats.positions}</div>
+        </div>
+        <div style={CARD_STYLE} className="p-4">
+          <div className="text-white/70">Партий на складе</div>
+          <div className="mt-1 text-xl font-semibold">{fifoStockStats.batchCount}</div>
+        </div>
+      </div>
 
       <div className="mb-4 flex flex-wrap gap-2">
         <input className="rounded-lg border border-[#333] bg-[#1a1a1a] px-3 py-2" placeholder="🔍 Поиск..." value={q} onChange={(e) => setQ(e.target.value)} />
         <select className="rounded-lg border border-[#333] bg-[#1a1a1a] px-3 py-2" value={warehouseFilter} onChange={(e) => setWarehouseFilter(e.target.value)}>
           <option value="">Все склады</option>{warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
         </select>
-        <select className="rounded-lg border border-[#333] bg-[#1a1a1a] px-3 py-2" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} disabled={tab !== TAB_MATERIALS}>
+        <select className="rounded-lg border border-[#333] bg-[#1a1a1a] px-3 py-2" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} disabled={tab !== TAB_MATERIALS && tab !== TAB_STOCK}>
           <option value="">Все типы</option><option value="fabric">Ткань</option><option value="accessories">Фурнитура</option>
         </select>
-        <button className="rounded bg-blue-600 px-3 py-2 text-sm" onClick={openCreateModal}>+ Добавить</button>
+        {(tab === TAB_GOODS || tab === TAB_MATERIALS) ? (
+          <button className="rounded bg-blue-600 px-3 py-2 text-sm" onClick={openCreateModal}>+ Добавить</button>
+        ) : null}
         <button className="rounded bg-indigo-600 px-3 py-2 text-sm" onClick={() => setWarehouseModalOpen(true)}>+ Новый склад</button>
       </div>
 
-      <div className="mb-4 flex gap-2">
+      <div className="mb-4 flex gap-2 flex-wrap">
         <button className={`rounded px-3 py-2 text-sm ${tab === TAB_GOODS ? 'bg-green-600' : 'bg-white/10'}`} onClick={() => setTab(TAB_GOODS)}>📦 Товары</button>
         <button className={`rounded px-3 py-2 text-sm ${tab === TAB_MATERIALS ? 'bg-green-600' : 'bg-white/10'}`} onClick={() => setTab(TAB_MATERIALS)}>🧵 Материалы</button>
+        <button className={`rounded px-3 py-2 text-sm ${tab === TAB_STOCK ? 'bg-green-600' : 'bg-white/10'}`} onClick={() => setTab(TAB_STOCK)}>📋 Остатки</button>
       </div>
 
-      {loading ? <div className="rounded border border-white/10 p-4 text-center">Загрузка...</div> : (
+      {(tab === TAB_MATERIALS || tab === TAB_STOCK) ? (
+        <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => navigate('/movements/new?from=warehouse&to=cutting')}
+            className="rounded px-3 py-2 text-sm text-white font-semibold"
+            style={{ background: '#16a34a' }}
+          >
+            📦 Передать в Раскрой
+          </button>
+        </div>
+      ) : null}
+
+      {loading ? <div className="rounded border border-white/10 p-4 text-center">Загрузка...</div> : tab === TAB_STOCK ? (
+        <div style={CARD_STYLE} className="overflow-x-auto">
+          <table className="min-w-[1100px] w-full text-sm">
+            <thead className="bg-white/5">
+              <tr>
+                <th className="px-2 py-2 text-left">№</th>
+                <th className="px-2 py-2 text-left">Наименование</th>
+                <th className="px-2 py-2 text-left">Тип</th>
+                <th className="px-2 py-2 text-left">Ед.изм</th>
+                <th className="px-2 py-2 text-left">Кол-во</th>
+                <th className="px-2 py-2 text-left">Цена за ед.</th>
+                <th className="px-2 py-2 text-left">Сумма</th>
+                <th className="px-2 py-2 text-left">Поставщик</th>
+                <th className="px-2 py-2 text-left">Склад</th>
+                <th className="px-2 py-2 text-left">Откуда</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredStock.map((row, idx) => {
+                const rowKey = `${row.warehouse_id}_${row.material_name || row.name}_${row.type || row.material_type}`;
+                const expanded = !!expandedBatches[rowKey];
+                const qtyDisp = row.total_qty ?? row.quantity ?? row.qty;
+                const avg = row.avg_price ?? row.price_per_unit ?? row.price;
+                const lineSum = row.total_sum ?? toNum(qtyDisp) * toNum(avg);
+                const batchList = Array.isArray(row.batches) ? row.batches : [];
+                return (
+                  <Fragment key={rowKey}>
+                    <tr className="border-t border-white/10 odd:bg-[#111] even:bg-[#0d0d0d]">
+                      <td className="px-2 py-2 text-center">{idx + 1}</td>
+                      <td className="px-2 py-2">
+                        <div>{row.material_name || row.name}</div>
+                        <button
+                          type="button"
+                          onClick={() => toggleBatches(rowKey)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: '#94a3b8',
+                            cursor: 'pointer',
+                            fontSize: 11,
+                            marginTop: 4,
+                            padding: 0,
+                          }}
+                        >
+                          {expanded ? '▲' : '▼'} {batchList.length} партий
+                        </button>
+                      </td>
+                      <td className="px-2 py-2">{row.material_type === 'fabric' ? 'Ткань' : row.material_type === 'accessories' ? 'Фурнитура' : '—'}</td>
+                      <td className="px-2 py-2">{row.unit}</td>
+                      <td className="px-2 py-2">{qtyDisp}</td>
+                      <td className="px-2 py-2">{money(avg)}</td>
+                      <td className="px-2 py-2 text-emerald-400">{money(lineSum)}</td>
+                      <td className="px-2 py-2">{row.supplier || '—'}</td>
+                      <td className="px-2 py-2">{row.warehouse_name || '—'}</td>
+                      <td className="px-2 py-2 text-xs text-white/80">{row.source_label || '—'}</td>
+                    </tr>
+                    {expanded && batchList.length > 0 ? (
+                      <tr>
+                        <td colSpan={10} style={{ padding: '4px 16px', background: '#0f172a' }}>
+                          <table style={{ width: '100%', fontSize: 11 }}>
+                            <thead>
+                              <tr className="text-left text-white/60">
+                                <th className="py-1 pr-2">Партия</th>
+                                <th className="py-1 pr-2">Дата прихода</th>
+                                <th className="py-1 pr-2">Кол-во</th>
+                                <th className="py-1 pr-2">Цена</th>
+                                <th className="py-1 pr-2">Сумма</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {batchList.map((b, i) => (
+                                <tr key={b.id || i} style={{ color: i === 0 ? '#fbbf24' : '#94a3b8' }}>
+                                  <td className="py-1 pr-2">{b.batch_number || `Партия ${i + 1}`}</td>
+                                  <td className="py-1 pr-2">
+                                    {b.received_at
+                                      ? new Date(b.received_at).toLocaleDateString('ru-RU')
+                                      : '—'}
+                                  </td>
+                                  <td className="py-1 pr-2">
+                                    {b.qty} {row.unit || ''}
+                                  </td>
+                                  <td className="py-1 pr-2">{money(b.price)}</td>
+                                  <td className="py-1 pr-2">
+                                    {(toNum(b.qty) * toNum(b.price)).toLocaleString('ru-RU')} сом
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                            <tfoot>
+                              <tr style={{ fontWeight: 600, color: '#a3e635' }}>
+                                <td colSpan={2}>ИТОГО (ФИФО)</td>
+                                <td>
+                                  {qtyDisp} {row.unit || ''}
+                                </td>
+                                <td>ср. {avg}</td>
+                                <td>{toNum(lineSum).toLocaleString('ru-RU')} сом</td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+          {!filteredStock.length ? <div className="p-4 text-sm text-white/60">Пусто</div> : null}
+        </div>
+      ) : (
         <div className="space-y-3">
           {groups.map((group) => {
             const key = `${tab}-${group.warehouse.id}`;
@@ -324,6 +501,8 @@ export default function Warehouse() {
           </div>
         </div>
       ) : null}
+
+      <StageMovementsSection incomingToStage="warehouse" outgoingFromStage="warehouse" />
     </div>
   );
 }

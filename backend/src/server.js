@@ -7,6 +7,46 @@ const { execSync } = require('child_process');
 const db = require('./models');
 const app = require('./app');
 
+/** Одноразовое приведение таблицы материалов (ФИФО-поля) без отдельных миграций */
+async function fixWarehouseMaterialsTable() {
+  try {
+    const { sequelize } = db;
+
+    await sequelize.query(`
+      ALTER TABLE warehouse_materials
+      ADD COLUMN IF NOT EXISTS total_sum DECIMAL(12,2) DEFAULT 0;
+    `);
+    await sequelize.query(`
+      ALTER TABLE warehouse_materials
+      ADD COLUMN IF NOT EXISTS received_at TIMESTAMP DEFAULT NOW();
+    `);
+    await sequelize.query(`
+      ALTER TABLE warehouse_materials
+      ADD COLUMN IF NOT EXISTS batch_number VARCHAR(100);
+    `);
+    await sequelize.query(`
+      ALTER TABLE warehouse_materials
+      ADD COLUMN IF NOT EXISTS procurement_id INTEGER;
+    `);
+
+    await sequelize.query(`
+      UPDATE warehouse_materials
+      SET total_sum = qty * price
+      WHERE total_sum IS NULL OR total_sum = 0;
+    `);
+
+    await sequelize.query(`
+      UPDATE warehouse_materials
+      SET received_at = created_at
+      WHERE received_at IS NULL;
+    `);
+
+    console.log('[DB] warehouse_materials таблица обновлена (ФИФО поля)');
+  } catch (err) {
+    console.error('[DB] Ошибка обновления warehouse_materials:', err.message);
+  }
+}
+
 process.on('uncaughtException', (err) => {
   console.error('[UNCAUGHT EXCEPTION]', err.message);
   console.error(err.stack);
@@ -80,6 +120,7 @@ async function start() {
   try {
     await db.sequelize.authenticate();
     console.log('Подключение к БД успешно');
+    await fixWarehouseMaterialsTable();
   } catch (err) {
     const pg = err.parent || err.original;
     const pgMsg = String(pg?.message || err.message || '');

@@ -10,6 +10,7 @@ const SHIPMENTS_MODAL_KEY = 'shipments_modal_batch';
 const SHIPMENTS_WORKSHOP_KEY = 'shipments_workshop_id';
 import { createPortal } from 'react-dom';
 import { api } from '../api';
+import StageMovementsSection from '../components/movements/StageMovementsSection';
 import PrintButton from '../components/PrintButton';
 import { NeonButton, NeonCard, NeonInput } from '../components/ui';
 import ModelPhoto from '../components/ModelPhoto';
@@ -566,6 +567,8 @@ export default function Shipments() {
           </div>,
           document.body
         )}
+
+      <StageMovementsSection incomingToStage="shipment" outgoingFromStage="shipment" />
     </div>
   );
 }

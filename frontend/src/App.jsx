@@ -48,6 +48,7 @@ import StageExpensesPlaceholder from "./pages/stage/StageExpensesPlaceholder";
 import StageReportsPage from "./pages/stage/StageReportsPage";
 import PurchaseReportList from "./pages/stage/PurchaseReportList";
 import PurchaseReportForm from "./pages/stage/PurchaseReportForm";
+import MovementForm from "./pages/movements/MovementForm";
 
 export default function App() {
   return (
@@ -114,6 +115,8 @@ export default function App() {
                 </Route>
                 <Route path="cutting/:type" element={<Cutting />} />
                 <Route path="warehouse" element={<Warehouse />} />
+                <Route path="movements/new" element={<MovementForm />} />
+                <Route path="movements/:id" element={<MovementForm />} />
                 <Route path="warehouse/movements" element={<WarehouseMovements />} />
                 <Route path="warehouse/movements/new" element={<WarehouseMovementDocumentForm />} />
                 <Route path="warehouse/movements/:id" element={<WarehouseMovementDocumentForm />} />

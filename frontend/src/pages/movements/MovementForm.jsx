@@ -2,8 +2,9 @@
  * Документ перемещения материалов между этапами
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { flattenFabricLike } from '../../components/CreateOrderModelSections';
 import { api } from '../../api';
 
 const STAGES = [
@@ -96,9 +97,134 @@ const TH_SIZE = {
   borderBottom: '1px solid rgba(255,255,255,0.08)',
 };
 
+const TH = {
+  padding: '8px 8px',
+  fontSize: 12,
+  fontWeight: 600,
+  color: '#cbd5e1',
+  textAlign: 'left',
+  borderBottom: '1px solid #1e3a5f',
+  whiteSpace: 'nowrap',
+};
+
+const TD = {
+  padding: '6px 8px',
+  fontSize: 13,
+  verticalAlign: 'middle',
+  borderBottom: '1px solid #1e2a3a',
+};
+
+const ADD_BTN = {
+  marginTop: 12,
+  background: '#16a34a',
+  color: '#fff',
+  border: 'none',
+  borderRadius: 6,
+  padding: '8px 16px',
+  cursor: 'pointer',
+  fontSize: 13,
+  fontWeight: 600,
+};
+
+const TOTALS_STYLE = {
+  marginTop: 12,
+  padding: '10px 16px',
+  background: '#1e3a5f',
+  borderRadius: 8,
+  display: 'flex',
+  gap: 24,
+  flexWrap: 'wrap',
+  fontSize: 14,
+};
+
+/** Сохранение строки Пошив→ОТК в item_name без изменений бэкенда */
+const SEW_OTK_PREFIX = 'SEW_OTK_JSON:';
+
 function toNum(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
+}
+
+function batchFabricKey(name) {
+  return String(name || '').trim().toLowerCase();
+}
+
+/**
+ * Пересчёт total_qty, effective_stock, remainder, shortage по порядку строк:
+ * у одной ткани следующая строка «видит» склад минус факт предыдущих строк.
+ */
+function applyRunningRouteBMetrics(rows) {
+  if (!Array.isArray(rows)) return [];
+  return rows.map((b, idx) => {
+    const key = batchFabricKey(b.fabric_name);
+    const baseStock = parseFloat(String(b.stock_qty ?? 0)) || 0;
+    let usedBefore = 0;
+    if (key) {
+      for (let i = 0; i < idx; i += 1) {
+        const prev = rows[i];
+        if (batchFabricKey(prev.fabric_name) === key) {
+          usedBefore += parseFloat(String(prev.fact_meters ?? 0)) || 0;
+        }
+      }
+    }
+    const effective_stock = Math.max(0, baseStock - usedBefore);
+    const fact = parseFloat(String(b.fact_meters ?? 0)) || 0;
+    const defect = parseFloat(String(b.defect_meters ?? 0)) || 0;
+    const remainder = effective_stock - fact - defect;
+    const shortage = remainder < 0 ? Math.abs(remainder) : 0;
+    const total_qty = Object.values(b.sizes || {}).reduce(
+      (a, v) => a + (parseInt(String(v), 10) || 0),
+      0
+    );
+    return { ...b, total_qty, effective_stock, remainder, shortage };
+  });
+}
+
+/** Остаток ткани: сначала выбранный склад «откуда», иначе сумма по всем складам */
+function aggregateFabricStockFromSources(fabricName, specificStock, allStock) {
+  const name = String(fabricName || '').toLowerCase();
+  if (!name) return 0;
+  const match = (items) =>
+    (items || []).filter((s) =>
+      (s.name || s.material_name || '').toLowerCase().includes(name)
+    );
+  const specific = match(specificStock);
+  if (specific.length > 0) {
+    return specific.reduce(
+      (a, s) => a + (parseFloat(s.total_qty ?? s.qty ?? s.quantity ?? 0) || 0),
+      0
+    );
+  }
+  const all = match(allStock);
+  return all.reduce(
+    (a, s) => a + (parseFloat(s.total_qty ?? s.qty ?? s.quantity ?? 0) || 0),
+    0
+  );
+}
+
+/** Остатки для таблицы Б: все склады + при необходимости выбранный склад «откуда» */
+async function fetchRouteBStockArrays(warehouseId) {
+  let allArr = [];
+  try {
+    const data = await api.warehouse.stock();
+    allArr = Array.isArray(data) ? data : data?.items || data?.rows || [];
+  } catch {
+    allArr = [];
+  }
+  let specArr = [];
+  const wid =
+    warehouseId && String(warehouseId).trim() !== '' && !Number.isNaN(Number(warehouseId))
+      ? Number(warehouseId)
+      : null;
+  if (wid) {
+    try {
+      const data = await api.warehouse.stock({ warehouse_id: wid });
+      specArr = Array.isArray(data) ? data : data?.items || data?.rows || [];
+    } catch {
+      specArr = [];
+    }
+  }
+  return { allArr, specArr };
 }
 
 function matchErdenSize(raw) {
@@ -111,42 +237,6 @@ function matchErdenSize(raw) {
     return NUM_TO_ERDEN[n] || null;
   }
   return null;
-}
-
-/** Норма м ткани на единицу изделия из строки fabric_data */
-function normPerUnitFromRow(r) {
-  const q =
-    r?.qty_per_unit ??
-    r?.qty ??
-    r?.consumption ??
-    r?.norm ??
-    r?.total_qty ??
-    r?.quantity;
-  return toNum(q);
-}
-
-function extractFabricsFromOrder(order) {
-  const fd = order?.fabric_data;
-  const out = [];
-  if (!fd) return out;
-  if (Array.isArray(fd)) {
-    fd.forEach((r) => {
-      const name = String(r?.name || r?.title || '').trim();
-      if (!name) return;
-      out.push({ name, normPerUnit: normPerUnitFromRow(r) });
-    });
-    return out;
-  }
-  if (fd.groups && Array.isArray(fd.groups)) {
-    for (const g of fd.groups) {
-      for (const r of g.rows || []) {
-        const name = String(r?.name || '').trim();
-        if (!name) continue;
-        out.push({ name, normPerUnit: normPerUnitFromRow(r) });
-      }
-    }
-  }
-  return out;
 }
 
 function extractActiveSizes(order) {
@@ -167,9 +257,18 @@ function extractActiveSizes(order) {
   return ERDEN_SIZES.filter((s) => (qtyByLabel[s] || 0) > 0);
 }
 
+function normalizeColorsField(raw) {
+  if (raw == null || raw === '') return [];
+  if (Array.isArray(raw)) return raw.filter(Boolean).map(String);
+  if (typeof raw === 'string') return raw.split(',').map((c) => c.trim()).filter(Boolean);
+  return [];
+}
+
 function extractOrderColors(order) {
-  const fromApi = Array.isArray(order?.colors) ? order.colors.filter(Boolean) : [];
-  if (fromApi.length) return [...new Set(fromApi)].sort();
+  const merged = new Set();
+  for (const c of normalizeColorsField(order?.colors)) merged.add(c);
+  for (const c of normalizeColorsField(order?.color_data)) merged.add(c);
+  if (merged.size) return [...merged].sort();
   const fromVariants = [
     ...new Set((order?.variants || []).map((v) => v.color).filter(Boolean)),
   ];
@@ -186,113 +285,136 @@ function emptySizes(activeSizes) {
   return o;
 }
 
-function newBatchId() {
-  return `b-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+function movementRoute(from, to) {
+  return `${from}→${to}`;
 }
 
-function createEmptyBatch(activeSizes) {
+/** Таблица А — все маршруты, кроме B и C */
+function isRouteA(from, to) {
+  const R = movementRoute(from, to);
+  return (
+    R !== 'cutting→sewing' &&
+    R !== 'sewing→otk' &&
+    R !== 'otk→warehouse' &&
+    R !== 'otk→shipment'
+  );
+}
+
+function isRouteB(from, to) {
+  return movementRoute(from, to) === 'cutting→sewing';
+}
+
+/** Таблица В — изделия по размерам */
+function isRouteC(from, to) {
+  const R = movementRoute(from, to);
+  return R === 'sewing→otk' || R === 'otk→warehouse' || R === 'otk→shipment';
+}
+
+/** Сохранение партии раскрой→пошив в item_name без изменений бэкенда */
+const CUT_BATCH_PREFIX = 'CUT_SEW_BATCH_JSON:';
+
+function displayBatchColor(batch) {
+  if (batch.color === '__other__') return String(batch.colorOther || '').trim();
+  return String(batch.color || '').trim();
+}
+
+function buildCutBatchMaterialName(batch) {
+  const payload = {
+    color: displayBatchColor(batch),
+    colorOther: String(batch.colorOther || ''),
+    fabric_name: String(batch.fabric_name || ''),
+    stock_qty: toNum(batch.stock_qty),
+    plan_meters: toNum(batch.plan_meters),
+    fact_meters: toNum(batch.fact_meters),
+    sizes: batch.sizes && typeof batch.sizes === 'object' ? batch.sizes : {},
+    total_qty: toNum(batch.total_qty),
+    marking: String(batch.marking || ''),
+    remainder: toNum(batch.remainder),
+    shortage: toNum(batch.shortage),
+    defect_meters: toNum(batch.defect_meters),
+    operation: String(batch.operation || ''),
+    operation_cost: toNum(batch.operation_cost),
+    norm_per_unit: toNum(batch.norm_per_unit),
+  };
+  return `${CUT_BATCH_PREFIX}${JSON.stringify(payload)}`;
+}
+
+function parseCutBatchItemToBatch(it, activeSizes, idx) {
+  const raw = String(it?.item_name || it?.material_name || '').trim();
+  const baseSizes = emptySizes(activeSizes);
+  if (raw.startsWith(CUT_BATCH_PREFIX)) {
+    try {
+      const p = JSON.parse(raw.slice(CUT_BATCH_PREFIX.length));
+      const mergedSizes = { ...baseSizes, ...(p.sizes && typeof p.sizes === 'object' ? p.sizes : {}) };
+      const total_qty =
+        Object.values(mergedSizes).reduce((a, b) => a + toNum(b), 0) || toNum(p.total_qty);
+      const col = String(p.color || '');
+      return {
+        id: `b-db-${it.id}-${idx}`,
+        color: col,
+        colorOther: String(p.colorOther || ''),
+        fabric_name: String(p.fabric_name || ''),
+        stock_qty: toNum(p.stock_qty),
+        plan_meters: toNum(p.plan_meters),
+        fact_meters: toNum(p.fact_meters),
+        sizes: mergedSizes,
+        total_qty,
+        marking: String(p.marking || ''),
+        remainder: toNum(p.remainder),
+        shortage: toNum(p.shortage),
+        defect_meters: toNum(p.defect_meters),
+        operation: String(p.operation || ''),
+        operation_cost: toNum(p.operation_cost ?? it.price),
+        norm_per_unit: toNum(p.norm_per_unit),
+      };
+    } catch {
+      /* fall through */
+    }
+  }
   return {
-    id: newBatchId(),
+    id: `b-db-${it.id}-${idx}`,
     color: '',
     colorOther: '',
-    fabric_name: '',
+    fabric_name: raw.split(/\s·\s/)[0] || raw || '',
     stock_qty: 0,
-    unit: 'м',
-    price: 0,
-    plan_meters: 0,
+    plan_meters: toNum(it.qty),
     fact_meters: 0,
-    sizes: emptySizes(activeSizes),
+    sizes: { ...baseSizes },
     total_qty: 0,
     marking: '',
     remainder: 0,
     shortage: 0,
     defect_meters: 0,
+    operation: '',
+    operation_cost: toNum(it.price),
+    norm_per_unit: 0,
   };
 }
 
-function parseItemToBatch(it, activeSizes, idx, orderColorsList) {
-  const name = String(it?.item_name || '').trim();
-  const parts = name.split(/\s·\s/).map((s) => s.trim());
-  const fabric_name = parts[0] || '';
-  let color = parts[1] === '—' ? '' : parts[1] || '';
-  const marking = parts[2] || '';
-  let colorOther = '';
-  if (color && orderColorsList.length && !orderColorsList.includes(color)) {
-    colorOther = color;
-    color = '__other__';
+function loadMovementOps(order, fromT, toT) {
+  if (!order) return [];
+  if (isRouteB(fromT, toT)) {
+    const ops = order.cutting_ops || [];
+    return Array.isArray(ops) ? ops : [];
   }
-  const sizes = emptySizes(activeSizes);
-  return {
-    id: `db-${it.id}-${idx}`,
-    color,
-    colorOther,
-    fabric_name,
-    stock_qty: 0,
-    unit: 'м',
-    price: toNum(it.price),
-    plan_meters: 0,
-    fact_meters: toNum(it.qty),
-    sizes,
-    total_qty: 0,
-    marking,
-    remainder: 0,
-    shortage: 0,
-    defect_meters: 0,
-  };
-}
-
-function deriveBatchNumbers(batch, fabrics) {
-  const total_qty = Object.values(batch.sizes || {}).reduce((a, b) => a + toNum(b), 0);
-  const norm = toNum(fabrics.find((x) => x.name === batch.fabric_name)?.normPerUnit);
-  const fact = toNum(batch.fact_meters);
-  const remainder = fact - total_qty * norm;
-  const shortage = remainder < 0 ? Math.abs(remainder) : 0;
-  return { ...batch, total_qty, remainder, shortage };
-}
-
-function findStockRow(stockList, fabricName) {
-  if (!fabricName || !Array.isArray(stockList)) return null;
-  const fn = fabricName.toLowerCase().trim();
-  return (
-    stockList.find((s) => {
-      const mn = String(s.material_name || s.name || '').toLowerCase();
-      return mn === fn || mn.includes(fn) || fn.includes(mn);
-    }) || null
-  );
-}
-
-/** Остаток по имени ткани из GET /api/warehouse/stock */
-function mergeWarehouseStock(originStage, stockRows, batch) {
-  if (originStage !== 'warehouse') {
-    return {
-      ...batch,
-      stock_qty: toNum(batch.stock_qty),
-      unit: batch.unit || 'м',
-      price: toNum(batch.price),
-    };
+  if (isRouteC(fromT, toT)) {
+    if (fromT === 'sewing') {
+      const ops = order.sewing_ops || [];
+      return Array.isArray(ops) ? ops : [];
+    }
+    if (fromT === 'otk') {
+      const ops = order.otk_ops || [];
+      return Array.isArray(ops) ? ops : [];
+    }
   }
-  const row = findStockRow(stockRows, batch.fabric_name);
-  if (!row) {
-    return {
-      ...batch,
-      stock_qty: 0,
-      unit: batch.unit || 'м',
-      price: toNum(batch.price),
-    };
-  }
-  return {
-    ...batch,
-    stock_qty: toNum(row.quantity ?? row.qty),
-    price: toNum(row.price_per_unit ?? row.price ?? batch.price),
-    unit: String(row.unit || 'м').trim() || 'м',
-  };
+  return [];
 }
 
 function newSimpleRowId() {
   return `w-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-function createEmptySimpleRow() {
+function createEmptyRowA() {
   return {
     id: newSimpleRowId(),
     color: '',
@@ -301,11 +423,225 @@ function createEmptySimpleRow() {
     material_name: '',
     unit: 'м',
     stock_qty: 0,
-    qty: '',
-    rolls: '',
+    qty: 0,
+    rolls: 0,
     price: 0,
     overStock: false,
   };
+}
+
+function newBatchId() {
+  return `b-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function createEmptyBatchRow(activeSizes) {
+  const sz = activeSizes?.length ? activeSizes : ERDEN_SIZES;
+  return {
+    id: newBatchId(),
+    color: '',
+    colorOther: '',
+    fabric_name: '',
+    stock_qty: 0,
+    plan_meters: 0,
+    fact_meters: 0,
+    sizes: emptySizes(sz),
+    total_qty: 0,
+    marking: '',
+    remainder: 0,
+    shortage: 0,
+    defect_meters: 0,
+    operation: '',
+    operation_cost: 0,
+    norm_per_unit: 0,
+  };
+}
+
+/** Цвета заказа для автопартий маршрута Б (как в ТЗ) */
+function parseOrderColorsRouteB(order) {
+  const raw = order?.colors;
+  if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
+  if (typeof raw === 'string') return raw.split(',').map((c) => c.trim()).filter(Boolean);
+  return [];
+}
+
+/** Название ткани из разных форматов строки заказа / модели */
+function getFabricName(f) {
+  if (!f || typeof f !== 'object') return '';
+  return (
+    f.name ||
+    f.material_name ||
+    f.название ||
+    f.наименование ||
+    f.title ||
+    f.fabric_name ||
+    ''
+  );
+}
+
+/** Норма м/ед из разных полей */
+function getFabricQtyPerUnit(f) {
+  if (!f || typeof f !== 'object') return '';
+  const v =
+    f.qty_per_unit ??
+    f.quantity_per ??
+    f.norm ??
+    f.qtyPerUnit ??
+    f.qty ??
+    '';
+  return v !== '' && v != null ? String(v) : '';
+}
+
+/**
+ * Ткани заказа из всех известных мест хранения (массив объектов для select).
+ */
+function getFabrics(order) {
+  if (!order || typeof order !== 'object') return [];
+
+  const fd = order.fabric_data;
+
+  if (Array.isArray(fd) && fd.length > 0) {
+    return fd;
+  }
+
+  if (fd && typeof fd === 'object' && !Array.isArray(fd)) {
+    const flat = flattenFabricLike(fd);
+    if (flat.length > 0) {
+      return flat.map((r) => ({
+        name: r.name || '',
+        material_name: r.name || '',
+        qty_per_unit: r.qtyPerUnit || '',
+        quantity_per: r.qtyPerUnit || '',
+        unit: r.unit || 'м',
+      }));
+    }
+  }
+
+  if (typeof fd === 'string') {
+    try {
+      const parsed = JSON.parse(fd);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const flat = flattenFabricLike(parsed);
+        if (flat.length > 0) {
+          return flat.map((r) => ({
+            name: r.name || '',
+            material_name: r.name || '',
+            qty_per_unit: r.qtyPerUnit || '',
+            quantity_per: r.qtyPerUnit || '',
+            unit: r.unit || 'м',
+          }));
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (Array.isArray(order.fabrics) && order.fabrics.length > 0) {
+    return order.fabrics;
+  }
+
+  if (Array.isArray(order.materials) && order.materials.length > 0) {
+    return order.materials.filter(
+      (m) => m && (m.type === 'fabric' || m.тип === 'Ткань')
+    );
+  }
+
+  const mb = order.ModelBase || order.ModelsBase || order.model_base || order.models_base;
+  if (mb && mb.fabric != null) {
+    try {
+      const f = typeof mb.fabric === 'string' ? JSON.parse(mb.fabric) : mb.fabric;
+      if (Array.isArray(f) && f.length > 0) return f;
+    } catch {
+      /* ignore */
+    }
+    if (Array.isArray(mb.fabric) && mb.fabric.length > 0) return mb.fabric;
+    if (mb.fabric_data && typeof mb.fabric_data === 'object') {
+      const flat = flattenFabricLike(mb.fabric_data);
+      if (flat.length > 0) {
+        return flat.map((r) => ({
+          name: r.name || '',
+          material_name: r.name || '',
+          qty_per_unit: r.qtyPerUnit || '',
+          quantity_per: r.qtyPerUnit || '',
+          unit: r.unit || 'м',
+        }));
+      }
+    }
+  }
+
+  if (Array.isArray(order.fabric) && order.fabric.length > 0) {
+    return order.fabric;
+  }
+
+  return [];
+}
+
+/** Партии Цвет × Ткань при выборе заказа (Раскрой→Пошив) */
+function buildAutoBatchesRouteB(order, sz, specificStock, allStock) {
+  const parsedColors = parseOrderColorsRouteB(order);
+  const fabrics = getFabrics(order);
+  const colorList = parsedColors.length > 0 ? parsedColors : [''];
+  const fabricList = fabrics.length > 0 ? fabrics : [{}];
+  const orderQty = toNum(order?.quantity ?? order?.total_quantity ?? order?.total_qty);
+  const sizeKeys = sz?.length ? sz : ERDEN_SIZES;
+  const spec = specificStock || [];
+  const all = allStock || [];
+  const autoBatches = [];
+  for (const color of colorList) {
+    for (const fabric of fabricList) {
+      const qpuRaw =
+        fabric?.qty_per_unit ??
+        fabric?.quantity_per ??
+        fabric?.norm ??
+        fabric?.qtyPerUnit ??
+        fabric?.qty;
+      const qpu = qpuRaw != null && qpuRaw !== '' ? parseFloat(qpuRaw) : NaN;
+      const norm = Number.isFinite(qpu) ? qpu : 0;
+      const fabricName = getFabricName(fabric);
+      const stockQty = fabricName
+        ? aggregateFabricStockFromSources(fabricName, spec, all)
+        : 0;
+      const base = {
+        id: newBatchId(),
+        color: color || '',
+        colorOther: '',
+        fabric_name: fabricName,
+        stock_qty: stockQty,
+        plan_meters: norm ? norm * orderQty : 0,
+        fact_meters: 0,
+        sizes: Object.fromEntries(sizeKeys.map((s) => [s, 0])),
+        total_qty: 0,
+        marking: '',
+        remainder: 0,
+        shortage: 0,
+        defect_meters: 0,
+        operation: '',
+        operation_cost: 0,
+        norm_per_unit: norm,
+      };
+      autoBatches.push(base);
+    }
+  }
+  const fallback = {
+    id: newBatchId(),
+    color: '',
+    colorOther: '',
+    fabric_name: '',
+    stock_qty: 0,
+    plan_meters: 0,
+    fact_meters: 0,
+    sizes: Object.fromEntries(sizeKeys.map((s) => [s, 0])),
+    total_qty: 0,
+    marking: '',
+    remainder: 0,
+    shortage: 0,
+    defect_meters: 0,
+    operation: '',
+    operation_cost: 0,
+    norm_per_unit: 0,
+  };
+  return applyRunningRouteBMetrics(autoBatches.length > 0 ? autoBatches : [fallback]);
 }
 
 function displaySimpleRowColor(row) {
@@ -337,6 +673,64 @@ async function fetchStockItemsForWarehouseCutting(orderId, warehouseId) {
     }
   }
   return items;
+}
+
+function buildSewingOtkMaterialName(row) {
+  const payload = {
+    photo: row.photo || '',
+    model_name: String(row.model_name || '').trim(),
+    color: String(row.color || ''),
+    colorOther: String(row.colorOther || ''),
+    sizes: row.sizes && typeof row.sizes === 'object' ? row.sizes : {},
+    operation: String(row.operation || ''),
+    operation_cost: toNum(row.operation_cost),
+  };
+  return `${SEW_OTK_PREFIX}${JSON.stringify(payload)}`;
+}
+
+function parseSewingOtkItemToProductRow(it, activeSizes, idx) {
+  const raw = String(it?.item_name || it?.material_name || '').trim();
+  const baseSizes = emptySizes(activeSizes);
+  let parsed = null;
+  if (raw.startsWith(SEW_OTK_PREFIX)) {
+    try {
+      parsed = JSON.parse(raw.slice(SEW_OTK_PREFIX.length));
+    } catch {
+      parsed = null;
+    }
+  }
+  if (parsed && typeof parsed === 'object') {
+    const mergedSizes = { ...baseSizes, ...(parsed.sizes && typeof parsed.sizes === 'object' ? parsed.sizes : {}) };
+    const total_qty = Object.values(mergedSizes).reduce((a, b) => a + toNum(b), 0);
+    const operation_cost = toNum(parsed.operation_cost ?? it.price);
+    return {
+      id: `pr-db-${it.id}-${idx}`,
+      photo: parsed.photo || '',
+      model_name: parsed.model_name || '',
+      color: String(parsed.color || ''),
+      colorOther: String(parsed.colorOther || ''),
+      sizes: mergedSizes,
+      total_qty,
+      operation: parsed.operation || '',
+      operation_cost,
+      total_cost: total_qty * operation_cost,
+    };
+  }
+  const qty = toNum(it.qty);
+  const price = toNum(it.price);
+  const modelGuess = raw.split(/\s·\s/)[0] || raw;
+  return {
+    id: `pr-db-${it.id}-${idx}`,
+    photo: '',
+    model_name: modelGuess,
+    color: '',
+    colorOther: '',
+    sizes: { ...baseSizes },
+    total_qty: qty,
+    operation: '',
+    operation_cost: price,
+    total_cost: qty * price,
+  };
 }
 
 function parseMovementItemToSimpleRow(it, idx, stockList, orderColorsList) {
@@ -374,8 +768,8 @@ function parseMovementItemToSimpleRow(it, idx, stockList, orderColorsList) {
     material_name: matName,
     unit,
     stock_qty: stockQty,
-    qty: qtyVal > 0 ? String(qtyVal) : '',
-    rolls: '',
+    qty: qtyVal > 0 ? qtyVal : 0,
+    rolls: 0,
     price,
     overStock: mid && stockQty > 0 ? qtyVal > stockQty : false,
   };
@@ -406,20 +800,30 @@ export default function MovementForm(props) {
   const [orderId, setOrderId] = useState('');
   const [note, setNote] = useState('');
   const [orders, setOrders] = useState([]);
-  const [batches, setBatches] = useState([]);
   const [docStatus, setDocStatus] = useState(null);
   const [docNumber, setDocNumber] = useState('');
 
   const [activeSizes, setActiveSizes] = useState([]);
   const [orderColors, setOrderColors] = useState([]);
-  const [orderFabrics, setOrderFabrics] = useState([]);
-  const [stockRows, setStockRows] = useState([]);
   const [stockItems, setStockItems] = useState([]);
-  const [simpleRows, setSimpleRows] = useState([]);
+  const [rowsA, setRowsA] = useState([createEmptyRowA()]);
+  const [batches, setBatches] = useState([]);
+  const [productRows, setProductRows] = useState([]);
+  /** Операции для строк таблицы Б (раскрой) или В (пошив/ОТК) */
+  const [movementOps, setMovementOps] = useState([]);
   const [orderQuantity, setOrderQuantity] = useState(0);
+  const [orderFabrics, setOrderFabrics] = useState([]);
+  /** Остатки тканей для маршрута Б: все склады и (опционально) выбранный склад «откуда» */
+  const [routeBStockAll, setRouteBStockAll] = useState([]);
+  const [routeBStockSpecific, setRouteBStockSpecific] = useState([]);
 
-  const isWarehouseToCutting =
-    fromType === 'warehouse' && toType === 'cutting';
+  /** Смена заказа/маршрута Б → пересоздать партии; смена только склада «откуда» → только остатки */
+  const prevBatchesInitRef = useRef({ orderId: '', fromType: '', toType: '' });
+
+  const ROUTE = movementRoute(fromType, toType);
+  const routeIsA = isRouteA(fromType, toType);
+  const routeIsB = isRouteB(fromType, toType);
+  const routeIsC = isRouteC(fromType, toType);
 
   const fromLabel = useMemo(() => {
     if (fromType === 'warehouse') {
@@ -461,64 +865,8 @@ export default function MovementForm(props) {
       .catch(() => setOrders([]));
   }, []);
 
-  const normForFabric = useCallback(
-    (fabricName) => {
-      const f = orderFabrics.find((x) => x.name === fabricName);
-      return f ? toNum(f.normPerUnit) : 0;
-    },
-    [orderFabrics]
-  );
-
-  const recalcDerived = useCallback(
-    (batch) => {
-      const total_qty = Object.values(batch.sizes || {}).reduce((a, b) => a + toNum(b), 0);
-      const norm = normForFabric(batch.fabric_name);
-      const fact = toNum(batch.fact_meters);
-      const remainder = fact - total_qty * norm;
-      const shortage = remainder < 0 ? Math.abs(remainder) : 0;
-      return { ...batch, total_qty, remainder, shortage };
-    },
-    [normForFabric]
-  );
-
-  const updateBatch = useCallback(
-    (batchId, patch) => {
-      setBatches((prev) =>
-        prev.map((b) => {
-          if (b.id !== batchId) return b;
-          let next = { ...b, ...patch };
-          if (patch.sizes) {
-            next.total_qty = Object.values(patch.sizes).reduce((a, x) => a + toNum(x), 0);
-          }
-          return mergeWarehouseStock(fromType, stockRows, recalcDerived(next));
-        })
-      );
-    },
-    [recalcDerived, fromType, stockRows]
-  );
-
-  const recalcBatch = useCallback(
-    (batchId, patch) => {
-      setBatches((prev) =>
-        prev.map((b) => {
-          if (b.id !== batchId) return b;
-          let next = { ...b, ...patch };
-          if (patch.sizes) {
-            next.total_qty = Object.values(patch.sizes).reduce((a, x) => a + toNum(x), 0);
-          }
-          return mergeWarehouseStock(fromType, stockRows, recalcDerived(next));
-        })
-      );
-    },
-    [recalcDerived, fromType, stockRows]
-  );
-
-  const removeBatch = useCallback((batchId) => {
-    setBatches((prev) => (prev.length <= 1 ? prev : prev.filter((b) => b.id !== batchId)));
-  }, []);
-
-  const updateSimpleRow = useCallback((rowId, patch) => {
-    setSimpleRows((prev) =>
+  const updateA = useCallback((rowId, patch) => {
+    setRowsA((prev) =>
       prev.map((r) => {
         if (r.id !== rowId) return r;
         const next = { ...r, ...patch };
@@ -530,12 +878,58 @@ export default function MovementForm(props) {
     );
   }, []);
 
-  const removeSimpleRow = useCallback((rowId) => {
-    setSimpleRows((prev) => (prev.length <= 1 ? prev : prev.filter((x) => x.id !== rowId)));
+  const removeA = useCallback((rowId) => {
+    setRowsA((prev) => (prev.length <= 1 ? prev : prev.filter((x) => x.id !== rowId)));
   }, []);
 
-  const loadOrderAndStock = useCallback(async (oid) => {
-    const urlWarehouseCutting = fromType === 'warehouse' && toType === 'cutting';
+  const recalcBatch = useCallback((id, changes) => {
+    setBatches((prev) => {
+      const updated = prev.map((b) => (b.id === id ? { ...b, ...changes } : b));
+      return applyRunningRouteBMetrics(updated);
+    });
+  }, []);
+
+  const getFabricStock = useCallback(
+    (fabricName) =>
+      aggregateFabricStockFromSources(fabricName, routeBStockSpecific, routeBStockAll),
+    [routeBStockSpecific, routeBStockAll]
+  );
+
+  const loadRouteBFabricStock = useCallback(async () => {
+    if (!routeIsB) return;
+    const { allArr, specArr } = await fetchRouteBStockArrays(fromWarehouseId);
+    setRouteBStockAll(allArr);
+    setRouteBStockSpecific(specArr);
+  }, [routeIsB, fromWarehouseId]);
+
+  useEffect(() => {
+    if (!routeIsB) {
+      setRouteBStockAll([]);
+      setRouteBStockSpecific([]);
+      return;
+    }
+    void loadRouteBFabricStock();
+  }, [routeIsB, fromWarehouseId, loadRouteBFabricStock]);
+
+  const removeBatch = useCallback((id) => {
+    setBatches((prev) => {
+      const next = prev.length <= 1 ? prev : prev.filter((x) => x.id !== id);
+      return applyRunningRouteBMetrics(next);
+    });
+  }, []);
+
+  const updateProductRow = useCallback((id, changes) => {
+    setProductRows((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, ...changes } : r))
+    );
+  }, []);
+
+  const removeProductRow = useCallback((id) => {
+    setProductRows((prev) => prev.filter((r) => r.id !== id));
+  }, []);
+
+  const loadOrderAndStock = useCallback(async (oid, opts = {}) => {
+    const { reinitBatches = true } = opts;
     const wid =
       fromWarehouseId && String(fromWarehouseId).trim() && !Number.isNaN(Number(fromWarehouseId))
         ? Number(fromWarehouseId)
@@ -544,71 +938,171 @@ export default function MovementForm(props) {
       setActiveSizes([]);
       setOrderColors([]);
       setOrderFabrics([]);
-      setStockRows([]);
+      setRouteBStockAll([]);
+      setRouteBStockSpecific([]);
       setStockItems([]);
-      setSimpleRows([]);
-      setOrderQuantity(0);
+      setRowsA([createEmptyRowA()]);
       setBatches([]);
+      setProductRows([]);
+      setMovementOps([]);
+      setOrderQuantity(0);
       return;
     }
-    if (urlWarehouseCutting) {
+
+    if (routeIsB && reinitBatches === false) {
+      const { allArr, specArr } = await fetchRouteBStockArrays(fromWarehouseId);
+      setRouteBStockAll(allArr);
+      setRouteBStockSpecific(specArr);
+      setBatches((prev) => {
+        const mapped = prev.map((b) => {
+          const sq = b.fabric_name
+            ? aggregateFabricStockFromSources(b.fabric_name, specArr, allArr)
+            : 0;
+          return { ...b, stock_qty: sq };
+        });
+        return applyRunningRouteBMetrics(mapped);
+      });
       try {
-        const order = await api.orders.get(oid);
         const items = await fetchStockItemsForWarehouseCutting(oid, wid);
         setStockItems(items);
-        setStockRows(items);
-        setOrderColors(extractOrderColors(order));
-        setOrderFabrics(extractFabricsFromOrder(order));
-        setOrderQuantity(toNum(order.total_quantity ?? order.quantity ?? order.total_qty));
-        setActiveSizes([]);
-        setBatches([]);
-        setSimpleRows([createEmptySimpleRow()]);
       } catch {
         setStockItems([]);
-        setStockRows([]);
-        setOrderColors([]);
-        setOrderFabrics([]);
-        setOrderQuantity(0);
-        setBatches([]);
-        setSimpleRows([createEmptySimpleRow()]);
       }
       return;
     }
-    try {
-      const stockParams = { order_id: oid };
-      if (wid) stockParams.warehouse_id = wid;
-      const [order, stock] = await Promise.all([
-        api.orders.get(oid),
-        api.warehouse.stock(stockParams),
-      ]);
-      const list = Array.isArray(stock) ? stock : [];
-      setStockRows(list);
-      setStockItems([]);
-      setSimpleRows([]);
 
-      const sizes = extractActiveSizes(order);
-      setActiveSizes(sizes.length ? sizes : ERDEN_SIZES);
-      setOrderColors(extractOrderColors(order));
-      setOrderFabrics(extractFabricsFromOrder(order));
-      setOrderQuantity(toNum(order.total_quantity ?? order.quantity ?? order.total_qty));
-
-      const sz = sizes.length ? sizes : ERDEN_SIZES;
-      setBatches([
-        mergeWarehouseStock(fromType, list, createEmptyBatch(sz)),
-      ]);
-    } catch {
-      setActiveSizes(ERDEN_SIZES);
-      setOrderColors([]);
-      setOrderFabrics([]);
-      setStockRows([]);
-      setStockItems([]);
-      setSimpleRows([]);
-      setOrderQuantity(0);
-      setBatches([
-        mergeWarehouseStock(fromType, [], createEmptyBatch(ERDEN_SIZES)),
-      ]);
+    if (routeIsC) {
+      try {
+        const order = await api.orders.get(oid);
+        const sizes = extractActiveSizes(order);
+        const sz = sizes.length ? sizes : ERDEN_SIZES;
+        setActiveSizes(sz);
+        setOrderColors(extractOrderColors(order));
+        setOrderQuantity(toNum(order.total_quantity ?? order.quantity ?? order.total_qty));
+        const photo = order.photo || order.model_photo || order.image_url || order.image || '';
+        const modelName =
+          order.product_name || order.model_name || order.name || order.title || '';
+        setMovementOps(loadMovementOps(order, fromType, toType));
+        setOrderFabrics([]);
+        setProductRows([
+          {
+            id: Date.now(),
+            photo,
+            model_name: modelName,
+            color: '',
+            colorOther: '',
+            sizes: Object.fromEntries(sz.map((s) => [s, 0])),
+            total_qty: 0,
+            operation: '',
+            operation_cost: 0,
+            total_cost: 0,
+          },
+        ]);
+        setRowsA([createEmptyRowA()]);
+        setBatches([]);
+        setStockItems([]);
+      } catch {
+        setActiveSizes(ERDEN_SIZES);
+        setOrderColors([]);
+        setOrderQuantity(0);
+        setMovementOps([]);
+        setOrderFabrics([]);
+        setProductRows([]);
+        setRowsA([createEmptyRowA()]);
+        setBatches([]);
+        setStockItems([]);
+      }
+      return;
     }
-  }, [fromType, toType, fromWarehouseId]);
+
+    if (routeIsB) {
+      try {
+        const order = await api.orders.get(oid);
+        console.log('[ORDER полный]:', order);
+        console.log('[fabric_data]:', order.fabric_data);
+        console.log('[fittings_data]:', order.fittings_data);
+        console.log('[ORDER keys]:', Object.keys(order));
+        const sizes = extractActiveSizes(order);
+        const sz = sizes.length ? sizes : ERDEN_SIZES;
+        setActiveSizes(sz);
+        const parsedColors = parseOrderColorsRouteB(order);
+        const colorListForSelect = parsedColors.length > 0 ? parsedColors : [];
+        setOrderColors(colorListForSelect);
+        const fabrics = getFabrics(order);
+        setOrderFabrics(fabrics);
+        console.log('[fabrics найдено]:', fabrics);
+        setOrderQuantity(toNum(order.total_quantity ?? order.quantity ?? order.total_qty));
+        setMovementOps(loadMovementOps(order, fromType, toType));
+
+        const { allArr, specArr } = await fetchRouteBStockArrays(fromWarehouseId);
+        setRouteBStockAll(allArr);
+        setRouteBStockSpecific(specArr);
+
+        const items = await fetchStockItemsForWarehouseCutting(oid, wid);
+        setStockItems(items);
+        setBatches(buildAutoBatchesRouteB(order, sz, specArr, allArr));
+        setProductRows([]);
+        setRowsA([createEmptyRowA()]);
+      } catch {
+        setActiveSizes(ERDEN_SIZES);
+        setOrderColors([]);
+        setOrderFabrics([]);
+        setRouteBStockAll([]);
+        setRouteBStockSpecific([]);
+        setOrderQuantity(0);
+        setMovementOps([]);
+        setStockItems([]);
+        setBatches(buildAutoBatchesRouteB({}, ERDEN_SIZES, [], []));
+        setProductRows([]);
+        setRowsA([createEmptyRowA()]);
+      }
+      return;
+    }
+
+    try {
+      const order = await api.orders.get(oid);
+      const items = await fetchStockItemsForWarehouseCutting(oid, wid);
+      setStockItems(items);
+      setOrderColors(extractOrderColors(order));
+      setOrderQuantity(toNum(order.total_quantity ?? order.quantity ?? order.total_qty));
+      setOrderFabrics([]);
+      setActiveSizes([]);
+      setProductRows([]);
+      setBatches([]);
+      setMovementOps([]);
+      setRowsA([createEmptyRowA()]);
+    } catch {
+      setStockItems([]);
+      setOrderColors([]);
+      setOrderQuantity(0);
+      setOrderFabrics([]);
+      setProductRows([]);
+      setBatches([]);
+      setMovementOps([]);
+      setRowsA([createEmptyRowA()]);
+    }
+  }, [fromType, toType, fromWarehouseId, routeIsB, routeIsC]);
+
+  useEffect(() => {
+    if (docId) return;
+    if (!isRouteC(fromType, toType)) return;
+    if (orderId) return;
+    setProductRows([
+      {
+        id: Date.now(),
+        photo: '',
+        model_name: '',
+        color: '',
+        colorOther: '',
+        sizes: Object.fromEntries(ERDEN_SIZES.map((s) => [s, 0])),
+        total_qty: 0,
+        operation: '',
+        operation_cost: 0,
+        total_cost: 0,
+      },
+    ]);
+    setMovementOps([]);
+  }, [fromType, toType, docId, orderId]);
 
   const loadAllStock = useCallback(async () => {
     if (docId) return;
@@ -622,16 +1116,13 @@ export default function MovementForm(props) {
         : null;
     const items = await fetchStockItemsForWarehouseCutting(oid, wid);
     setStockItems(items);
-    if (fromType === 'warehouse' && toType === 'cutting') {
-      setStockRows(items);
-    }
-  }, [docId, orderId, fromType, toType, fromWarehouseId]);
+  }, [docId, orderId, fromWarehouseId]);
 
   useEffect(() => {
-    if (fromType === 'warehouse' && !docId) {
+    if (fromType === 'warehouse' && isRouteA(fromType, toType) && !docId) {
       loadAllStock();
     }
-  }, [fromType, docId, loadAllStock]);
+  }, [fromType, toType, docId, loadAllStock]);
 
   useEffect(() => {
     if (!docId) return undefined;
@@ -663,8 +1154,9 @@ export default function MovementForm(props) {
         if (sm.order_id) setOrderId(String(sm.order_id));
         setNote(doc.user_note || '');
         const items = doc.Items || [];
-        const defectsMap = sm.defects && typeof sm.defects === 'object' ? sm.defects : {};
-        const docIsWC = resolvedFrom === 'warehouse' && resolvedTo === 'cutting';
+        const docRouteA = isRouteA(resolvedFrom, resolvedTo);
+        const docRouteB = isRouteB(resolvedFrom, resolvedTo);
+        const docRouteC = isRouteC(resolvedFrom, resolvedTo);
 
         let orderJson = null;
         if (sm.order_id) {
@@ -677,61 +1169,86 @@ export default function MovementForm(props) {
         const sizes = orderJson ? extractActiveSizes(orderJson) : [];
         const effSizes = sizes.length ? sizes : ERDEN_SIZES;
         const colorsList = orderJson ? extractOrderColors(orderJson) : [];
-        const fabricsList = orderJson ? extractFabricsFromOrder(orderJson) : [];
+        const fabricsList = orderJson ? getFabrics(orderJson) : [];
 
-        setActiveSizes(effSizes);
+        setActiveSizes(docRouteA ? [] : effSizes);
         setOrderColors(colorsList);
-        setOrderFabrics(fabricsList);
+        setOrderFabrics(docRouteB ? fabricsList : []);
         setOrderQuantity(orderJson ? toNum(orderJson.total_quantity ?? orderJson.quantity) : 0);
 
         let stockListForMerge = [];
-        if (docIsWC) {
+        if (docRouteA) {
+          setProductRows([]);
+          setBatches([]);
+          setMovementOps([]);
           stockListForMerge = await fetchStockItemsForWarehouseCutting(
             sm.order_id ? Number(sm.order_id) : null,
             fw ? Number(fw) : null
           );
           setStockItems(stockListForMerge);
-          setStockRows(stockListForMerge);
-          setBatches([]);
           if (items.length) {
-            setSimpleRows(
+            setRowsA(
               items.map((it, i) => parseMovementItemToSimpleRow(it, i, stockListForMerge, colorsList))
             );
           } else {
-            setSimpleRows([createEmptySimpleRow()]);
+            setRowsA([createEmptyRowA()]);
           }
-        } else {
-          setStockItems([]);
-          setSimpleRows([]);
-          if (sm.order_id) {
-            try {
-              const stParams = { order_id: sm.order_id };
-              if (fw) stParams.warehouse_id = Number(fw);
-              const st = await api.warehouse.stock(stParams);
-              stockListForMerge = Array.isArray(st) ? st : [];
-              setStockRows(stockListForMerge);
-            } catch {
-              stockListForMerge = [];
-              setStockRows([]);
-            }
-          } else {
-            setStockRows([]);
-          }
-
+        } else if (docRouteB) {
+          setRowsA([createEmptyRowA()]);
+          setProductRows([]);
+          setMovementOps(loadMovementOps(orderJson, resolvedFrom, resolvedTo));
+          stockListForMerge = await fetchStockItemsForWarehouseCutting(
+            sm.order_id ? Number(sm.order_id) : null,
+            fw ? Number(fw) : null
+          );
+          setStockItems(stockListForMerge);
+          setActiveSizes(effSizes);
           if (items.length) {
             setBatches(
-              items.map((it, i) => {
-                let b = parseItemToBatch(it, effSizes, i, colorsList);
-                const key = String(it.item_name || '').trim();
-                if (defectsMap[key] != null) b.defect_meters = toNum(defectsMap[key]);
-                b = deriveBatchNumbers(b, fabricsList);
-                return mergeWarehouseStock(resolvedFrom, stockListForMerge, b);
-              })
+              applyRunningRouteBMetrics(
+                items.map((it, i) => parseCutBatchItemToBatch(it, effSizes, i))
+              )
             );
           } else {
-            setBatches([
-              mergeWarehouseStock(resolvedFrom, stockListForMerge, createEmptyBatch(effSizes)),
+            setBatches([createEmptyBatchRow(effSizes)]);
+          }
+        } else if (docRouteC) {
+          setStockItems([]);
+          setRowsA([createEmptyRowA()]);
+          setBatches([]);
+          setActiveSizes(effSizes);
+          setMovementOps(loadMovementOps(orderJson, resolvedFrom, resolvedTo));
+          if (items.length) {
+            setProductRows(items.map((it, i) => parseSewingOtkItemToProductRow(it, effSizes, i)));
+          } else if (orderJson) {
+            const photo =
+              orderJson.photo ||
+              orderJson.model_photo ||
+              orderJson.image_url ||
+              orderJson.image ||
+              '';
+            const modelName =
+              orderJson.product_name ||
+              orderJson.model_name ||
+              orderJson.name ||
+              orderJson.title ||
+              '';
+            setProductRows([
+              {
+                id: Date.now(),
+                photo,
+                model_name: modelName,
+                color: '',
+                colorOther: '',
+                sizes: Object.fromEntries(effSizes.map((s) => [s, 0])),
+                total_qty: 0,
+                operation: '',
+                operation_cost: 0,
+                total_cost: 0,
+              },
             ]);
+          } else {
+            setProductRows([]);
           }
         }
       } catch (e) {
@@ -747,68 +1264,81 @@ export default function MovementForm(props) {
 
   useEffect(() => {
     if (docId) return;
-    loadOrderAndStock(orderId || '');
-  }, [orderId, docId, fromType, toType, fromWarehouseId, loadOrderAndStock]);
+    const oid = orderId || '';
 
-  const totals = useMemo(() => {
-    return batches.reduce(
-      (acc, b) => ({
-        plan: acc.plan + toNum(b.plan_meters),
-        fact: acc.fact + toNum(b.fact_meters),
-        qty: acc.qty + toNum(b.total_qty),
-        remainder: acc.remainder + toNum(b.remainder),
-        defect: acc.defect + toNum(b.defect_meters),
-        stock: acc.stock + toNum(b.stock_qty),
+    if (routeIsB && oid) {
+      const p = prevBatchesInitRef.current;
+      const reinit =
+        String(oid) !== String(p.orderId) ||
+        fromType !== p.fromType ||
+        toType !== p.toType;
+      prevBatchesInitRef.current = {
+        orderId: String(oid),
+        fromType,
+        toType,
+      };
+      void loadOrderAndStock(oid, { reinitBatches: reinit });
+      return;
+    }
+
+    if (!routeIsB) {
+      prevBatchesInitRef.current = { orderId: '', fromType, toType };
+    } else if (!oid) {
+      prevBatchesInitRef.current = { orderId: '', fromType, toType };
+    }
+
+    void loadOrderAndStock(oid, { reinitBatches: true });
+  }, [orderId, docId, fromType, toType, fromWarehouseId, loadOrderAndStock, routeIsB]);
+
+  const totA = useMemo(() => {
+    if (!routeIsA) return null;
+    const qty = rowsA.reduce((a, r) => a + toNum(r.qty), 0);
+    const rolls = rowsA.reduce((a, r) => a + toNum(r.rolls), 0);
+    const sum = rowsA.reduce((a, r) => a + toNum(r.qty) * toNum(r.price), 0);
+    const hasOverStock = rowsA.some((r) => r.overStock);
+    return { qty, rolls, sum, hasOverStock };
+  }, [routeIsA, rowsA]);
+
+  const totC = useMemo(() => {
+    if (!routeIsC) return null;
+    return productRows.reduce(
+      (acc, r) => ({
+        qty: acc.qty + toNum(r.total_qty),
+        cost: acc.cost + toNum(r.total_qty) * toNum(r.operation_cost),
       }),
-      { plan: 0, fact: 0, qty: 0, remainder: 0, defect: 0, stock: 0 }
+      { qty: 0, cost: 0 }
     );
-  }, [batches]);
+  }, [routeIsC, productRows]);
 
-  const totalNeedWarehouse = useMemo(() => {
-    if (fromType !== 'warehouse') return 0;
-    return Math.max(0, totals.plan - totals.stock);
-  }, [fromType, totals.plan, totals.stock]);
-
-  const materialShortages = useMemo(() => {
-    if (isWarehouseToCutting) return [];
-    if (fromType !== 'warehouse') return [];
-    return batches.filter(
-      (b) => b.fabric_name && toNum(b.stock_qty) < toNum(b.plan_meters)
+  const totB = useMemo(() => {
+    if (!routeIsB) return null;
+    const totalBatchQty = batches.reduce((a, b) => a + toNum(b.total_qty), 0);
+    const totalBatchZP = batches.reduce(
+      (a, b) => a + toNum(b.total_qty) * toNum(b.operation_cost),
+      0
     );
-  }, [batches, fromType, isWarehouseToCutting]);
-
-  const simpleTotals = useMemo(() => {
-    if (!isWarehouseToCutting) return null;
-    const totalQty = simpleRows.reduce((a, r) => a + toNum(r.qty), 0);
-    const totalRolls = simpleRows.reduce((a, r) => a + toNum(r.rolls), 0);
-    const totalSum = simpleRows.reduce((a, r) => a + toNum(r.qty) * toNum(r.price), 0);
-    const hasOverStock = simpleRows.some((r) => r.overStock);
-    return { totalQty, totalRolls, totalSum, hasOverStock };
-  }, [isWarehouseToCutting, simpleRows]);
+    const totalPlan = batches.reduce((a, b) => a + toNum(b.plan_meters), 0);
+    const totalFact = batches.reduce((a, b) => a + toNum(b.fact_meters), 0);
+    const totalDefect = batches.reduce((a, b) => a + toNum(b.defect_meters), 0);
+    const totalRemainder = batches.reduce((a, b) => a + toNum(b.remainder), 0);
+    return {
+      totalBatchQty,
+      totalBatchZP,
+      totalPlan,
+      totalFact,
+      totalDefect,
+      totalRemainder,
+    };
+  }, [routeIsB, batches]);
 
   const tableMinWidth = useMemo(() => {
-    if (isWarehouseToCutting) return 960;
+    if (routeIsA) return 960;
     const sz = activeSizes.length ? activeSizes : ERDEN_SIZES;
-    return (
-      90 +
-      120 +
-      80 +
-      100 +
-      100 +
-      sz.length * 58 +
-      80 +
-      120 +
-      90 +
-      80 +
-      90 +
-      40
-    );
-  }, [isWarehouseToCutting, activeSizes]);
-
-  const displayColor = (b) => {
-    if (b.color === '__other__') return String(b.colorOther || '').trim();
-    return String(b.color || '').trim();
-  };
+    if (routeIsB) {
+      return Math.max(1100, 520 + sz.length * 52 + 380);
+    }
+    return Math.max(800, 44 + 200 + 110 + sz.length * 52 + 280 + 44);
+  }, [routeIsA, routeIsB, activeSizes]);
 
   const buildPayload = () => {
     const oid = parseInt(String(orderId).trim(), 10);
@@ -826,8 +1356,8 @@ export default function MovementForm(props) {
       to_warehouse_id: tw,
     };
 
-    if (isWarehouseToCutting) {
-      for (const r of simpleRows) {
+    if (routeIsA) {
+      for (const r of rowsA) {
         if (!r.material_id || toNum(r.qty) <= 0) continue;
         const mn = String(r.material_name || '').trim();
         const cl = displaySimpleRowColor(r);
@@ -854,35 +1384,59 @@ export default function MovementForm(props) {
       };
     }
 
-    for (const b of batches) {
-      const fabric = String(b.fabric_name || '').trim();
-      if (!fabric) continue;
-      const fact = toNum(b.fact_meters);
-      if (fact <= 0) continue;
+    if (routeIsB) {
+      for (const b of batches) {
+        const total_qty = Object.values(b.sizes || {}).reduce((a, x) => a + toNum(x), 0);
+        const pm = toNum(b.plan_meters);
+        const fm = toNum(b.fact_meters);
+        if (total_qty <= 0 && pm <= 0 && fm <= 0) continue;
+        const qtyLine = total_qty > 0 ? total_qty : Math.max(pm, fm);
+        items.push({
+          item_id: null,
+          material_name: buildCutBatchMaterialName(b),
+          material_type: 'fabric',
+          unit: total_qty > 0 ? 'шт' : 'м',
+          qty: qtyLine,
+          price: toNum(b.operation_cost),
+          defect_qty: toNum(b.defect_meters),
+        });
+      }
+      return {
+        order_id: oid,
+        from_stage: fromType,
+        to_stage: toType,
+        date: docDate,
+        note: note.trim() || '',
+        items,
+        status: 'draft',
+        ...whIds,
+      };
+    }
 
-      const color = displayColor(b);
-      const marking = String(b.marking || '').trim();
-      const material_name = [fabric, color || '—', marking].filter(Boolean).join(' · ');
-
-      const stock = findStockRow(stockRows, fabric);
-      const price =
-        fromType === 'warehouse' && toNum(b.price) > 0
-          ? toNum(b.price)
-          : stock
-            ? toNum(stock.price_per_unit ?? stock.price)
-            : toNum(b.price);
-      const item_id =
-        stock?.id != null && !Number.isNaN(Number(stock.id)) ? Number(stock.id) : null;
-
-      items.push({
-        item_id,
-        material_name,
-        material_type: 'fabric',
-        unit: 'м',
-        qty: fact,
-        price,
-        defect_qty: toNum(b.defect_meters),
-      });
+    if (routeIsC) {
+      for (const row of productRows) {
+        const total_qty = Object.values(row.sizes || {}).reduce((a, x) => a + toNum(x), 0);
+        if (total_qty <= 0) continue;
+        items.push({
+          item_id: null,
+          material_name: buildSewingOtkMaterialName(row),
+          material_type: 'fabric',
+          unit: 'шт',
+          qty: total_qty,
+          price: toNum(row.operation_cost),
+          defect_qty: 0,
+        });
+      }
+      return {
+        order_id: oid,
+        from_stage: fromType,
+        to_stage: toType,
+        date: docDate,
+        note: note.trim() || '',
+        items,
+        status: 'draft',
+        ...whIds,
+      };
     }
 
     return {
@@ -929,9 +1483,13 @@ export default function MovementForm(props) {
     }
     if (!payload.items.length) {
       setError(
-        isWarehouseToCutting
+        routeIsA
           ? 'Выберите материал со склада и укажите количество хотя бы в одной строке'
-          : 'Укажите факт (м) и ткань хотя бы по одной партии'
+          : routeIsB
+            ? 'Заполните партию: количество по размерам или метраж план/факт'
+            : routeIsC
+              ? 'Укажите количество по размерам хотя бы в одной строке'
+              : 'Укажите позиции для сохранения'
       );
       return;
     }
@@ -974,9 +1532,13 @@ export default function MovementForm(props) {
     }
     if (!payload.items.length) {
       setError(
-        isWarehouseToCutting
+        routeIsA
           ? 'Выберите материал со склада и укажите количество хотя бы в одной строке'
-          : 'Укажите факт (м) и ткань хотя бы по одной партии'
+          : routeIsB
+            ? 'Заполните партию: количество по размерам или метраж план/факт'
+            : routeIsC
+              ? 'Укажите количество по размерам хотя бы в одной строке'
+              : 'Укажите позиции для сохранения'
       );
       return;
     }
@@ -1231,19 +1793,68 @@ export default function MovementForm(props) {
         </label>
       </div>
 
-      {orderId ? (
-        <div className="text-xs text-slate-500">
-          Заказ: всего по модели{' '}
-          <span className="text-slate-400">{orderQuantity || '—'} шт</span>
-          {orderFabrics.length ? (
-            <span className="ml-2">
-              · тканей в спецификации: {orderFabrics.length}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
+      <div
+        style={{
+          marginBottom: 12,
+          display: 'flex',
+          gap: 8,
+          alignItems: 'center',
+          flexWrap: 'wrap',
+        }}
+      >
+        {routeIsA && (
+          <span
+            style={{
+              background: '#1e3a5f',
+              color: '#93c5fd',
+              fontSize: 12,
+              padding: '3px 10px',
+              borderRadius: 12,
+              fontWeight: 500,
+            }}
+          >
+            📦 Таблица А — материалы
+          </span>
+        )}
+        {routeIsB && (
+          <span
+            style={{
+              background: '#422006',
+              color: '#fdba74',
+              fontSize: 12,
+              padding: '3px 10px',
+              borderRadius: 12,
+              fontWeight: 500,
+            }}
+          >
+            ✂️ Таблица Б — раскрой (партии)
+          </span>
+        )}
+        {routeIsC && (
+          <span
+            style={{
+              background: '#1a3a1a',
+              color: '#86efac',
+              fontSize: 12,
+              padding: '3px 10px',
+              borderRadius: 12,
+              fontWeight: 500,
+            }}
+          >
+            👗 Таблица В — изделия ({ROUTE})
+          </span>
+        )}
+        {orderId ? (
+          <span style={{ color: '#64748b', fontSize: 12 }}>
+            Заказ: всего {orderQuantity || '—'} шт ·{' '}
+            {routeIsA
+              ? `тканей: ${stockItems.length}`
+              : `размеров: ${activeSizes.length}`}
+          </span>
+        ) : null}
+      </div>
 
-      {isWarehouseToCutting ? (
+      {routeIsA ? (
         <>
           <div style={{ overflowX: 'auto' }} className="rounded border border-white/10">
             <table
@@ -1267,7 +1878,7 @@ export default function MovementForm(props) {
                 </tr>
               </thead>
               <tbody>
-                {simpleRows.map((row, idx) => {
+                {rowsA.map((row, idx) => {
                   const rowBg = (idx + 1) % 2 === 0 ? '#0f172a' : '#1a2744';
                   const ctrlDisabled = readOnly ? { opacity: 0.65, cursor: 'not-allowed' } : {};
                   const sq = toNum(row.stock_qty);
@@ -1289,9 +1900,9 @@ export default function MovementForm(props) {
                           onChange={(e) => {
                             const v = e.target.value;
                             if (v === '__other__') {
-                              updateSimpleRow(row.id, { color: '__other__', colorOther: '' });
+                              updateA(row.id, { color: '__other__', colorOther: '' });
                             } else {
-                              updateSimpleRow(row.id, { color: v, colorOther: '' });
+                              updateA(row.id, { color: v, colorOther: '' });
                             }
                           }}
                           style={{ ...CTRL, ...ctrlDisabled }}
@@ -1319,7 +1930,7 @@ export default function MovementForm(props) {
                                   : row.color || row.colorOther
                             }
                             onChange={(e) =>
-                              updateSimpleRow(row.id, {
+                              updateA(row.id, {
                                 color: '__other__',
                                 colorOther: e.target.value,
                               })
@@ -1335,7 +1946,7 @@ export default function MovementForm(props) {
                           onChange={(e) => {
                             const val = e.target.value;
                             if (!val) {
-                              updateSimpleRow(row.id, {
+                              updateA(row.id, {
                                 material_id: null,
                                 material_name: '',
                                 unit: 'м',
@@ -1346,7 +1957,7 @@ export default function MovementForm(props) {
                             }
                             const mat = stockItems.find((s) => String(s.id) === String(val));
                             if (mat) {
-                              updateSimpleRow(row.id, {
+                              updateA(row.id, {
                                 material_id: mat.id,
                                 material_name: mat.name || mat.material_name || '',
                                 unit: mat.unit || 'м',
@@ -1400,7 +2011,7 @@ export default function MovementForm(props) {
                           onChange={(e) => {
                             const raw = e.target.value;
                             const qty = raw === '' ? '' : parseFloat(raw) || 0;
-                            updateSimpleRow(row.id, { qty });
+                            updateA(row.id, { qty });
                           }}
                           style={{
                             ...CTRL,
@@ -1427,7 +2038,7 @@ export default function MovementForm(props) {
                           onChange={(e) => {
                             const raw = e.target.value;
                             const rolls = raw === '' ? '' : parseInt(raw, 10) || 0;
-                            updateSimpleRow(row.id, { rolls });
+                            updateA(row.id, { rolls });
                           }}
                           style={{ ...CTRL, textAlign: 'center', ...ctrlDisabled }}
                         />
@@ -1436,7 +2047,7 @@ export default function MovementForm(props) {
                         {!readOnly ? (
                           <button
                             type="button"
-                            onClick={() => removeSimpleRow(row.id)}
+                            onClick={() => removeA(row.id)}
                             style={{
                               background: 'none',
                               border: 'none',
@@ -1456,29 +2067,18 @@ export default function MovementForm(props) {
               </tbody>
             </table>
           </div>
-          {simpleTotals ? (
-            <div
-              style={{
-                marginTop: 12,
-                padding: '10px 16px',
-                background: '#1e3a5f',
-                borderRadius: 8,
-                display: 'flex',
-                gap: 24,
-                flexWrap: 'wrap',
-                fontSize: 14,
-              }}
-            >
+          {totA ? (
+            <div style={TOTALS_STYLE}>
               <span>
-                📦 Итого передать: <b>{simpleTotals.totalQty.toFixed(2)} м</b>
+                📦 Итого: <b>{totA.qty.toFixed(2)} м</b>
               </span>
               <span>
-                🧻 Рулонов: <b>{simpleTotals.totalRolls}</b>
+                🧻 Рулонов: <b>{totA.rolls}</b>
               </span>
               <span>
-                💰 Сумма: <b>{simpleTotals.totalSum.toLocaleString('ru-RU')} сом</b>
+                💰 Сумма: <b>{totA.sum.toLocaleString('ru-RU')} сом</b>
               </span>
-              {simpleTotals.hasOverStock ? (
+              {totA.hasOverStock ? (
                 <span style={{ color: '#f87171' }}>
                   ⚠️ Некоторые позиции превышают остаток на складе!
                 </span>
@@ -1486,118 +2086,90 @@ export default function MovementForm(props) {
             </div>
           ) : null}
           {!readOnly ? (
-            <button
-              type="button"
-              onClick={() => setSimpleRows((prev) => [...prev, createEmptySimpleRow()])}
-              style={{
-                marginTop: 12,
-                background: '#16a34a',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 6,
-                padding: '8px 16px',
-                cursor: 'pointer',
-                fontSize: 13,
-                fontWeight: 600,
-              }}
-            >
+            <button type="button" onClick={() => setRowsA((prev) => [...prev, createEmptyRowA()])} style={ADD_BTN}>
               + Добавить строку
             </button>
           ) : null}
         </>
-      ) : (
+      ) : routeIsB ? (
         <>
           <div style={{ overflowX: 'auto' }} className="rounded border border-white/10">
+            <style>{`
+              .batch-table input[type=number]::-webkit-outer-spin-button,
+              .batch-table input[type=number]::-webkit-inner-spin-button {
+                -webkit-appearance: none;
+                margin: 0;
+              }
+              .batch-table input[type=number] { -moz-appearance: textfield; }
+            `}</style>
             <table
-              className="movement-table w-full"
+              className="batch-table movement-table w-full"
               style={{ fontSize: 13, minWidth: tableMinWidth, borderCollapse: 'collapse' }}
             >
-              <colgroup>
-                <col style={{ width: 90 }} />
-                <col style={{ width: 120 }} />
-                <col style={{ width: 80 }} />
-                <col style={{ width: 100 }} />
-                <col style={{ width: 100 }} />
-                {sizeCols.map((s) => (
-                  <col key={s} style={{ width: 58 }} />
-                ))}
-                <col style={{ width: 80 }} />
-                <col style={{ width: 120 }} />
-                <col style={{ width: 90 }} />
-                <col style={{ width: 80 }} />
-                <col style={{ width: 90 }} />
-                <col style={{ width: 40 }} />
-              </colgroup>
               <thead>
-                <tr>
-                  <th rowSpan={2} style={{ ...TH_BASE, textAlign: 'left' }}>
+                <tr style={{ background: '#1e3a5f' }}>
+                  <th style={{ ...TH_BASE, textAlign: 'left' }} rowSpan={2}>
                     Цвет ткани
                   </th>
-                  <th rowSpan={2} style={{ ...TH_BASE, textAlign: 'left' }}>
+                  <th style={{ ...TH_BASE, textAlign: 'left', minWidth: 120 }} rowSpan={2}>
                     Ткань
                   </th>
-                  <th rowSpan={2} style={{ ...TH_BASE, textAlign: 'center' }}>
+                  <th style={{ ...TH_BASE, textAlign: 'center', minWidth: 88 }} rowSpan={2}>
                     На складе
                   </th>
-                  <th rowSpan={2} style={{ ...TH_BASE, textAlign: 'right' }}>
+                  <th style={{ ...TH_BASE, textAlign: 'center', width: 72 }} rowSpan={2}>
                     План (м)
                   </th>
-                  <th rowSpan={2} style={{ ...TH_BASE, textAlign: 'right' }}>
+                  <th style={{ ...TH_BASE, textAlign: 'center', width: 72 }} rowSpan={2}>
                     Факт (м)
                   </th>
                   <th
-                    colSpan={sizeCols.length}
-                    style={{
-                      ...TH_BASE,
-                      textAlign: 'center',
-                      borderBottom: '1px solid rgba(255,255,255,0.12)',
-                    }}
+                    style={{ ...TH_BASE, textAlign: 'center' }}
+                    colSpan={(activeSizes.length ? activeSizes : ERDEN_SIZES).length}
                   >
                     Размеры (кол-во)
                   </th>
-                  <th rowSpan={2} style={{ ...TH_BASE, textAlign: 'center' }}>
-                    Итого кол-во
+                  <th style={{ ...TH_BASE, textAlign: 'center', width: 72 }} rowSpan={2}>
+                    Итого
                   </th>
-                  <th rowSpan={2} style={{ ...TH_BASE, textAlign: 'left' }}>
+                  <th style={{ ...TH_BASE, textAlign: 'left', minWidth: 88 }} rowSpan={2}>
                     Маркировка
                   </th>
-                  <th rowSpan={2} style={{ ...TH_BASE, textAlign: 'right' }}>
-                    Остаток ткани (м)
+                  <th style={{ ...TH_BASE, textAlign: 'center', width: 72 }} rowSpan={2}>
+                    Остаток
                   </th>
-                  <th rowSpan={2} style={{ ...TH_BASE, textAlign: 'right' }}>
-                    Нехватка (м)
+                  <th style={{ ...TH_BASE, textAlign: 'center', width: 72 }} rowSpan={2}>
+                    Нехватка
                   </th>
-                  <th rowSpan={2} style={{ ...TH_BASE, textAlign: 'right' }}>
+                  <th style={{ ...TH_BASE, textAlign: 'center', width: 72 }} rowSpan={2}>
                     Брак (м)
                   </th>
-                  <th rowSpan={2} style={{ ...TH_BASE, textAlign: 'center' }}>
+                  <th style={{ ...TH_BASE, textAlign: 'left', minWidth: 130 }} rowSpan={2}>
+                    Операция раскроя
+                  </th>
+                  <th style={{ ...TH_BASE, textAlign: 'center', width: 96 }} rowSpan={2}>
+                    Стоимость оп.
+                  </th>
+                  <th style={{ ...TH_BASE, width: 44, textAlign: 'center' }} rowSpan={2}>
                     🗑
                   </th>
                 </tr>
-                <tr>
-                  {sizeCols.map((size) => (
-                    <th key={size} style={TH_SIZE}>
-                      {size}
+                <tr style={{ background: '#1a2f4e' }}>
+                  {(activeSizes.length ? activeSizes : ERDEN_SIZES).map((s) => (
+                    <th key={s} style={{ ...TH_SIZE, minWidth: 52 }}>
+                      {s}
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {batches.map((batch, idx) => {
-                  const sq = toNum(batch.stock_qty);
-                  const pm = toNum(batch.plan_meters);
-                  const hasFabric = !!batch.fabric_name;
-                  let stockCellColor = '#6b7280';
-                  if (fromType === 'warehouse' && hasFabric) {
-                    if (sq === 0) stockCellColor = '#f87171';
-                    else if (sq >= pm) stockCellColor = '#4ade80';
-                    else stockCellColor = '#fbbf24';
-                  }
-                  const rowBg = (idx + 1) % 2 === 0 ? '#0f172a' : '#1a2744';
+                  const rowBg = idx % 2 === 0 ? '#0f172a' : '#111827';
                   const ctrlDisabled = readOnly ? { opacity: 0.65, cursor: 'not-allowed' } : {};
+                  const szList = activeSizes.length ? activeSizes : ERDEN_SIZES;
                   return (
                     <tr key={batch.id}>
-                      <td style={{ ...CELL, background: rowBg, textAlign: 'left' }}>
+                      <td style={{ ...CELL, background: rowBg }}>
                         <select
                           value={
                             !batch.color
@@ -1612,62 +2184,90 @@ export default function MovementForm(props) {
                           onChange={(e) => {
                             const v = e.target.value;
                             if (v === '__other__') {
-                              updateBatch(batch.id, { color: '__other__', colorOther: '' });
+                              recalcBatch(batch.id, { color: '__other__', colorOther: '' });
                             } else {
-                              updateBatch(batch.id, { color: v, colorOther: '' });
+                              recalcBatch(batch.id, { color: v, colorOther: '' });
                             }
                           }}
                           style={{ ...CTRL, ...ctrlDisabled }}
                         >
                           <option value="">— Цвет —</option>
                           {orderColors.map((c) => (
-                            <option key={c} value={c}>
-                              {c}
+                            <option key={c || '__empty'} value={c}>
+                              {c || '—'}
                             </option>
                           ))}
                           <option value="__other__">+ Другой</option>
                         </select>
                         {(batch.color === '__other__' ||
                           (batch.color &&
-                            orderColors.length &&
+                            orderColors.length > 0 &&
                             !orderColors.includes(batch.color))) && (
                           <input
                             placeholder="Введите цвет"
                             disabled={readOnly}
                             value={
                               batch.color === '__other__'
-                                ? batch.colorOther
+                                ? batch.colorOther || ''
                                 : orderColors.includes(batch.color)
                                   ? ''
-                                  : batch.color || batch.colorOther
+                                  : batch.color || batch.colorOther || ''
                             }
                             onChange={(e) =>
-                              updateBatch(batch.id, {
+                              recalcBatch(batch.id, {
                                 color: '__other__',
                                 colorOther: e.target.value,
                               })
                             }
-                            style={{ ...CTRL, textAlign: 'left', marginTop: 8, ...ctrlDisabled }}
+                            style={{ ...CTRL, marginTop: 4, ...ctrlDisabled }}
                           />
                         )}
                       </td>
-                      <td style={{ ...CELL, background: rowBg, textAlign: 'left' }}>
+                      <td style={{ ...CELL, background: rowBg }}>
                         <select
-                          value={batch.fabric_name}
+                          value={batch.fabric_name || ''}
                           disabled={readOnly}
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            const fab = (orderFabrics || []).find(
+                              (f) => getFabricName(f) === val
+                            );
+                            const norm =
+                              parseFloat(
+                                fab?.qty_per_unit ??
+                                  fab?.quantity_per ??
+                                  fab?.norm ??
+                                  fab?.qtyPerUnit ??
+                                  fab?.qty ??
+                                  0
+                              ) || 0;
+                            const stockQty = getFabricStock(val);
                             recalcBatch(batch.id, {
-                              fabric_name: e.target.value,
-                            })
-                          }
+                              fabric_name: val,
+                              stock_qty: stockQty,
+                              norm_per_unit: norm,
+                              plan_meters: norm * (orderQuantity || 0),
+                            });
+                          }}
                           style={{ ...CTRL, ...ctrlDisabled }}
                         >
                           <option value="">— Ткань —</option>
-                          {orderFabrics.map((f) => (
-                            <option key={f.name} value={f.name}>
-                              {f.name}
+                          {(orderFabrics || []).map((f, i) => {
+                            const name = getFabricName(f);
+                            if (!name) return null;
+                            const qLabel = getFabricQtyPerUnit(f);
+                            return (
+                              <option key={i} value={name}>
+                                {name}
+                                {qLabel ? ` (${qLabel} м/ед)` : ''}
+                              </option>
+                            );
+                          })}
+                          {(!orderFabrics || orderFabrics.length === 0) && (
+                            <option disabled value="__no_fabrics__">
+                              Нет тканей в заказе
                             </option>
-                          ))}
+                          )}
                         </select>
                       </td>
                       <td
@@ -1676,16 +2276,32 @@ export default function MovementForm(props) {
                           background: rowBg,
                           textAlign: 'center',
                           fontWeight: 600,
-                          color: stockCellColor,
+                          color:
+                            toNum(batch.effective_stock ?? batch.stock_qty) > 0
+                              ? '#4ade80'
+                              : '#f87171',
                         }}
                       >
-                        {fromType !== 'warehouse'
-                          ? '—'
-                          : sq > 0
-                            ? `${sq} ${batch.unit || 'м'}`
-                            : batch.fabric_name
-                              ? '⚠️ нет'
-                              : '—'}
+                        {toNum(batch.effective_stock ?? batch.stock_qty) > 0 ? (
+                          <div>
+                            <div>
+                              {Number(batch.effective_stock ?? batch.stock_qty).toFixed(1)} м
+                            </div>
+                            {!fromWarehouseId ? (
+                              <div
+                                style={{
+                                  fontSize: 10,
+                                  color: '#64748b',
+                                  fontWeight: 400,
+                                }}
+                              >
+                                (все склады)
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : (
+                          '⚠️ нет'
+                        )}
                       </td>
                       <td style={{ ...CELL, background: rowBg }}>
                         <input
@@ -1693,11 +2309,10 @@ export default function MovementForm(props) {
                           min="0"
                           step="0.01"
                           disabled={readOnly}
-                          value={batch.plan_meters}
+                          value={batch.plan_meters || ''}
+                          placeholder="0"
                           onChange={(e) =>
-                            updateBatch(batch.id, {
-                              plan_meters: parseFloat(e.target.value) || 0,
-                            })
+                            recalcBatch(batch.id, { plan_meters: parseFloat(e.target.value) || 0 })
                           }
                           style={{ ...CTRL, textAlign: 'center', ...ctrlDisabled }}
                         />
@@ -1708,29 +2323,38 @@ export default function MovementForm(props) {
                           min="0"
                           step="0.01"
                           disabled={readOnly}
-                          value={batch.fact_meters}
-                          onChange={(e) => {
-                            const fact = parseFloat(e.target.value) || 0;
-                            recalcBatch(batch.id, { fact_meters: fact });
-                          }}
+                          value={batch.fact_meters || ''}
+                          placeholder="0"
+                          onChange={(e) =>
+                            recalcBatch(batch.id, { fact_meters: parseFloat(e.target.value) || 0 })
+                          }
                           style={{ ...CTRL, textAlign: 'center', ...ctrlDisabled }}
                         />
                       </td>
-                      {sizeCols.map((size) => (
-                        <td key={size} style={{ ...CELL, background: rowBg, padding: '6px 4px' }}>
+                      {szList.map((size) => (
+                        <td key={size} style={{ ...CELL, background: rowBg, textAlign: 'center' }}>
                           <input
                             type="number"
                             min="0"
                             disabled={readOnly}
-                            value={batch.sizes[size] ?? 0}
+                            value={batch.sizes[size] || ''}
+                            placeholder="0"
                             onChange={(e) => {
-                              const newSizes = {
-                                ...batch.sizes,
-                                [size]: parseInt(e.target.value, 10) || 0,
-                              };
+                              const v = parseInt(e.target.value, 10) || 0;
+                              const newSizes = { ...batch.sizes, [size]: v };
                               recalcBatch(batch.id, { sizes: newSizes });
                             }}
-                            style={{ ...CTRL, textAlign: 'center', ...ctrlDisabled }}
+                            style={{
+                              width: 48,
+                              textAlign: 'center',
+                              background: '#1a1a2e',
+                              color: '#e2e8f0',
+                              border: '1px solid #374151',
+                              borderRadius: 4,
+                              padding: '4px',
+                              fontSize: 13,
+                              ...ctrlDisabled,
+                            }}
                           />
                         </td>
                       ))}
@@ -1743,52 +2367,86 @@ export default function MovementForm(props) {
                           color: '#a3e635',
                         }}
                       >
-                        {batch.total_qty}
+                        {batch.total_qty ?? 0}
                       </td>
                       <td style={{ ...CELL, background: rowBg }}>
                         <input
                           disabled={readOnly}
                           value={batch.marking || ''}
-                          onChange={(e) => updateBatch(batch.id, { marking: e.target.value })}
-                          style={{ ...CTRL, textAlign: 'left', ...ctrlDisabled }}
                           placeholder="МАР-001"
+                          onChange={(e) => recalcBatch(batch.id, { marking: e.target.value })}
+                          style={{ ...CTRL, ...ctrlDisabled }}
                         />
                       </td>
                       <td
                         style={{
                           ...CELL,
                           background: rowBg,
-                          textAlign: 'right',
-                          color: batch.remainder >= 0 ? '#4ade80' : '#f87171',
+                          textAlign: 'center',
                           fontWeight: 600,
+                          color: toNum(batch.remainder) >= 0 ? '#4ade80' : '#f87171',
                         }}
                       >
-                        {toNum(batch.remainder).toFixed(2)}
+                        {Number(batch.remainder ?? 0).toFixed(2)}
                       </td>
                       <td
                         style={{
                           ...CELL,
                           background: rowBg,
-                          textAlign: 'right',
-                          color: batch.shortage > 0 ? '#f87171' : '#6b7280',
-                          fontWeight: batch.shortage > 0 ? 600 : 400,
+                          textAlign: 'center',
+                          color: toNum(batch.shortage) > 0 ? '#f87171' : '#64748b',
+                          fontWeight: toNum(batch.shortage) > 0 ? 600 : 400,
                         }}
                       >
-                        {batch.shortage > 0 ? toNum(batch.shortage).toFixed(2) : '—'}
+                        {toNum(batch.shortage) > 0 ? toNum(batch.shortage).toFixed(2) : '—'}
+                      </td>
+                      <td style={{ ...CELL, background: rowBg }}>
+                        <input
+                          type="number"
+                          step="0.01"
+                          disabled={readOnly}
+                          value={batch.defect_meters || ''}
+                          placeholder="0"
+                          onChange={(e) =>
+                            recalcBatch(batch.id, { defect_meters: parseFloat(e.target.value) || 0 })
+                          }
+                          style={{ ...CTRL, textAlign: 'center', ...ctrlDisabled }}
+                        />
+                      </td>
+                      <td style={{ ...CELL, background: rowBg }}>
+                        <select
+                          value={batch.operation || ''}
+                          disabled={readOnly}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            const op = movementOps.find((o) => (o.name || o.id) === v || o.name === v);
+                            recalcBatch(batch.id, {
+                              operation: v,
+                              operation_cost: op?.price ?? op?.cost ?? batch.operation_cost ?? 0,
+                            });
+                          }}
+                          style={{ ...CTRL, minWidth: 120, ...ctrlDisabled }}
+                        >
+                          <option value="">— Операция —</option>
+                          {movementOps.map((op, i) => (
+                            <option key={i} value={op.name || op.id}>
+                              {op.name}
+                              {op.price ? ` (${op.price} сом)` : ''}
+                            </option>
+                          ))}
+                        </select>
                       </td>
                       <td style={{ ...CELL, background: rowBg }}>
                         <input
                           type="number"
                           min="0"
-                          step="0.01"
                           disabled={readOnly}
-                          value={batch.defect_meters}
+                          value={batch.operation_cost || ''}
+                          placeholder="0"
                           onChange={(e) =>
-                            updateBatch(batch.id, {
-                              defect_meters: parseFloat(e.target.value) || 0,
-                            })
+                            recalcBatch(batch.id, { operation_cost: parseFloat(e.target.value) || 0 })
                           }
-                          style={{ ...CTRL, textAlign: 'center', ...ctrlDisabled }}
+                          style={{ ...CTRL, width: 80, textAlign: 'center', ...ctrlDisabled }}
                         />
                       </td>
                       <td style={{ ...CELL, background: rowBg, textAlign: 'center' }}>
@@ -1801,8 +2459,7 @@ export default function MovementForm(props) {
                               border: 'none',
                               color: '#ef4444',
                               cursor: 'pointer',
-                              fontSize: 16,
-                              padding: '4px',
+                              fontSize: 18,
                             }}
                           >
                             🗑
@@ -1815,104 +2472,381 @@ export default function MovementForm(props) {
               </tbody>
             </table>
           </div>
-
-          {fromType === 'warehouse' && materialShortages.length > 0 ? (
+          {totB ? (
             <div
               style={{
-                margin: '8px 0',
-                padding: '10px 14px',
-                background: '#7f1d1d',
-                borderRadius: 6,
-                border: '1px solid #ef4444',
+                marginTop: 12,
+                padding: '12px 16px',
+                background: '#1e3a5f',
+                borderRadius: 8,
+                display: 'flex',
+                gap: 20,
+                flexWrap: 'wrap',
                 fontSize: 13,
               }}
             >
-              ⚠️ <b>Недостаток материала:</b>
-              {materialShortages.map((b) => (
-                <div key={b.id} style={{ marginTop: 4, color: '#fca5a5' }}>
-                  • {b.fabric_name} ({displayColor(b) || '—'}): нужно{' '}
-                  <b>{toNum(b.plan_meters)} м</b>, на складе{' '}
-                  <b>{toNum(b.stock_qty)} м</b>, не хватает{' '}
-                  <b style={{ color: '#f87171' }}>
-                    {(toNum(b.plan_meters) - toNum(b.stock_qty)).toFixed(2)} м
-                  </b>
-                </div>
-              ))}
-            </div>
-          ) : null}
+              <span>
+                📐 План: <b>{totB.totalPlan.toFixed(2)} м</b>
+              </span>
+              <span>
+                ✅ Факт: <b>{totB.totalFact.toFixed(2)} м</b>
+              </span>
+              <span>
+                👕 Итого кол-во: <b>{totB.totalBatchQty} шт</b>
+              </span>
+              <span style={{ color: totB.totalRemainder >= 0 ? '#4ade80' : '#f87171' }}>
+                📦 Остаток: <b>{totB.totalRemainder.toFixed(2)} м</b>
+              </span>
+              <span style={{ color: '#f87171' }}>
+                ❌ Брак: <b>{totB.totalDefect.toFixed(2)} м</b>
+              </span>
 
-          <div
-            style={{
-              marginTop: 16,
-              padding: '12px 20px',
-              background: '#1e3a5f',
-              borderRadius: 8,
-              display: 'flex',
-              gap: 32,
-              flexWrap: 'wrap',
-              fontSize: 14,
-              fontWeight: 500,
-            }}
-          >
-            <span>
-              📐 План: <b>{totals.plan.toFixed(2)} м</b>
-            </span>
-            <span>
-              ✅ Факт: <b>{totals.fact.toFixed(2)} м</b>
-            </span>
-            <span>
-              👕 Итого кол-во: <b>{totals.qty} шт</b>
-            </span>
-            <span style={{ color: totals.remainder >= 0 ? '#4ade80' : '#f87171' }}>
-              📦 Остаток: <b>{totals.remainder.toFixed(2)} м</b>
-            </span>
-            <span style={{ color: '#f87171' }}>
-              ❌ Брак: <b>{totals.defect.toFixed(2)} м</b>
-            </span>
-            {fromType === 'warehouse' ? (
-              <span
+              <div
                 style={{
-                  color: totalNeedWarehouse > 0 ? '#f87171' : '#4ade80',
+                  width: '100%',
+                  marginTop: 8,
+                  paddingTop: 8,
+                  borderTop: '1px solid #2d4a6e',
+                  display: 'flex',
+                  gap: 20,
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
                 }}
               >
-                🏭 Склад: <b>{totals.stock.toFixed(2)} м</b> |{' '}
-                {totalNeedWarehouse > 0 ? (
-                  <>
-                    ❌ Докупить: <b>{totalNeedWarehouse.toFixed(2)} м</b>
-                  </>
-                ) : (
-                  <>✅ Материала достаточно</>
-                )}
-              </span>
-            ) : null}
-          </div>
-
+                <span style={{ color: '#fbbf24', fontWeight: 600 }}>💰 ЗП Раскройный отдел:</span>
+                <span style={{ fontSize: 15, fontWeight: 700, color: '#fbbf24' }}>
+                  {totB.totalBatchZP.toLocaleString('ru-RU')} сом
+                </span>
+                <span style={{ color: '#64748b', fontSize: 11 }}>
+                  ({totB.totalBatchQty} шт × стоимость операций)
+                </span>
+              </div>
+            </div>
+          ) : null}
           {!readOnly ? (
             <button
               type="button"
               onClick={() =>
-                setBatches((prev) => [
-                  ...prev,
-                  mergeWarehouseStock(fromType, stockRows, createEmptyBatch(sizeCols)),
-                ])
+                setBatches((prev) =>
+                  applyRunningRouteBMetrics([
+                    ...prev,
+                    createEmptyBatchRow(activeSizes.length ? activeSizes : ERDEN_SIZES),
+                  ])
+                )
               }
-              style={{
-                marginTop: 12,
-                background: '#16a34a',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 6,
-                padding: '8px 16px',
-                cursor: 'pointer',
-                fontSize: 13,
-                fontWeight: 600,
-              }}
+              style={ADD_BTN}
             >
               + Добавить партию
             </button>
           ) : null}
         </>
-      )}
+      ) : routeIsC ? (
+        <>
+          <div style={{ overflowX: 'auto' }} className="rounded border border-white/10">
+            <style>{`
+              .prod-table input[type=number]::-webkit-outer-spin-button,
+              .prod-table input[type=number]::-webkit-inner-spin-button {
+                -webkit-appearance: none;
+                margin: 0;
+              }
+              .prod-table input[type=number] {
+                -moz-appearance: textfield;
+              }
+              .prod-table tbody tr:hover td {
+                background: rgba(163, 230, 53, 0.04);
+              }
+            `}</style>
+
+            <table
+              className="prod-table"
+              style={{
+                width: '100%',
+                borderCollapse: 'collapse',
+                fontSize: 13,
+                minWidth: Math.max(800, tableMinWidth),
+              }}
+            >
+              <thead>
+                <tr style={{ background: '#1e3a5f' }}>
+                  <th style={TH} rowSpan={2}>
+                    №
+                  </th>
+                  <th style={TH} rowSpan={2}>
+                    Модель
+                  </th>
+                  <th style={TH} rowSpan={2}>
+                    Цвет
+                  </th>
+                  <th
+                    style={{ ...TH, textAlign: 'center' }}
+                    colSpan={(activeSizes.length ? activeSizes : ERDEN_SIZES).length}
+                  >
+                    Кол-во по размеру
+                  </th>
+                  <th style={TH} rowSpan={2}>
+                    Итого
+                  </th>
+                  <th style={TH} rowSpan={2}>
+                    {fromType === 'sewing' ? 'Операция пошива' : fromType === 'otk' ? 'Операция ОТК' : 'Операция'}
+                  </th>
+                  <th style={TH} rowSpan={2}>
+                    Стоимость оп.
+                  </th>
+                  <th style={TH} rowSpan={2}>
+                    🗑
+                  </th>
+                </tr>
+                <tr style={{ background: '#1a2f4e' }}>
+                  {(activeSizes.length ? activeSizes : ERDEN_SIZES).map((s) => (
+                    <th
+                      key={s}
+                      style={{
+                        ...TH,
+                        minWidth: 52,
+                        fontSize: 11,
+                        textAlign: 'center',
+                      }}
+                    >
+                      {s}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {productRows.map((row, idx) => (
+                  <tr
+                    key={row.id}
+                    style={{
+                      background: idx % 2 === 0 ? '#0f172a' : '#111827',
+                    }}
+                  >
+                    <td style={{ ...TD, textAlign: 'center', fontWeight: 600 }}>{idx + 1}</td>
+
+                    <td style={TD}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>
+                        {row.model_name || '—'}
+                      </div>
+                    </td>
+
+                    <td style={TD}>
+                      <select
+                        value={
+                          !row.color
+                            ? ''
+                            : row.color === '__other__'
+                              ? '__other__'
+                              : orderColors.includes(row.color)
+                                ? row.color
+                                : '__other__'
+                        }
+                        disabled={readOnly}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === '__other__') {
+                            updateProductRow(row.id, { color: '__other__', colorOther: '' });
+                          } else {
+                            updateProductRow(row.id, { color: v, colorOther: '' });
+                          }
+                        }}
+                        style={{
+                          ...CTRL,
+                          minWidth: 90,
+                        }}
+                      >
+                        <option value="">— Цвет —</option>
+                        {orderColors.map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                        <option value="__other__">+ Другой</option>
+                      </select>
+                      {(row.color === '__other__' ||
+                        (row.color &&
+                          orderColors.length > 0 &&
+                          !orderColors.includes(row.color))) && (
+                        <input
+                          placeholder="Введите цвет"
+                          disabled={readOnly}
+                          value={
+                            row.color === '__other__'
+                              ? row.colorOther || ''
+                              : orderColors.includes(row.color)
+                                ? ''
+                                : row.color || row.colorOther || ''
+                          }
+                          onChange={(e) =>
+                            updateProductRow(row.id, { colorOther: e.target.value })
+                          }
+                          style={{ ...CTRL, marginTop: 4 }}
+                        />
+                      )}
+                    </td>
+
+                    {sizeCols.map((size) => (
+                      <td key={size} style={{ ...TD, textAlign: 'center' }}>
+                        <input
+                          type="number"
+                          min="0"
+                          disabled={readOnly}
+                          value={row.sizes[size] || ''}
+                          placeholder="0"
+                          onChange={(e) => {
+                            const newSizes = {
+                              ...row.sizes,
+                              [size]: parseInt(e.target.value, 10) || 0,
+                            };
+                            const total = Object.values(newSizes).reduce((a, b) => a + b, 0);
+                            updateProductRow(row.id, {
+                              sizes: newSizes,
+                              total_qty: total,
+                              total_cost: total * toNum(row.operation_cost),
+                            });
+                          }}
+                          style={{
+                            width: 50,
+                            textAlign: 'center',
+                            background: '#1a1a2e',
+                            color: '#e2e8f0',
+                            border: '1px solid #374151',
+                            borderRadius: 4,
+                            padding: '4px',
+                            fontSize: 13,
+                          }}
+                        />
+                      </td>
+                    ))}
+
+                    <td
+                      style={{
+                        ...TD,
+                        textAlign: 'center',
+                        fontWeight: 600,
+                        color: '#a3e635',
+                      }}
+                    >
+                      {row.total_qty}
+                    </td>
+
+                    <td style={TD}>
+                      <select
+                        value={row.operation || ''}
+                        disabled={readOnly}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          const op = movementOps.find((o) => o.name === v || String(o.id) === v);
+                          const cost = op?.price ?? op?.cost ?? 0;
+                          updateProductRow(row.id, {
+                            operation: v,
+                            operation_cost: cost,
+                            total_cost: row.total_qty * cost,
+                          });
+                        }}
+                        style={{ ...CTRL, minWidth: 130 }}
+                      >
+                        <option value="">— Операция —</option>
+                        {movementOps.map((op, i) => (
+                          <option key={i} value={op.name || op.id}>
+                            {op.name}
+                            {op.price ? ` (${op.price} сом)` : ''}
+                          </option>
+                        ))}
+                        <option value="__other__">+ Вручную</option>
+                      </select>
+                      {row.operation === '__other__' ? (
+                        <input
+                          placeholder="Операция"
+                          disabled={readOnly}
+                          onChange={(e) => updateProductRow(row.id, { operation: e.target.value })}
+                          style={{ ...CTRL, marginTop: 4 }}
+                        />
+                      ) : null}
+                    </td>
+
+                    <td style={TD}>
+                      <input
+                        type="number"
+                        min="0"
+                        disabled={readOnly}
+                        value={row.operation_cost || ''}
+                        placeholder="0"
+                        onChange={(e) => {
+                          const cost = parseFloat(e.target.value) || 0;
+                          updateProductRow(row.id, {
+                            operation_cost: cost,
+                            total_cost: row.total_qty * cost,
+                          });
+                        }}
+                        style={{
+                          ...CTRL,
+                          width: 90,
+                          textAlign: 'center',
+                        }}
+                      />
+                    </td>
+
+                    <td style={{ ...TD, textAlign: 'center' }}>
+                      {!readOnly ? (
+                        <button
+                          type="button"
+                          onClick={() => removeProductRow(row.id)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: '#ef4444',
+                            cursor: 'pointer',
+                            fontSize: 18,
+                          }}
+                        >
+                          🗑
+                        </button>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {totC ? (
+            <div style={TOTALS_STYLE}>
+              <span>
+                👕 Итого: <b>{totC.qty} шт</b>
+              </span>
+              <span>
+                💰 ЗП:{' '}
+                <b style={{ color: '#fbbf24' }}>{totC.cost.toLocaleString('ru-RU')} сом</b>
+              </span>
+            </div>
+          ) : null}
+
+          {!readOnly ? (
+            <button
+              type="button"
+              onClick={() =>
+                setProductRows((prev) => [
+                  ...prev,
+                  {
+                    id: Date.now(),
+                    photo: '',
+                    model_name: '',
+                    color: '',
+                    colorOther: '',
+                    sizes: Object.fromEntries(sizeCols.map((s) => [s, 0])),
+                    total_qty: 0,
+                    operation: '',
+                    operation_cost: 0,
+                    total_cost: 0,
+                  },
+                ])
+              }
+              style={ADD_BTN}
+            >
+              + Добавить строку
+            </button>
+          ) : null}
+        </>
+      ) : null}
 
       <div className="flex flex-wrap gap-2">
         <button

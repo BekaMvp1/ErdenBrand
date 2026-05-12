@@ -80,6 +80,7 @@ router.get('/refs', async (req, res, next) => {
  * GET /api/warehouse/stock
  * Остатки материалов (warehouse_materials) для вкладки «Остатки».
  * query: order_id — только позиции, по которым были приходы с этим заказом
+ * query: warehouse_id — опционально; без него возвращаются остатки по всем складам
  */
 router.get('/stock', async (req, res, next) => {
   try {

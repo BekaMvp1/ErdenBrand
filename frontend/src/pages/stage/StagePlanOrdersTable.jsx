@@ -2,7 +2,7 @@
  * Таблица заказов на вкладке «Планирование расходов».
  */
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api';
 import { formatWeekRangeLabel } from '../../components/planChain/PlanChainDocumentCard';
@@ -11,6 +11,12 @@ import {
   moveOrderToPaymentCalendar,
   syncExpenseOrdersToPaymentCalendar,
 } from '../../utils/syncExpensePaymentCalendar';
+import {
+  chainWeekFieldForStage,
+  indexChainsByOrderId,
+  mondayIsoFromPlanDate,
+  planMondayFromChainRow,
+} from '../../utils/stageChainWeek';
 import ExpenseStageDatePicker from '../../components/stage/ExpenseStageDatePicker';
 
 const TH = {
@@ -270,7 +276,9 @@ function chainDateIso(v) {
   return s.length >= 10 ? s.slice(0, 10) : '';
 }
 
-function orderWeekLabel(order) {
+function orderWeekLabel(order, planDateIso) {
+  const plan = chainDateIso(planDateIso);
+  if (plan) return formatWeekRangeLabel(getMonday(plan));
   const d = chainDateIso(order?.deadline);
   if (d) return formatWeekRangeLabel(getMonday(d));
   const pm = order?.planned_month;
@@ -359,24 +367,40 @@ export default function StagePlanOrdersTable({
   const [expandedOrders, setExpandedOrders] = useState({});
   const [dateDrafts, setDateDrafts] = useState({});
   const [nameSearch, setNameSearch] = useState('');
+  const chainsByOrderRef = useRef({});
 
   const expensesPath = EXPENSES_PATH[stage] || `/${stage}/expenses`;
+  const chainWeekField = chainWeekFieldForStage(stage);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
 
     const listParams = { limit: 100, light: '1' };
-    fetchOrdersListOnce(listParams)
-      .then((data) => {
+    Promise.all([
+      fetchOrdersListOnce(listParams),
+      chainWeekField ? api.planning.chainList().catch(() => []) : Promise.resolve([]),
+    ])
+      .then(([data, chains]) => {
         if (cancelled) return;
         const list = normalizeOrdersList(data);
+        const chainArr = Array.isArray(chains) ? chains : [];
+        chainsByOrderRef.current = indexChainsByOrderId(chainArr);
         setOrders(list);
         const drafts = {};
         for (const o of list) {
           const ls = readLsDates(stage, o.id);
+          const chainRows = chainsByOrderRef.current[o.id] || [];
+          const fromChain = chainRows.length
+            ? planMondayFromChainRow(chainRows[0], stage)
+            : '';
           drafts[o.id] = {
-            plan_date: ls.plan_date || chainDateIso(o.plan_date) || chainDateIso(o.deadline) || '',
+            plan_date:
+              fromChain ||
+              ls.plan_date ||
+              chainDateIso(o.plan_date) ||
+              chainDateIso(o.deadline) ||
+              '',
             fact_date: ls.fact_date || chainDateIso(o.fact_date) || '',
           };
         }
@@ -398,31 +422,49 @@ export default function StagePlanOrdersTable({
 
   const handleUpdateDate = useCallback(
     async (orderId, field, value) => {
-      writeLsDates(stage, orderId, { [field]: value });
+      const planIso = field === 'plan_date' ? chainDateIso(value) : '';
+      const planMonday =
+        field === 'plan_date' && planIso ? mondayIsoFromPlanDate(planIso) : '';
+
+      writeLsDates(stage, orderId, {
+        [field]: field === 'plan_date' && planMonday ? planMonday : value,
+      });
       setDateDrafts((prev) => ({
         ...prev,
-        [orderId]: { ...(prev[orderId] || {}), [field]: value },
+        [orderId]: {
+          ...(prev[orderId] || {}),
+          [field]: field === 'plan_date' && planMonday ? planMonday : value,
+        },
       }));
 
       try {
-        await api.orders.update(orderId, { [field]: value });
+        if (field === 'plan_date' && planMonday && chainWeekField) {
+          const chainRows = chainsByOrderRef.current[orderId] || [];
+          if (chainRows.length > 0) {
+            const patched = await Promise.all(
+              chainRows.map((c) =>
+                api.planning.chainPatch(c.id, { [chainWeekField]: planMonday })
+              )
+            );
+            chainsByOrderRef.current[orderId] = chainRows.map((c, i) => ({
+              ...c,
+              ...(patched[i] || {}),
+              [chainWeekField]: planMonday,
+            }));
+          }
+        }
 
-        setOrders((prev) =>
-          prev.map((o) => (o.id === orderId ? { ...o, [field]: value } : o))
-        );
-
-        if (field === 'plan_date' && value) {
+        if (field === 'plan_date' && planIso) {
           const order = orders.find((o) => o.id === orderId);
           if (order) {
-            const updatedOrder = { ...order, plan_date: value };
-            await moveOrderToPaymentCalendar(updatedOrder, stage, value);
+            await moveOrderToPaymentCalendar(order, stage, planIso);
           }
         }
       } catch (e) {
         console.error('[handleUpdateDate]:', e?.message || e);
       }
     },
-    [stage, orders]
+    [stage, orders, chainWeekField]
   );
 
   const filteredOrders = useMemo(() => {
@@ -565,7 +607,7 @@ export default function StagePlanOrdersTable({
                         </span>
                       </td>
                       <td style={{ ...TD, color: '#94a3b8', fontSize: 12 }}>
-                        {orderWeekLabel(order)}
+                        {orderWeekLabel(order, dates.plan_date)}
                       </td>
                       <td style={TD}>
                         <ExpenseStageDatePicker

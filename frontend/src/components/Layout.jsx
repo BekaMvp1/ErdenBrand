@@ -10,6 +10,7 @@ import PrintDocHeader from './PrintDocHeader';
 import { api } from '../api';
 import { normalizeUserRole } from '../utils/userRole';
 import DashboardSummary from './DashboardSummary';
+import useIsMobile from '../hooks/useIsMobile';
 
 const ROLE_LABELS = {
   admin: 'Администратор',
@@ -100,6 +101,11 @@ const NAV_ICONS = {
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
     </svg>
   ),
+  tasks: (
+    <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 4h.01M9 16h.01" />
+    </svg>
+  ),
   assistant: (
     <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 3 3-1 3-1m6-9a9 9 0 11-18 0 9 9 0 0118 0zm-4.5 0a4.5 4.5 0 10-9 0 4.5 4.5 0 009 0z" />
@@ -124,6 +130,7 @@ export default function Layout() {
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [cuttingTypes, setCuttingTypes] = useState([]);
   const [cuttingOpen, setCuttingOpen] = useState(false);
+  const isMobile = useIsMobile();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [serverOk, setServerOk] = useState(true);
   /** 'waking' — 502 / сеть (часто Render засыпает); 'offline' — остальные ошибки API */
@@ -205,6 +212,7 @@ export default function Layout() {
     '/shipping-plan': 'План отгрузки',
     '/qc': 'ОТК (партии)',
     '/shipments': 'Отгрузка',
+    '/tasks': 'Задачи и Решения',
     '/cutting': 'Раскрой',
     '/references': 'Справочники',
     '/models-base': 'База моделей',
@@ -220,13 +228,8 @@ export default function Layout() {
   const isAssistant = location.pathname === '/assistant';
   const shouldShowSummary = !isReferences && !isModelsBase && !isBoard && !isAssistant;
   useEffect(() => {
-    const mq = window.matchMedia('(min-width: 1024px)');
-    const onChange = () => {
-      if (mq.matches) setMobileMenuOpen(false);
-    };
-    mq.addEventListener('change', onChange);
-    return () => mq.removeEventListener('change', onChange);
-  }, []);
+    if (!isMobile) setMobileMenuOpen(false);
+  }, [isMobile]);
 
   const checkServer = useCallback(async () => {
     try {
@@ -355,6 +358,7 @@ export default function Layout() {
         { type: 'item', to: '/warehouse', label: 'Склад', icon: 'warehouse' },
         { type: 'item', to: '/warehouse/movements', label: '🔄 Перемещение', icon: 'warehouse' },
         { type: 'item', to: '/shipments', label: 'Отгрузка', icon: 'shipments' },
+        { type: 'item', to: '/tasks', label: 'Задачи и Решения', icon: 'tasks' },
       ]
     : [];
   const systemBlockItems = [
@@ -387,27 +391,45 @@ export default function Layout() {
 
   return (
     <div className="flex h-screen bg-neon-bg text-neon-text overflow-hidden">
-      {/* Mobile menu overlay */}
-      {mobileMenuOpen && (
+      {isMobile && mobileMenuOpen && (
         <div
-          className="fixed inset-0 bg-black/50 z-40 lg:hidden animate-fade-in"
+          role="presentation"
           onClick={() => setMobileMenuOpen(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.7)',
+            zIndex: 998,
+          }}
           aria-hidden="true"
         />
       )}
 
-      {/* Sidebar — на десктопе свёрнут; при наведении раскрывается; замок фиксирует текущее состояние */}
+      {/* Sidebar — на десктопе свёрнут; при наведении раскрывается; на телефоне — выдвижная панель */}
       <aside
-        onMouseEnter={() => setSidebarHovered(true)}
-        onMouseLeave={() => setSidebarHovered(false)}
-        className={`fixed lg:relative inset-y-0 left-0 z-50 bg-neon-bg2 sidebar-header-border flex flex-col transform transition-all duration-200 ease-out overflow-hidden
-          w-[min(100vw-2rem,16rem)] max-w-[16rem] sm:w-64
-          ${sidebarExpanded ? 'lg:w-56' : 'lg:w-16'}
-          ${mobileMenuOpen ? 'translate-x-0 max-lg:pointer-events-auto' : '-translate-x-full lg:translate-x-0 max-lg:pointer-events-none max-lg:[&_*]:pointer-events-none'}`}
+        onMouseEnter={() => !isMobile && setSidebarHovered(true)}
+        onMouseLeave={() => !isMobile && setSidebarHovered(false)}
+        style={
+          isMobile
+            ? {
+                position: 'fixed',
+                left: mobileMenuOpen ? 0 : -280,
+                top: 0,
+                height: '100vh',
+                width: 240,
+                zIndex: 999,
+                transition: 'left 0.25s ease',
+              }
+            : undefined
+        }
+        className={`${isMobile ? '' : 'fixed lg:relative'} inset-y-0 left-0 bg-neon-bg2 sidebar-header-border flex flex-col overflow-hidden
+          ${isMobile ? '' : 'transform transition-all duration-200 ease-out z-50 w-[min(100vw-2rem,16rem)] max-w-[16rem] sm:w-64'}
+          ${isMobile ? '' : sidebarExpanded ? 'lg:w-56' : 'lg:w-16'}
+          ${isMobile ? '' : 'lg:translate-x-0'}`}
       >
         <div className={`header-top flex items-center gap-2 p-4 lg:px-2 lg:py-3 shrink-0 border-b border-white/10 ${sidebarExpanded ? 'lg:justify-start' : 'lg:justify-center'}`}>
           {/* Свёрнуто: логотип (только desktop lg+) */}
-          <div className={`hidden lg:flex items-center justify-center flex-1 min-w-0 ${sidebarExpanded ? 'lg:hidden' : ''}`}>
+          <div className={`${isMobile ? 'hidden' : 'hidden lg:flex'} items-center justify-center flex-1 min-w-0 ${sidebarExpanded ? 'lg:hidden' : ''}`}>
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" className="w-9 h-9 flex-shrink-0 rounded-full overflow-hidden" aria-label="ERDEN BRAND">
               <defs>
                 <clipPath id="sidebar-logo-circle">
@@ -418,10 +440,11 @@ export default function Layout() {
             </svg>
           </div>
           {/* Развёрнуто: название и замок */}
-          <div className={`flex items-center gap-2 flex-1 min-w-0 ${sidebarExpanded ? '' : 'lg:hidden'}`}>
+          <div className={`flex items-center gap-2 flex-1 min-w-0 ${isMobile || sidebarExpanded ? '' : 'lg:hidden'}`}>
             <h1 className="text-base sm:text-lg font-semibold text-neon-text truncate overflow-hidden whitespace-nowrap text-center lg:text-left flex-1 min-w-0">
               ERDEN BRAND
             </h1>
+            {!isMobile && (
             <button
               type="button"
               onClick={toggleSidebarLock}
@@ -439,9 +462,10 @@ export default function Layout() {
                 </svg>
               )}
             </button>
+            )}
           </div>
         </div>
-        <nav className="flex-1 p-2 space-y-1 overflow-x-hidden">
+        <nav className="flex-1 p-2 space-y-1 overflow-x-hidden overflow-y-auto">
           {navStructure.map((entry, idx) => {
             if (entry.type === 'divider') {
               return <div key={`divider-${idx}`} className="border-t border-white/10 my-2" aria-hidden="true" />;
@@ -465,12 +489,12 @@ export default function Layout() {
                   >
                     <span className="flex-shrink-0">{NAV_ICONS[entry.icon]}</span>
                     <span
-                      className={`truncate whitespace-nowrap flex-1 min-w-0 ${mobileMenuOpen ? 'inline' : 'max-lg:hidden'} ${sidebarExpanded ? 'lg:inline' : 'lg:hidden'}`}
+                      className={`truncate whitespace-nowrap flex-1 min-w-0 ${isMobile ? 'inline' : sidebarExpanded ? 'lg:inline' : 'lg:hidden'}`}
                     >
                       {entry.label}
                     </span>
                     <svg
-                      className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''} ${mobileMenuOpen ? 'inline' : 'max-lg:hidden'} ${sidebarExpanded ? 'lg:inline' : 'lg:hidden'}`}
+                      className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''} ${isMobile ? 'inline' : sidebarExpanded ? 'lg:inline' : 'lg:hidden'}`}
                       fill="none"
                       stroke="currentColor"
                       viewBox="0 0 24 24"
@@ -494,7 +518,7 @@ export default function Layout() {
                             }`
                           }
                         >
-                          <span className={`truncate whitespace-nowrap ${mobileMenuOpen ? 'inline' : 'max-lg:hidden'} ${sidebarExpanded ? 'lg:inline' : 'lg:hidden'}`}>{child.label}</span>
+                          <span className={`truncate whitespace-nowrap ${isMobile ? 'inline' : sidebarExpanded ? 'lg:inline' : 'lg:hidden'}`}>{child.label}</span>
                         </NavLink>
                       ))}
                     </div>
@@ -518,7 +542,7 @@ export default function Layout() {
                 }
               >
                 <span className="flex-shrink-0">{NAV_ICONS[icon]}</span>
-                <span className={`truncate whitespace-nowrap ${mobileMenuOpen ? 'inline' : 'max-lg:hidden'} ${sidebarExpanded ? 'lg:inline' : 'lg:hidden'}`}>{label}</span>
+                <span className={`truncate whitespace-nowrap ${isMobile ? 'inline' : sidebarExpanded ? 'lg:inline' : 'lg:hidden'}`}>{label}</span>
               </NavLink>
             );
           })}
@@ -527,43 +551,78 @@ export default function Layout() {
 
       {/* Main */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-        <header className="header-top bg-neon-surface flex items-center justify-between px-3 md:px-6 lg:px-8 gap-2 min-h-[3rem]">
-          <div className="flex items-center gap-1 min-w-0">
+        <header
+          className="header-top bg-neon-surface flex items-center justify-between gap-2 min-h-[3rem]"
+          style={{
+            padding: isMobile ? '8px 12px' : undefined,
+          }}
+        >
+          <div
+            className="flex items-center min-w-0"
+            style={{ gap: isMobile ? 8 : 16 }}
+          >
+            {isMobile && (
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen((o) => !o)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#e2e8f0',
+                  fontSize: 22,
+                  cursor: 'pointer',
+                  padding: 8,
+                  lineHeight: 1,
+                }}
+                aria-label={mobileMenuOpen ? 'Закрыть меню' : 'Открыть меню'}
+              >
+                {mobileMenuOpen ? '✕' : '☰'}
+              </button>
+            )}
             <Link
               to="/production-dashboard"
               className="shrink-0 px-2 py-1 rounded-lg hover:bg-white/10 transition-colors"
-              style={{ fontWeight: 700, fontSize: 18, color: '#c8ff00' }}
+              style={{
+                fontWeight: 700,
+                fontSize: isMobile ? 16 : 20,
+                color: '#c8ff00',
+              }}
             >
               ERDEN
             </Link>
-            <button
-              onClick={() => setMobileMenuOpen(true)}
-              className="p-2 rounded-lg lg:hidden hover:bg-white/10 text-neon-text shrink-0"
-              aria-label="Меню"
-            >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-          </button>
           </div>
-          <div className="flex-1" />
-          <div className="flex items-center gap-2 md:gap-4 flex-shrink-0 min-w-0">
-            <span className="text-xs sm:text-sm text-neon-text truncate max-w-[100px] sm:max-w-[200px] md:max-w-none">
-              {user?.name}
-              {user?.role && (ROLE_LABELS[user.role] || user.role) !== user?.name && (
-                <span className="hidden sm:inline"> • {ROLE_LABELS[user.role] || user.role}</span>
-              )}
-            </span>
+          <div
+            className="flex items-center flex-shrink-0 min-w-0"
+            style={{ gap: isMobile ? 8 : 16, marginLeft: 'auto' }}
+          >
+            {!isMobile && (
+              <span className="text-sm text-neon-text truncate max-w-[200px] md:max-w-none">
+                {user?.name}
+                {user?.role && (ROLE_LABELS[user.role] || user.role) !== user?.name && (
+                  <span> • {ROLE_LABELS[user.role] || user.role}</span>
+                )}
+              </span>
+            )}
             <button
+              type="button"
               onClick={logout}
-              className="btn-neon px-2 sm:px-3 py-1.5 text-xs sm:text-sm bg-neon-surface2 text-neon-text hover:shadow-neon shrink-0 whitespace-nowrap"
+              className="btn-neon bg-neon-surface2 text-neon-text hover:shadow-neon shrink-0 whitespace-nowrap"
+              style={{
+                fontSize: isMobile ? 12 : 13,
+                padding: isMobile ? '6px 10px' : '6px 14px',
+              }}
             >
               Выход
             </button>
           </div>
         </header>
 
-        <main className="flex-1 overflow-x-hidden overflow-y-auto px-3 py-3 sm:py-4 md:px-6 md:py-5 lg:px-8 lg:py-6 bg-transparent relative">
+        <main
+          className={`flex-1 overflow-x-hidden overflow-y-auto bg-transparent relative ${
+            isMobile ? '' : 'px-3 py-3 sm:py-4 md:px-6 md:py-5 lg:px-8 lg:py-6'
+          }`}
+          style={isMobile ? { padding: 12 } : undefined}
+        >
           <PrintDocHeader />
           {!serverOk && (
             <div

@@ -3,6 +3,7 @@
  */
 
 const express = require("express");
+const path = require("path");
 const compression = require("compression");
 const cors = require("cors");
 const helmet = require("helmet");
@@ -35,6 +36,7 @@ const clientsRoutes = require("./routes/clients");
 const workshopsRoutes = require("./routes/workshops");
 const financeRoutes = require("./routes/finance");
 const paymentCalendarRoutes = require("./routes/paymentCalendar");
+const tasksRoutes = require("./routes/tasks");
 const aiRoutes = require("./routes/ai");
 const settingsRoutes = require("./routes/settings");
 const sizesRoutes = require("./routes/sizes");
@@ -186,6 +188,7 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }));
 app.use(express.json({ limit: "10mb" }));
+app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 /** Диагностика длительности GET /api/dekatirovka и /api/proverka: время до входа в роутер (CORS + authenticate + technologistFloorOnly). */
 app.use((req, res, next) => {
@@ -372,6 +375,12 @@ app.use(
   authenticate,
   requireRole("admin", "manager", "technologist", "operator"),
   paymentCalendarRoutes,
+);
+app.use(
+  "/api/tasks",
+  authenticate,
+  requireRole("admin", "manager", "technologist", "operator"),
+  tasksRoutes,
 );
 app.use(
   "/api/ai",

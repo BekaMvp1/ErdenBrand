@@ -8,6 +8,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api';
 import { useRefreshOnVisible } from '../hooks/useRefreshOnVisible';
+import useIsMobile from '../hooks/useIsMobile';
 import { NeonButton, NeonCard, NeonInput, NeonSelect } from '../components/ui';
 import ModelPhoto from '../components/ModelPhoto';
 import { SIZE_GRID_MAP } from '../components/SizeGrid';
@@ -105,9 +106,14 @@ function isOrderActiveOrAccepted(order) {
   return n === 'В работе' || n === 'Принят';
 }
 
+function orderStatusLabel(order) {
+  return String(orderStatusName(order) || '').trim();
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -581,8 +587,116 @@ export default function Dashboard() {
           <div className="p-6 md:p-8 text-center text-neon-muted">
             {error ? 'Не удалось загрузить заказы' : 'Нет заказов'}
           </div>
+        ) : isMobile ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {orders.map((order) => {
+              const clientName = order.Client?.name || order.client_name || '—';
+              const statusName = orderStatusLabel(order);
+              const isActive = statusName === 'В работе' || statusName === 'Принят';
+              return (
+                <div
+                  key={order.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => {
+                    if (selectMode) {
+                      toggleSelect(order.id);
+                    } else {
+                      navigate(`/orders/${order.id}`);
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !selectMode) navigate(`/orders/${order.id}`);
+                  }}
+                  style={{
+                    background: '#0a1628',
+                    border: selectedIds.has(order.id)
+                      ? '1px solid rgba(200,255,0,0.4)'
+                      : '1px solid #1e3a5f',
+                    borderRadius: 10,
+                    padding: 12,
+                    display: 'flex',
+                    gap: 12,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {selectMode && (
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(order.id)}
+                      onChange={() => toggleSelect(order.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ accentColor: '#c8ff00', flexShrink: 0, marginTop: 4 }}
+                      aria-label={`Выбрать заказ ${order.tz_code || order.id}`}
+                    />
+                  )}
+                  <div style={{ flexShrink: 0 }}>
+                    <ModelPhoto
+                      photo={order.photos?.[0]}
+                      modelName={order.title || order.model_name}
+                      size={56}
+                    />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div
+                      style={{
+                        color: '#a3e635',
+                        fontWeight: 700,
+                        fontSize: 14,
+                      }}
+                    >
+                      {order.tz_code || order.article || order.number || order.id}
+                    </div>
+                    <div
+                      style={{
+                        color: '#cbd5e1',
+                        fontSize: 12,
+                        marginTop: 2,
+                      }}
+                    >
+                      {order.title || order.model_name || order.name || '—'}
+                    </div>
+                    <div
+                      style={{
+                        display: 'flex',
+                        gap: 8,
+                        marginTop: 6,
+                        alignItems: 'center',
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <span style={{ color: '#64748b', fontSize: 11 }}>
+                        {order.quantity ?? order.qty_order ?? 0} шт
+                      </span>
+                      <span
+                        style={{
+                          color: clientName === 'WB' ? '#3b82f6' : '#94a3b8',
+                          fontSize: 11,
+                          fontWeight: clientName === 'WB' ? 700 : 400,
+                        }}
+                      >
+                        {clientName}
+                      </span>
+                      <span
+                        style={{
+                          background: isActive ? '#1e3a5f' : '#374151',
+                          color: isActive ? '#93c5fd' : '#94a3b8',
+                          padding: '2px 8px',
+                          borderRadius: 4,
+                          fontSize: 10,
+                          marginLeft: 'auto',
+                        }}
+                      >
+                        {statusName || '—'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto table-scroll">
           <table className="w-full min-w-[640px]">
             <thead>
               <tr className="border-b border-white/20 dark:border-white/20">

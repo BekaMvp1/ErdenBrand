@@ -84,6 +84,7 @@ const db = {
   MovementDocumentItem: require('./MovementDocumentItem')(sequelize, Sequelize.DataTypes),
   CostCalculation: require('./CostCalculation')(sequelize, Sequelize.DataTypes),
   CostCalculationItem: require('./CostCalculationItem')(sequelize, Sequelize.DataTypes),
+  Task: require('./Task')(sequelize, Sequelize.DataTypes),
   StageReport: require('./StageReport')(sequelize, Sequelize.DataTypes),
   StageReportItem: require('./StageReportItem')(sequelize, Sequelize.DataTypes),
   Size: require('./Size')(sequelize, Sequelize.DataTypes),

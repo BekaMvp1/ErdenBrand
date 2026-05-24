@@ -4,6 +4,7 @@
  */
 
 import { useNavigate } from 'react-router-dom';
+import useIsMobile from '../hooks/useIsMobile';
 
 const CARD_CONFIG = [
   {
@@ -43,10 +44,20 @@ const CARD_CONFIG = [
 
 export default function DashboardSummary({ data, loading }) {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
+
+  const gridStyle = {
+    display: 'grid',
+    gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)',
+    gap: isMobile ? 8 : 16,
+    marginBottom: isMobile ? 16 : 24,
+    position: 'relative',
+    zIndex: 1,
+  };
 
   if (loading) {
     return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-4 md:mb-6 relative z-[1]">
+      <div style={gridStyle}>
         {[1, 2, 3, 4].map((i) => (
           <div
             key={i}
@@ -60,7 +71,7 @@ export default function DashboardSummary({ data, loading }) {
   if (!data) return null;
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 mb-6 relative z-[1]">
+    <div style={gridStyle}>
       {CARD_CONFIG.map(({ key, label, icon, suffix = '', background, border, path }) => (
         <button
           key={key}

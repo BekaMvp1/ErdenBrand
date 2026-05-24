@@ -53,6 +53,7 @@ import PurchaseReportList from "./pages/stage/PurchaseReportList";
 import PurchaseReportForm from "./pages/stage/PurchaseReportForm";
 import MovementForm from "./pages/movements/MovementForm";
 import Production from "./pages/Production";
+import TasksPage from "./pages/TasksPage";
 
 export default function App() {
   // Один ping при старте приложения (без setInterval)
@@ -143,6 +144,7 @@ export default function App() {
                 <Route path="/proverka" element={<Proverka />} />
                 <Route path="qc" element={<Qc />} />
                 <Route path="shipments" element={<Shipments />} />
+                <Route path="tasks" element={<TasksPage />} />
                 <Route path="shipping-plan" element={<StageTabsLayout title="Отгрузка" />}>
                   <Route index element={<Navigate to="plan" replace />} />
                   <Route path="plan" element={<Shipping />} />

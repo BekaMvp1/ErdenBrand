@@ -463,3 +463,39 @@ html.dark * {
 .react-datepicker-popper {
   z-index: 9999 !important;
 }
+
+/* ═══ МОБИЛЬНАЯ АДАПТАЦИЯ ═══ */
+@media (max-width: 767px) {
+  body {
+    overflow-x: hidden;
+  }
+
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  input,
+  select,
+  textarea,
+  button {
+    min-height: 40px;
+    font-size: 16px !important;
+  }
+
+  .react-datepicker-wrapper {
+    width: 100% !important;
+  }
+
+  .modal-mobile {
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    transform: none !important;
+    border-radius: 16px 16px 0 0 !important;
+    max-height: 90vh !important;
+    width: 100% !important;
+  }
+}

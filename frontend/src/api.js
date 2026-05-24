@@ -56,8 +56,9 @@ async function request(path, options = {}) {
       ? Number(options.timeout)
       : API_TIMEOUT_MS;
   const token = getToken();
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const headers = {
-    'Content-Type': 'application/json',
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     ...(token && { Authorization: `Bearer ${token}` }),
     ...options.headers,
   };
@@ -938,6 +939,20 @@ export const api = {
       }),
     deleteCuttingType: (id) =>
       request(`/api/references/cutting-types/${id}`, { method: 'DELETE' }),
+  },
+  tasks: {
+    list: () => request('/api/tasks'),
+    create: (formData) =>
+      request('/api/tasks', {
+        method: 'POST',
+        body: formData,
+        timeout: 30000,
+      }),
+    update: (id, body) =>
+      request(`/api/tasks/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
   },
 };
 

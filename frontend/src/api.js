@@ -418,6 +418,11 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify(body),
       }),
+    chainSyncOrderWeek: (body) =>
+      request('/api/planning/chain/sync-order-week', {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
     chainSyncDocuments: (chain_ids) =>
       request('/api/planning/chain/sync-documents', {
         method: 'POST',

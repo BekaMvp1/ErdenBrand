@@ -2482,6 +2482,45 @@ router.get('/chain', async (req, res, next) => {
   }
 });
 
+const CHAIN_WEEK_FIELD_BY_STAGE = {
+  procurement: 'purchase_week_start',
+  purchase: 'purchase_week_start',
+  cutting: 'cutting_week_start',
+  sewing: 'sewing_week_start',
+  otk: 'otk_week_start',
+};
+
+/**
+ * PATCH /api/planning/chain/sync-order-week
+ * body: { order_id, stage, plan_date } — все строки planning_chains для заказа
+ */
+router.patch('/chain/sync-order-week', async (req, res, next) => {
+  try {
+    if (!['admin', 'manager', 'technologist'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Нет доступа' });
+    }
+    const orderId = parseInt(req.body.order_id, 10);
+    const stage = String(req.body.stage || '').trim();
+    const field = CHAIN_WEEK_FIELD_BY_STAGE[stage];
+    if (!orderId || !field) {
+      return res.status(400).json({ error: 'Укажите order_id и stage (procurement|cutting|sewing|otk)' });
+    }
+    const raw = normalizeChainIsoDate(req.body.plan_date);
+    if (!raw) {
+      return res.status(400).json({ error: 'Некорректная plan_date' });
+    }
+    const monday = getWeekStart(raw);
+    const [updated] = await db.PlanningChain.update(
+      { [field]: monday },
+      { where: { order_id: orderId } }
+    );
+    res.json({ updated, week_field: field, monday });
+  } catch (err) {
+    console.error('[planning/chain/sync-order-week]', err.message);
+    next(err);
+  }
+});
+
 /**
  * GET /api/planning/chain/dekat-proverka?month_key=YYYY-MM&order_ids=1,2,3
  * План (сумма planning_month_facts за месяц) и факт из dekatirovka_facts / proverka_facts.

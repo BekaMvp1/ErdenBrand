@@ -16,8 +16,13 @@ import {
   indexChainsByOrderId,
   mondayIsoFromPlanDate,
   planMondayFromChainRow,
+  primaryChainRowForOrder,
 } from '../../utils/stageChainWeek';
 import ExpenseStageDatePicker from '../../components/stage/ExpenseStageDatePicker';
+import ExpensePeriodFilter, {
+  defaultExpensePeriodRange,
+  parseIsoLocal,
+} from '../../components/stage/ExpensePeriodFilter';
 
 const TH = {
   padding: '10px 12px',
@@ -367,7 +372,15 @@ export default function StagePlanOrdersTable({
   const [expandedOrders, setExpandedOrders] = useState({});
   const [dateDrafts, setDateDrafts] = useState({});
   const [nameSearch, setNameSearch] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const chainsByOrderRef = useRef({});
+
+  useEffect(() => {
+    const { dateFrom: from, dateTo: to } = defaultExpensePeriodRange();
+    setDateFrom(from);
+    setDateTo(to);
+  }, [stage]);
 
   const expensesPath = EXPENSES_PATH[stage] || `/${stage}/expenses`;
   const chainWeekField = chainWeekFieldForStage(stage);
@@ -389,18 +402,24 @@ export default function StagePlanOrdersTable({
         setOrders(list);
         const drafts = {};
         for (const o of list) {
+          const oid = Number(o.id);
           const ls = readLsDates(stage, o.id);
-          const chainRows = chainsByOrderRef.current[o.id] || [];
-          const fromChain = chainRows.length
-            ? planMondayFromChainRow(chainRows[0], stage)
+          const chainRows = chainsByOrderRef.current[oid] || [];
+          const primaryChain = primaryChainRowForOrder(chainRows, stage);
+          const fromChain = primaryChain
+            ? planMondayFromChainRow(primaryChain, stage)
             : '';
+          const planDate =
+            fromChain ||
+            ls.plan_date ||
+            chainDateIso(o.plan_date) ||
+            chainDateIso(o.deadline) ||
+            '';
+          if (fromChain && fromChain !== ls.plan_date) {
+            writeLsDates(stage, o.id, { plan_date: fromChain });
+          }
           drafts[o.id] = {
-            plan_date:
-              fromChain ||
-              ls.plan_date ||
-              chainDateIso(o.plan_date) ||
-              chainDateIso(o.deadline) ||
-              '',
+            plan_date: planDate,
             fact_date: ls.fact_date || chainDateIso(o.fact_date) || '',
           };
         }
@@ -439,18 +458,25 @@ export default function StagePlanOrdersTable({
 
       try {
         if (field === 'plan_date' && planMonday && chainWeekField) {
-          const chainRows = chainsByOrderRef.current[orderId] || [];
+          const oid = Number(orderId);
+          const chainRows = chainsByOrderRef.current[oid] || [];
           if (chainRows.length > 0) {
             const patched = await Promise.all(
               chainRows.map((c) =>
                 api.planning.chainPatch(c.id, { [chainWeekField]: planMonday })
               )
             );
-            chainsByOrderRef.current[orderId] = chainRows.map((c, i) => ({
+            chainsByOrderRef.current[oid] = chainRows.map((c, i) => ({
               ...c,
               ...(patched[i] || {}),
               [chainWeekField]: planMonday,
             }));
+          } else {
+            await api.planning.chainSyncOrderWeek({
+              order_id: oid,
+              stage,
+              plan_date: planIso,
+            });
           }
         }
 
@@ -468,22 +494,41 @@ export default function StagePlanOrdersTable({
   );
 
   const filteredOrders = useMemo(() => {
+    let list = orders;
+
     const q = nameSearch.trim().toLowerCase();
-    if (!q) return orders;
-    return orders.filter((o) => {
-      const hay = [
-        o.title,
-        o.model_name,
-        o.tz_code,
-        o.client_name,
-        o.Client?.name,
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      return hay.includes(q);
-    });
-  }, [orders, nameSearch]);
+    if (q) {
+      list = list.filter((o) => {
+        const hay = [
+          o.title,
+          o.model_name,
+          o.tz_code,
+          o.client_name,
+          o.Client?.name,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return hay.includes(q);
+      });
+    }
+
+    if (dateFrom || dateTo) {
+      const from = dateFrom ? parseIsoLocal(dateFrom) : null;
+      const to = dateTo ? parseIsoLocal(dateTo) : null;
+      list = list.filter((o) => {
+        const planIso = dateDrafts[o.id]?.plan_date || '';
+        if (!planIso) return true;
+        const planDate = parseIsoLocal(planIso);
+        if (!planDate) return true;
+        if (from && planDate < from) return false;
+        if (to && planDate > to) return false;
+        return true;
+      });
+    }
+
+    return list;
+  }, [orders, nameSearch, dateFrom, dateTo, dateDrafts]);
 
   const showMaterials = stage === 'procurement';
   const showOps = stage === 'cutting' || stage === 'sewing' || stage === 'otk';
@@ -504,6 +549,14 @@ export default function StagePlanOrdersTable({
           className="px-3 py-2 rounded-lg bg-[#1a1a1a] border border-[#444] text-white text-sm min-w-[200px] placeholder-white/40"
         />
       </div>
+
+      <ExpensePeriodFilter
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        onDateFromChange={setDateFrom}
+        onDateToChange={setDateTo}
+        filteredCount={filteredOrders.length}
+      />
 
       {loading ? (
         <OrdersLoadingIndicator />

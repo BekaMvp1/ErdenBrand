@@ -3,13 +3,21 @@
 /** Детали партии/изделия без засорения item_name JSON-префиксами */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.addColumn('movement_document_items', 'item_meta', {
-      type: Sequelize.JSONB,
-      allowNull: true,
-    });
+    const tableDesc = await queryInterface.describeTable('movement_document_items');
+
+    if (!tableDesc.item_meta) {
+      await queryInterface.addColumn('movement_document_items', 'item_meta', {
+        type: Sequelize.JSONB,
+        allowNull: true,
+        defaultValue: null,
+      });
+    }
   },
 
   async down(queryInterface) {
-    await queryInterface.removeColumn('movement_document_items', 'item_meta');
+    const tableDesc = await queryInterface.describeTable('movement_document_items');
+    if (tableDesc.item_meta) {
+      await queryInterface.removeColumn('movement_document_items', 'item_meta');
+    }
   },
 };

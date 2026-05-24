@@ -15,7 +15,13 @@ import SizeGrid, { SIZE_GRID_MAP, sizeGridNumericFromSelection } from '../compon
 import CreateOrderModelSections from '../components/CreateOrderModelSections';
 import ModelNameFromBasePicker from '../components/ModelNameFromBasePicker';
 import { applyModelsBaseToCreateOrder } from '../utils/orderModelFromModelsBase';
-import { formatSom, roundCost2, sumFabricOrAccessories, sumOps } from '../utils/createOrderCosts';
+import {
+  buildOrderOpsPayload,
+  formatSom,
+  roundCost2,
+  sumFabricOrAccessories,
+  sumOps,
+} from '../utils/createOrderCosts';
 
 const ROSTOVKI = [
   { id: '165', name: '165' },
@@ -25,6 +31,30 @@ const ROSTOVKI = [
 
 const LETTER_SIZES = ['S', 'M', 'L', 'XL', 'XXL', '3XL', '4XL', '5XL'];
 const NUMERIC_SIZES = ['38', '40', '42', '44', '46', '48', '50', '52', '54', '56'];
+
+const BARCODE_SIZE_OPTIONS = [
+  '38/XXS', '40/XS', '42/S', '44/M', '46/L', '48/XL', '50/2XL', '52/3XL', '54/4XL', '56/5XL',
+  'XS', 'S', 'M', 'L', 'XL', '2XL', '3XL',
+  '36', '38', '40', '42', '44', '46', '48', '50', '52', '54', '56',
+];
+
+function escBarcodeHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function sizeLabelForBarcode(size) {
+  const t = String(size).trim();
+  const n = parseInt(t, 10);
+  if (!Number.isNaN(n) && String(n) === t && GRID_NUM_SET.has(n)) {
+    const row = SIZE_GRID_MAP.find((m) => m.num === n);
+    if (row) return `${row.num}/${row.letter}`;
+  }
+  return t;
+}
 
 const GRID_NUM_SET = new Set(SIZE_GRID_MAP.map((r) => r.num));
 
@@ -188,6 +218,7 @@ export default function CreateOrder() {
   const [colorDropdownOpen, setColorDropdownOpen] = useState(false);
   const colorInputRef = useRef(null);
   const colorDropdownRef = useRef(null);
+  const excelInputRef = useRef(null);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
     client_id: '',
@@ -209,6 +240,7 @@ export default function CreateOrder() {
   const [newColorInput, setNewColorInput] = useState('');
   const [editingRowTotal, setEditingRowTotal] = useState(null);
   const [orderPhotos, setOrderPhotos] = useState([]);
+  const [barcodeRows, setBarcodeRows] = useState([]);
   const [commentPhotos, setCommentPhotos] = useState([]);
   const [fabric, setFabric] = useState([]);
   const [accessories, setAccessories] = useState([]);
@@ -522,6 +554,280 @@ export default function CreateOrder() {
     if (newColorInput.trim()) addColor(newColorInput.trim());
   };
 
+  const updateBarcodeRow = (id, changes) => {
+    setBarcodeRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...changes } : r)));
+  };
+
+  const showBarcodeImportToast = (count) => {
+    const toast = document.createElement('div');
+    toast.style.cssText = `
+      position:fixed;bottom:32px;right:32px;
+      z-index:9999;padding:12px 20px;
+      background:#16a34a;color:#fff;
+      border-radius:8px;font-size:14px;
+      font-weight:600;
+      box-shadow:0 4px 16px rgba(0,0,0,0.4);
+    `;
+    toast.textContent = `✅ Загружено ${count} баркодов`;
+    document.body.appendChild(toast);
+    setTimeout(() => document.body.removeChild(toast), 3000);
+  };
+
+  const handleExcelImport = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+
+    try {
+      const XLSX = await import('xlsx');
+      const isCsv = /\.csv$/i.test(file.name);
+
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        try {
+          const wb = XLSX.read(evt.target.result, {
+            type: isCsv ? 'string' : 'binary',
+          });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+          if (rows.length === 0) {
+            alert('Файл пустой или неверный формат');
+            return;
+          }
+
+          const getField = (row, ...keys) => {
+            for (const key of keys) {
+              if (row[key] !== undefined && row[key] !== '') {
+                return String(row[key]).trim();
+              }
+            }
+            return '';
+          };
+
+          const newRows = rows
+            .map((row, i) => ({
+              id: Date.now() + i + Math.random(),
+              barcode: getField(
+                row,
+                'barcode',
+                'Баркод',
+                'ШК',
+                'Штрихкод',
+                'EAN',
+                'barcode_value',
+                'Артикул WB',
+                'nmID'
+              ),
+              size: getField(row, 'size', 'Размер', 'size_name', 'techSize', 'wbSize', 'Размер WB'),
+              name:
+                getField(row, 'name', 'Наименование', 'title', 'product_name', 'Товар', 'Название') ||
+                form.model_name ||
+                '',
+              color: getField(row, 'color', 'Цвет', 'colour', 'color_name', 'Цвет товара'),
+            }))
+            .filter((r) => r.barcode || r.size || r.name);
+
+          if (newRows.length === 0) {
+            alert(
+              'Не найдены данные.\n\n' +
+                'Ожидаемые колонки:\n' +
+                'Баркод, Размер, Наименование, Цвет\n\n' +
+                'или на английском:\n' +
+                'barcode, size, name, color'
+            );
+            return;
+          }
+
+          if (barcodeRows.length > 0) {
+            const replace = window.confirm(
+              `Найдено ${newRows.length} строк.\n` +
+                'Заменить существующие баркоды?\n' +
+                'ОК — заменить, Отмена — добавить к существующим'
+            );
+            if (replace) {
+              setBarcodeRows(newRows);
+            } else {
+              setBarcodeRows((prev) => [...prev, ...newRows]);
+            }
+          } else {
+            setBarcodeRows(newRows);
+          }
+
+          showBarcodeImportToast(newRows.length);
+        } catch (parseErr) {
+          alert(`Ошибка чтения файла: ${parseErr.message}`);
+        }
+      };
+
+      if (isCsv) {
+        reader.readAsText(file, 'UTF-8');
+      } else {
+        reader.readAsBinaryString(file);
+      }
+    } catch (importErr) {
+      alert(`Ошибка импорта xlsx: ${importErr.message}`);
+    }
+  };
+
+  const handleDownloadTemplate = async () => {
+    try {
+      const XLSX = await import('xlsx');
+      const templateData = [
+        {
+          Баркод: '4600000000001',
+          Размер: '44/M',
+          Наименование: 'Пиджак платья',
+          Цвет: 'Белый',
+        },
+        {
+          Баркод: '4600000000002',
+          Размер: '46/L',
+          Наименование: 'Пиджак платья',
+          Цвет: 'Белый',
+        },
+        {
+          Баркод: '4600000000003',
+          Размер: '44/M',
+          Наименование: 'Пиджак платья',
+          Цвет: 'Черный',
+        },
+      ];
+      const ws = XLSX.utils.json_to_sheet(templateData);
+      ws['!cols'] = [{ wch: 18 }, { wch: 10 }, { wch: 25 }, { wch: 15 }];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Баркоды');
+      XLSX.writeFile(wb, 'barcode_template.xlsx');
+    } catch (err) {
+      alert(`Не удалось скачать шаблон: ${err.message}`);
+    }
+  };
+
+  const handleGenerateBarcodes = () => {
+    const name = form.model_name || '';
+    const colorList = colors.length > 0 ? colors : [''];
+    const sizeList = selectedSizes.length > 0 ? selectedSizes.map(sizeLabelForBarcode) : [];
+
+    const newRows = [];
+    for (const color of colorList) {
+      for (const size of sizeList) {
+        newRows.push({
+          id: Date.now() + Math.random(),
+          barcode: '',
+          size,
+          name,
+          color: color || '',
+        });
+      }
+    }
+
+    if (newRows.length > 0) {
+      setBarcodeRows(newRows);
+    } else {
+      setBarcodeRows([
+        {
+          id: Date.now(),
+          barcode: '',
+          size: '',
+          name,
+          color: '',
+        },
+      ]);
+    }
+  };
+
+  const handlePrintBarcodes = () => {
+    const rows = barcodeRows.filter((r) => r.barcode || r.size);
+    if (rows.length === 0) return;
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Баркоды — ${escBarcodeHtml(form.model_name || '')}</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box }
+    body { font-family: Arial, sans-serif; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 4px;
+      padding: 8px;
+    }
+    .card {
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      padding: 8px;
+      text-align: center;
+      page-break-inside: avoid;
+    }
+    .barcode {
+      font-family: 'Libre Barcode 128', monospace;
+      font-size: 36px;
+      line-height: 1;
+      letter-spacing: 2px;
+    }
+    .barcode-num {
+      font-size: 9px;
+      color: #333;
+      margin-top: 2px;
+      font-family: monospace;
+    }
+    .name {
+      font-size: 10px;
+      font-weight: bold;
+      margin-top: 4px;
+    }
+    .details {
+      font-size: 9px;
+      color: #555;
+      margin-top: 2px;
+    }
+    @media print {
+      body { padding: 0; }
+      @page { margin: 5mm; size: A4; }
+    }
+  </style>
+  <link href="https://fonts.googleapis.com/css2?family=Libre+Barcode+128&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="grid">
+    ${rows
+      .map(
+        (r) => `
+      <div class="card">
+        ${
+          r.barcode
+            ? `<div class="barcode">${escBarcodeHtml(r.barcode)}</div>
+          <div class="barcode-num">${escBarcodeHtml(r.barcode)}</div>`
+            : ''
+        }
+        <div class="name">${escBarcodeHtml(r.name || '')}</div>
+        <div class="details">
+          ${r.size ? `Размер: ${escBarcodeHtml(r.size)}` : ''}
+          ${r.color ? ` | ${escBarcodeHtml(r.color)}` : ''}
+        </div>
+      </div>
+    `
+      )
+      .join('')}
+  </div>
+</body>
+</html>`;
+
+    const iframe = document.createElement('iframe');
+    iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:0;height:0;border:0';
+    document.body.appendChild(iframe);
+    iframe.contentDocument.open();
+    iframe.contentDocument.write(html);
+    iframe.contentDocument.close();
+    setTimeout(() => {
+      iframe.contentWindow.focus();
+      iframe.contentWindow.print();
+      setTimeout(() => document.body.removeChild(iframe), 1000);
+    }, 500);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!isValid) {
@@ -582,6 +888,15 @@ export default function CreateOrder() {
         total_cost: costTotals.total_cost,
         fabric_data: fabricRows,
         fittings_data: fittingsRows,
+        cutting_ops: buildOrderOpsPayload(cuttingOps, 'cutting'),
+        sewing_ops: buildOrderOpsPayload(sewingOps, 'sewing'),
+        otk_ops: buildOrderOpsPayload(otkOps, 'otk'),
+        barcodes: barcodeRows.map((r) => ({
+          barcode: r.barcode,
+          size: r.size,
+          name: r.name,
+          color: r.color,
+        })),
       });
       if ((form.comment || '').trim() || commentPhotos.length > 0) {
         await api.orders.addComment(order.id, {
@@ -854,6 +1169,286 @@ export default function CreateOrder() {
               </label>
             )}
           </div>
+        </div>
+
+        <div
+          style={{
+            marginTop: 24,
+            paddingTop: 20,
+            borderTop: '1px solid #1e3a5f',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: 12,
+              flexWrap: 'wrap',
+              gap: 8,
+            }}
+          >
+            <h3 style={{ color: '#a3e635', margin: 0, fontSize: 16 }}>🏷️ Баркоды</h3>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                ref={excelInputRef}
+                style={{ display: 'none' }}
+                onChange={handleExcelImport}
+              />
+              <button
+                type="button"
+                onClick={handleGenerateBarcodes}
+                style={{
+                  background: '#1e3a5f',
+                  color: '#93c5fd',
+                  border: '1px solid #374151',
+                  borderRadius: 6,
+                  padding: '6px 12px',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  fontWeight: 600,
+                }}
+              >
+                ⚡ Авто из размеров
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setBarcodeRows((prev) => [
+                    ...prev,
+                    {
+                      id: Date.now(),
+                      barcode: '',
+                      size: '',
+                      name: form.model_name || '',
+                      color: '',
+                    },
+                  ])
+                }
+                style={{
+                  background: '#16a34a',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 6,
+                  padding: '6px 12px',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  fontWeight: 600,
+                }}
+              >
+                + Добавить строку
+              </button>
+              <button
+                type="button"
+                onClick={() => excelInputRef.current?.click()}
+                style={{
+                  background: '#1e3a5f',
+                  color: '#93c5fd',
+                  border: '1px solid #374151',
+                  borderRadius: 6,
+                  padding: '6px 12px',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  fontWeight: 600,
+                }}
+              >
+                📥 Импорт Excel
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadTemplate}
+                style={{
+                  background: 'none',
+                  color: '#64748b',
+                  border: '1px dashed #374151',
+                  borderRadius: 6,
+                  padding: '6px 12px',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                }}
+              >
+                📋 Шаблон
+              </button>
+            </div>
+          </div>
+
+          {barcodeRows.length > 0 ? (
+            <div style={{ overflowX: 'auto' }}>
+              <table
+                style={{
+                  width: '100%',
+                  borderCollapse: 'collapse',
+                  fontSize: 13,
+                  minWidth: 640,
+                }}
+              >
+                <thead>
+                  <tr style={{ background: '#1e3a5f' }}>
+                    {['№', 'Баркод', 'Размер', 'Наименование', 'Цвет', '🗑'].map((h) => (
+                      <th
+                        key={h}
+                        style={{
+                          padding: '8px 10px',
+                          textAlign: 'left',
+                          color: '#cbd5e1',
+                          fontWeight: 600,
+                          fontSize: 12,
+                          borderBottom: '1px solid #374151',
+                        }}
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {barcodeRows.map((row, idx) => (
+                    <tr
+                      key={row.id}
+                      style={{
+                        background: idx % 2 === 0 ? '#0a1020' : '#0f172a',
+                      }}
+                    >
+                      <td style={{ padding: '6px 10px', color: '#64748b', fontSize: 12 }}>{idx + 1}</td>
+                      <td style={{ padding: '4px 6px' }}>
+                        <input
+                          type="text"
+                          value={row.barcode}
+                          placeholder="4600000000000"
+                          onChange={(e) => updateBarcodeRow(row.id, { barcode: e.target.value })}
+                          style={{
+                            background: '#1a1a2e',
+                            color: '#e2e8f0',
+                            border: '1px solid #374151',
+                            borderRadius: 6,
+                            padding: '6px 8px',
+                            fontSize: 13,
+                            width: 160,
+                            fontFamily: 'monospace',
+                          }}
+                        />
+                      </td>
+                      <td style={{ padding: '4px 6px' }}>
+                        <select
+                          value={row.size}
+                          onChange={(e) => updateBarcodeRow(row.id, { size: e.target.value })}
+                          style={{
+                            background: '#1a1a2e',
+                            color: '#e2e8f0',
+                            border: '1px solid #374151',
+                            borderRadius: 6,
+                            padding: '6px 8px',
+                            fontSize: 13,
+                            width: 100,
+                          }}
+                        >
+                          <option value="">— Размер —</option>
+                          {[
+                            ...new Set([
+                              ...BARCODE_SIZE_OPTIONS,
+                              ...selectedSizes.map(sizeLabelForBarcode),
+                              row.size,
+                            ].filter(Boolean)),
+                          ].map((s) => (
+                            <option key={s} value={s}>
+                              {s}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td style={{ padding: '4px 6px' }}>
+                        <input
+                          type="text"
+                          value={row.name}
+                          placeholder="Название товара"
+                          onChange={(e) => updateBarcodeRow(row.id, { name: e.target.value })}
+                          style={{
+                            background: '#1a1a2e',
+                            color: '#e2e8f0',
+                            border: '1px solid #374151',
+                            borderRadius: 6,
+                            padding: '6px 8px',
+                            fontSize: 13,
+                            width: 200,
+                            maxWidth: '100%',
+                          }}
+                        />
+                      </td>
+                      <td style={{ padding: '4px 6px' }}>
+                        <input
+                          type="text"
+                          value={row.color}
+                          placeholder="Цвет"
+                          onChange={(e) => updateBarcodeRow(row.id, { color: e.target.value })}
+                          style={{
+                            background: '#1a1a2e',
+                            color: '#e2e8f0',
+                            border: '1px solid #374151',
+                            borderRadius: 6,
+                            padding: '6px 8px',
+                            fontSize: 13,
+                            width: 120,
+                          }}
+                        />
+                      </td>
+                      <td style={{ padding: '4px 6px' }}>
+                        <button
+                          type="button"
+                          onClick={() => setBarcodeRows((prev) => prev.filter((r) => r.id !== row.id))}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: '#ef4444',
+                            cursor: 'pointer',
+                            fontSize: 18,
+                          }}
+                          aria-label="Удалить строку"
+                        >
+                          🗑
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div
+              style={{
+                padding: 20,
+                textAlign: 'center',
+                color: '#64748b',
+                fontSize: 13,
+                border: '1px dashed #1e2a3a',
+                borderRadius: 8,
+              }}
+            >
+              Нажмите «+ Добавить строку» или «⚡ Авто из размеров»
+            </div>
+          )}
+
+          {barcodeRows.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <button
+                type="button"
+                onClick={handlePrintBarcodes}
+                style={{
+                  background: '#7c3aed',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 8,
+                  padding: '8px 16px',
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  fontWeight: 600,
+                }}
+              >
+                🖨️ Печать баркодов
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Цвета и размеры — как было */}

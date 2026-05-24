@@ -14,6 +14,9 @@ const VALID_UNITS = ['РУЛОН', 'КГ', 'ТОННА', 'ШТ'];
 const VALID_MOVEMENT_TYPES = ['ПРИХОД', 'РАСХОД'];
 const VALID_MATERIAL_TYPES = ['fabric', 'accessories'];
 
+/** Префикс в warehouse_movements.comment для прихода изделий по этапам (см. movements approve) */
+const STAGE_PRODUCT_COMMENT_PREFIX = '[stage_product]';
+
 function toMoney(v) {
   const n = Number(v);
   return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
@@ -561,7 +564,77 @@ router.delete('/warehouses/:id', async (req, res, next) => {
 
 router.get('/goods', async (req, res, next) => {
   try {
-    const { warehouse_id, q } = req.query;
+    const { warehouse_id, q, kind, order_id, stage } = req.query;
+
+    if (kind === 'stage_products') {
+      const where = {
+        movement_kind: 'goods',
+        type: 'ПРИХОД',
+        comment: { [Op.like]: `${STAGE_PRODUCT_COMMENT_PREFIX}%` },
+      };
+      if (warehouse_id) {
+        const wid = toIntOrNaN(warehouse_id);
+        if (Number.isNaN(wid)) return res.status(400).json({ error: 'Invalid ID' });
+        where.to_warehouse_id = wid;
+      }
+      if (order_id) {
+        const oid = toIntOrNaN(order_id);
+        if (Number.isNaN(oid)) return res.status(400).json({ error: 'Invalid ID' });
+        where.order_id = oid;
+      }
+
+      const movements = await db.WarehouseMovement.findAll({
+        where,
+        order: [['created_at', 'DESC']],
+        attributes: ['id', 'order_id', 'item_name', 'qty', 'comment', 'to_warehouse_id', 'created_at'],
+      });
+
+      const grouped = {};
+      for (const g of movements) {
+        let parsed = null;
+        try {
+          const c = String(g.comment || '');
+          if (c.startsWith(STAGE_PRODUCT_COMMENT_PREFIX)) {
+            parsed = JSON.parse(c.slice(STAGE_PRODUCT_COMMENT_PREFIX.length));
+          }
+        } catch {
+          parsed = null;
+        }
+        const toStage = parsed?.to_stage != null ? String(parsed.to_stage) : '';
+        if (stage && String(toStage) !== String(stage)) continue;
+
+        const key = `${g.order_id ?? '0'}_${g.item_name}_${toStage}_${g.to_warehouse_id}`;
+        const qty = parseFloat(g.qty || 0) || 0;
+        const unit = toMoney(parsed?.unit_price ?? 0);
+        const lineSum = toMoney(qty * unit);
+
+        if (!grouped[key]) {
+          grouped[key] = {
+            order_id: g.order_id,
+            model_name: g.item_name,
+            stage: toStage,
+            warehouse_id: g.to_warehouse_id,
+            total_qty: 0,
+            total_sum: 0,
+            movements: [],
+          };
+        }
+        grouped[key].total_qty = toMoney(grouped[key].total_qty + qty);
+        grouped[key].total_sum = toMoney(grouped[key].total_sum + lineSum);
+        grouped[key].movements.push(g.get({ plain: true }));
+      }
+
+      const whRefs = await db.WarehouseRef.findAll({ attributes: ['id', 'name'] });
+      const whMap = new Map(whRefs.map((w) => [w.id, w.name]));
+
+      return res.json(
+        Object.values(grouped).map((row) => ({
+          ...row,
+          warehouse_name: whMap.get(row.warehouse_id) || '',
+        }))
+      );
+    }
+
     const where = {};
     if (warehouse_id) {
       const warehouseId = toIntOrNaN(warehouse_id);

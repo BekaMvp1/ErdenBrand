@@ -46,3 +46,25 @@ export function formatSom(n) {
   if (x === 0) return '0';
   return Number.isInteger(x) ? String(x) : x.toFixed(2).replace(/\.?0+$/, '');
 }
+
+/** Payload cutting_ops / sewing_ops / otk_ops для POST /api/orders */
+export function buildOrderOpsPayload(rows, kind) {
+  const titles = { cutting: 'Раскрой', sewing: 'Пошив', otk: 'ОТК' };
+  const filtered = (Array.isArray(rows) ? rows : []).filter((r) =>
+    String(r?.name || '').trim()
+  );
+  return {
+    groups: [
+      {
+        id: 1,
+        title: titles[kind] || '',
+        rows: filtered.map((r, i) => ({
+          id: r.id != null ? String(r.id) : `op-${i}`,
+          name: String(r.name).trim(),
+          cost: String(r.rateSom ?? r.cost ?? '').trim(),
+          note: String(r.normMinutes ?? r.note ?? '').trim(),
+        })),
+      },
+    ],
+  };
+}

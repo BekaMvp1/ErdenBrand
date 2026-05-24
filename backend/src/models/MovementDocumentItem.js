@@ -6,6 +6,7 @@ module.exports = (sequelize, DataTypes) => {
       document_id: { type: DataTypes.INTEGER, allowNull: false },
       item_id: { type: DataTypes.INTEGER, allowNull: true },
       item_name: { type: DataTypes.TEXT, allowNull: false },
+      item_meta: { type: DataTypes.JSONB, allowNull: true },
       unit: { type: DataTypes.STRING(30), allowNull: true },
       qty: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
       price: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },

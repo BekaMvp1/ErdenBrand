@@ -4,7 +4,7 @@
  * Редактирование вариантов (цвет×размер×количество) как при создании
  */
 
-import React, { useMemo, useState, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -17,6 +17,7 @@ import ProcurementPlanModal from '../components/procurement/ProcurementPlanModal
 import { useGridNavigation } from '../hooks/useGridNavigation';
 import { numInputValue } from '../utils/numInput';
 import SizeGrid, { SIZE_GRID_MAP, sizeGridNumericFromSelection } from '../components/SizeGrid';
+import OrderFinanceBlock from '../components/order/OrderFinanceBlock';
 
 const LETTER_SIZES = ['S', 'M', 'L', 'XL', 'XXL', '3XL', '4XL', '5XL'];
 const NUMERIC_SIZES = ['38', '40', '42', '44', '46', '48', '50', '52', '54', '56'];
@@ -232,6 +233,8 @@ export default function OrderDetails() {
   const { user } = useAuth();
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [waitSeconds, setWaitSeconds] = useState(0);
+  const [retryCount, setRetryCount] = useState(0);
   const [savingOp, setSavingOp] = useState(null);
   const [completing, setCompleting] = useState(false);
   const [showCompleteConfirm, setShowCompleteConfirm] = useState(false);
@@ -266,6 +269,9 @@ export default function OrderDetails() {
   const [procurement, setProcurement] = useState(null);
   const [productionStages, setProductionStages] = useState(null);
   const [stagesLoading, setStagesLoading] = useState(false);
+  const [barcodeModal, setBarcodeModal] = useState(false);
+  const [barcodeSelection, setBarcodeSelection] = useState([]);
+  const [printFormat, setPrintFormat] = useState('a4_4x');
   const editColorInputRef = useRef(null);
   const editColorDropdownRef = useRef(null);
 
@@ -295,7 +301,9 @@ export default function OrderDetails() {
     });
   };
 
-  const loadOrder = () => {
+  const loadOrder = useCallback(() => {
+    if (!id) return;
+    setLoading(true);
     api.orders
       .get(id)
       .then((data) => {
@@ -304,11 +312,24 @@ export default function OrderDetails() {
       })
       .catch(() => setOrder(null))
       .finally(() => setLoading(false));
-  };
+  }, [id]);
 
   useEffect(() => {
     loadOrder();
+  }, [loadOrder]);
+
+  useEffect(() => {
+    setWaitSeconds(0);
+    setRetryCount(0);
   }, [id]);
+
+  useEffect(() => {
+    if (!loading) return;
+    const interval = setInterval(() => {
+      setWaitSeconds((s) => s + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [loading]);
 
   const loadProductionStages = () => {
     if (!order?.id) return;
@@ -352,7 +373,7 @@ export default function OrderDetails() {
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => document.removeEventListener('visibilitychange', onVisibilityChange);
-  }, [id]);
+  }, [id, loadOrder]);
 
   useEffect(() => {
     if (showEditModal) {
@@ -471,7 +492,7 @@ export default function OrderDetails() {
       setEditNewSizeInput('');
       setEditNewColorInput('');
     }
-  }, [showEditModal, order]);
+  }, [showEditModal, order?.id]);
 
   const handleActualChange = (opId, value) => {
     setEditingActual((prev) => ({ ...prev, [opId]: value }));
@@ -851,6 +872,276 @@ export default function OrderDetails() {
     }, 300);
   };
 
+  const doPrintBarcodes = (rows, format = 'a4_4x') => {
+    if (!order || !rows?.length) return;
+
+    const escHtml = (v) =>
+      String(v ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+
+    const orderNum =
+      order.order_number ||
+      order.number ||
+      String(order.tz_code || '').trim() ||
+      (order.id != null ? String(order.id) : '') ||
+      '—';
+    const productLabel =
+      order.product_name ||
+      String(order.model_name || '').trim() ||
+      order.name ||
+      '';
+    const date = new Date().toLocaleDateString('ru-RU');
+    const isLabel = format.startsWith('label');
+
+    const FORMATS = {
+      a4_4x: {
+        cols: 4,
+        cardW: '23%',
+        cardH: '90px',
+        barcodeSize: '38px',
+        nameSize: '8px',
+        detailSize: '7px',
+        pageSize: 'A4',
+        margin: '6mm',
+        gap: '4px',
+      },
+      a4_2x: {
+        cols: 2,
+        cardW: '48%',
+        cardH: '130px',
+        barcodeSize: '52px',
+        nameSize: '11px',
+        detailSize: '10px',
+        pageSize: 'A4',
+        margin: '10mm',
+        gap: '8px',
+      },
+      label_58: {
+        cols: 1,
+        cardW: '100%',
+        cardH: 'auto',
+        barcodeSize: '44px',
+        nameSize: '10px',
+        detailSize: '9px',
+        pageSize: '58mm auto',
+        margin: '2mm',
+        gap: '0',
+      },
+      label_40x30: {
+        cols: 2,
+        cardW: '48%',
+        cardH: '28mm',
+        barcodeSize: '32px',
+        nameSize: '8px',
+        detailSize: '7px',
+        pageSize: '80mm auto',
+        margin: '1mm',
+        gap: '2px',
+      },
+    };
+
+    const cfg = FORMATS[format] || FORMATS.a4_4x;
+
+    const cardsHtml = rows
+      .map((r) => {
+        const bc = String(r.barcode || '').trim();
+        const rowName = r.name || productLabel;
+        return `
+      <div class="card">
+        ${
+          bc
+            ? `<span class="bc">${escHtml(bc)}</span>
+             <div class="bcnum">${escHtml(bc)}</div>`
+            : `<div class="nobc">нет ШК</div>`
+        }
+        <div class="nm">${escHtml(rowName)}</div>
+        ${r.size ? `<span class="sz">${escHtml(r.size)}</span>` : ''}
+        ${r.color ? `<div class="cl">${escHtml(r.color)}</div>` : ''}
+      </div>`;
+      })
+      .join('');
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Баркоды — ${escHtml(orderNum)}</title>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Libre+Barcode+128&display=swap"
+    rel="stylesheet"
+  >
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box }
+    body {
+      font-family: Arial, sans-serif;
+      background: #fff;
+      color: #000;
+    }
+    .header {
+      padding: 5px 8px;
+      border-bottom: 1.5px solid #000;
+      margin-bottom: 5px;
+      font-size: 10px;
+      display: ${isLabel ? 'none' : 'block'};
+    }
+    .grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: ${cfg.gap};
+      padding: ${isLabel ? '2px' : '6px'};
+      justify-content: flex-start;
+    }
+    .card {
+      width: ${cfg.cardW};
+      min-height: ${cfg.cardH};
+      border: 1px solid #222;
+      border-radius: 3px;
+      padding: ${isLabel ? '3px 2px' : '5px 3px'};
+      text-align: center;
+      page-break-inside: avoid;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .bc {
+      font-family: 'Libre Barcode 128', monospace;
+      font-size: ${cfg.barcodeSize};
+      line-height: 1;
+      max-width: 100%;
+      overflow: hidden;
+    }
+    .bcnum {
+      font-size: 7px;
+      color: #333;
+      font-family: monospace;
+      letter-spacing: 0.5px;
+      margin-top: 1px;
+    }
+    .nobc {
+      width: 90%;
+      height: 36px;
+      border: 1px dashed #bbb;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #aaa;
+      font-size: 8px;
+      border-radius: 2px;
+    }
+    .nm {
+      font-size: ${cfg.nameSize};
+      font-weight: bold;
+      margin-top: 3px;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .sz {
+      display: inline-block;
+      background: #000;
+      color: #fff;
+      font-size: ${cfg.detailSize};
+      font-weight: bold;
+      padding: 1px 6px;
+      border-radius: 2px;
+      margin-top: 2px;
+    }
+    .cl {
+      font-size: ${cfg.detailSize};
+      color: #444;
+      margin-top: 1px;
+    }
+    @page {
+      size: ${cfg.pageSize};
+      margin: ${cfg.margin};
+    }
+    @media print {
+      body { background: #fff; }
+      .header { display: ${isLabel ? 'none' : 'block'}; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <strong>Баркоды: ${escHtml(orderNum)}</strong>
+    &nbsp;·&nbsp;${escHtml(productLabel)}
+    &nbsp;·&nbsp;${rows.length} шт
+    &nbsp;·&nbsp;${escHtml(date)}
+  </div>
+
+  <div class="grid">
+    ${cardsHtml}
+  </div>
+</body>
+</html>`;
+
+    const iframe = document.createElement('iframe');
+    iframe.style.cssText =
+      'position:fixed;top:-9999px;left:-9999px;' +
+      'width:0;height:0;border:0';
+    document.body.appendChild(iframe);
+    iframe.contentDocument.open();
+    iframe.contentDocument.write(html);
+    iframe.contentDocument.close();
+    setTimeout(() => {
+      iframe.contentWindow.focus();
+      iframe.contentWindow.print();
+      setTimeout(() => document.body.removeChild(iframe), 1000);
+    }, 800);
+  };
+
+  const handlePrintBarcodes = () => {
+    if (!order) return;
+
+    const barcodes = order.barcodes || [];
+    let rows = [...barcodes];
+
+    if (rows.length === 0) {
+      const name =
+        order.product_name ||
+        String(order.model_name || '').trim() ||
+        order.name ||
+        '';
+      const colors = Array.isArray(order.colors)
+        ? order.colors
+        : typeof order.colors === 'string'
+          ? order.colors.split(',').map((c) => c.trim()).filter(Boolean)
+          : [''];
+      const sizes = Array.isArray(order.sizes)
+        ? order.sizes
+        : Object.keys(order.sizes || {});
+
+      for (const color of colors.length ? colors : ['']) {
+        for (const size of sizes) {
+          rows.push({ barcode: '', size, name, color });
+        }
+      }
+    }
+
+    if (rows.length === 0) {
+      alert(
+        'Баркоды не заполнены.\n' +
+          'Заполните баркоды при создании/редактировании заказа.'
+      );
+      return;
+    }
+
+    setBarcodeSelection(
+      rows.map((r) => ({
+        ...r,
+        copies: 1,
+        selected: true,
+      }))
+    );
+    setBarcodeModal(true);
+  };
+
   const handleCuttingStatusChange = async (task, newStatus) => {
     try {
       await api.cutting.updateTask(task.id, { status: newStatus });
@@ -923,8 +1214,149 @@ export default function OrderDetails() {
     }
   };
 
-  if (loading) return <div className="text-[#ECECEC]/80 dark:text-dark-text/80">Загрузка...</div>;
-  if (!order) return <div className="text-red-500 dark:text-red-400">Заказ не найден</div>;
+  if (loading) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '60px 24px',
+          gap: 16,
+        }}
+      >
+        <div
+          style={{
+            width: 48,
+            height: 48,
+            border: '3px solid #1e3a5f',
+            borderTop: '3px solid #a3e635',
+            borderRadius: '50%',
+            animation: 'orderDetailsSpin 1s linear infinite',
+          }}
+        />
+        <style>{`
+          @keyframes orderDetailsSpin {
+            from { transform: rotate(0deg) }
+            to   { transform: rotate(360deg) }
+          }
+        `}</style>
+        <div
+          style={{
+            color: '#e2e8f0',
+            fontSize: 15,
+            fontWeight: 600,
+          }}
+        >
+          {waitSeconds < 5
+            ? 'Загрузка заказа...'
+            : waitSeconds < 15
+              ? '⏳ Сервер просыпается...'
+              : '☕ Подождите, сервер запускается...'}
+        </div>
+        {waitSeconds > 3 && (
+          <div style={{ color: '#64748b', fontSize: 13 }}>
+            {waitSeconds} сек
+            {waitSeconds > 10 ? ' · обычно до 60 сек' : ''}
+          </div>
+        )}
+        <div
+          style={{
+            width: 240,
+            height: 4,
+            background: '#1e2a3a',
+            borderRadius: 4,
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              height: '100%',
+              background: '#a3e635',
+              borderRadius: 4,
+              width: `${Math.min(95, (waitSeconds / 60) * 100)}%`,
+              transition: 'width 1s linear',
+            }}
+          />
+        </div>
+        {waitSeconds > 15 && (
+          <button
+            type="button"
+            onClick={() => {
+              setWaitSeconds(0);
+              setRetryCount((r) => r + 1);
+              loadOrder();
+            }}
+            style={{
+              background: '#1e3a5f',
+              color: '#93c5fd',
+              border: '1px solid #1e3a5f',
+              borderRadius: 8,
+              padding: '8px 20px',
+              cursor: 'pointer',
+              fontSize: 13,
+              fontWeight: 600,
+              marginTop: 8,
+            }}
+          >
+            🔄 Повторить подключение
+          </button>
+        )}
+        {retryCount > 0 && (
+          <div style={{ color: '#475569', fontSize: 11 }}>Попытка {retryCount + 1}</div>
+        )}
+      </div>
+    );
+  }
+  if (!order) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '60px 24px',
+          gap: 16,
+          textAlign: 'center',
+        }}
+      >
+        <div style={{ fontSize: 48 }}>🔍</div>
+        <div
+          style={{
+            color: '#f87171',
+            fontSize: 18,
+            fontWeight: 700,
+          }}
+        >
+          Заказ не найден
+        </div>
+        <div style={{ color: '#64748b', fontSize: 13 }}>
+          Возможно заказ был удалён
+          <br />
+          или ссылка устарела
+        </div>
+        <button
+          type="button"
+          onClick={() => navigate('/orders')}
+          style={{
+            background: '#1e3a5f',
+            color: '#93c5fd',
+            border: '1px solid #1e3a5f',
+            borderRadius: 8,
+            padding: '10px 24px',
+            cursor: 'pointer',
+            fontSize: 14,
+            fontWeight: 600,
+            marginTop: 8,
+          }}
+        >
+          ← Вернуться к списку заказов
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="pt-2 sm:pt-4 min-w-0 overflow-x-hidden">
@@ -940,6 +1372,22 @@ export default function OrderDetails() {
             className="rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
           >
             🖨️ Чек-лист закупа
+          </button>
+          <button
+            type="button"
+            onClick={handlePrintBarcodes}
+            style={{
+              background: '#7c3aed',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 6,
+              padding: '8px 14px',
+              cursor: 'pointer',
+              fontSize: 13,
+              fontWeight: 600,
+            }}
+          >
+            🏷️ Печать ШК
           </button>
           <button
             type="button"
@@ -1305,6 +1753,14 @@ export default function OrderDetails() {
             )}
           </div>
         </div>
+
+      {order ? (
+        <OrderFinanceBlock
+          order={order}
+          fabricRows={orderMaterials.fabric}
+          accessoriesRows={orderMaterials.accessories}
+        />
+      ) : null}
 
       {/* 1. Закуп */}
       <div className="card-neon rounded-card overflow-hidden mt-4 sm:mt-6 transition-block">
@@ -2455,6 +2911,460 @@ export default function OrderDetails() {
           </div>
         </div>,
         document.body
+      )}
+
+      {barcodeModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.85)',
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+          onClick={(e) =>
+            e.target === e.currentTarget && setBarcodeModal(false)
+          }
+        >
+          <div
+            style={{
+              background: '#0f1a2e',
+              border: '1px solid #1e3a5f',
+              borderRadius: 12,
+              padding: 24,
+              width: '100%',
+              maxWidth: 700,
+              maxHeight: '85vh',
+              overflowY: 'auto',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: 16,
+              }}
+            >
+              <h3 style={{ color: '#a3e635', margin: 0, fontSize: 16 }}>
+                🏷️ Выбор баркодов для печати
+              </h3>
+              <button
+                type="button"
+                onClick={() => setBarcodeModal(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#64748b',
+                  cursor: 'pointer',
+                  fontSize: 20,
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                gap: 8,
+                marginBottom: 12,
+                flexWrap: 'wrap',
+              }}
+            >
+              <button
+                type="button"
+                onClick={() =>
+                  setBarcodeSelection((prev) =>
+                    prev.map((r) => ({ ...r, selected: true }))
+                  )
+                }
+                style={{
+                  background: '#1e3a5f',
+                  color: '#93c5fd',
+                  border: 'none',
+                  borderRadius: 6,
+                  padding: '5px 12px',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                }}
+              >
+                ✅ Выбрать все
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setBarcodeSelection((prev) =>
+                    prev.map((r) => ({ ...r, selected: false }))
+                  )
+                }
+                style={{
+                  background: '#1e2a3a',
+                  color: '#64748b',
+                  border: '1px solid #374151',
+                  borderRadius: 6,
+                  padding: '5px 12px',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                }}
+              >
+                ☐ Снять все
+              </button>
+
+              {[...new Set(barcodeSelection.map((r) => r.color).filter(Boolean))].map(
+                (color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    onClick={() => {
+                      const allSelected = barcodeSelection
+                        .filter((r) => r.color === color)
+                        .every((r) => r.selected);
+                      setBarcodeSelection((prev) =>
+                        prev.map((r) =>
+                          r.color === color ? { ...r, selected: !allSelected } : r
+                        )
+                      );
+                    }}
+                    style={{
+                      background: '#1a1a2e',
+                      color: '#e2e8f0',
+                      border: '1px solid #374151',
+                      borderRadius: 6,
+                      padding: '5px 12px',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                    }}
+                  >
+                    {color}
+                  </button>
+                )
+              )}
+
+              {[...new Set(barcodeSelection.map((r) => r.size).filter(Boolean))].map(
+                (size) => (
+                  <button
+                    key={size}
+                    type="button"
+                    onClick={() => {
+                      const allSelected = barcodeSelection
+                        .filter((r) => r.size === size)
+                        .every((r) => r.selected);
+                      setBarcodeSelection((prev) =>
+                        prev.map((r) =>
+                          r.size === size ? { ...r, selected: !allSelected } : r
+                        )
+                      );
+                    }}
+                    style={{
+                      background: '#1e3a5f',
+                      color: '#a3e635',
+                      border: '1px solid #1e3a5f',
+                      borderRadius: 6,
+                      padding: '5px 10px',
+                      cursor: 'pointer',
+                      fontSize: 11,
+                      fontWeight: 600,
+                    }}
+                  >
+                    {size}
+                  </button>
+                )
+              )}
+            </div>
+
+            <table
+              style={{
+                width: '100%',
+                borderCollapse: 'collapse',
+                fontSize: 12,
+              }}
+            >
+              <thead>
+                <tr style={{ background: '#1e3a5f' }}>
+                  <th
+                    style={{
+                      padding: '7px 8px',
+                      textAlign: 'center',
+                      color: '#cbd5e1',
+                      width: 36,
+                    }}
+                  >
+                    ☑
+                  </th>
+                  <th
+                    style={{
+                      padding: '7px 8px',
+                      textAlign: 'left',
+                      color: '#cbd5e1',
+                    }}
+                  >
+                    Баркод
+                  </th>
+                  <th
+                    style={{
+                      padding: '7px 8px',
+                      textAlign: 'center',
+                      color: '#cbd5e1',
+                      width: 70,
+                    }}
+                  >
+                    Размер
+                  </th>
+                  <th
+                    style={{
+                      padding: '7px 8px',
+                      textAlign: 'left',
+                      color: '#cbd5e1',
+                    }}
+                  >
+                    Наименование
+                  </th>
+                  <th
+                    style={{
+                      padding: '7px 8px',
+                      textAlign: 'left',
+                      color: '#cbd5e1',
+                      width: 90,
+                    }}
+                  >
+                    Цвет
+                  </th>
+                  <th
+                    style={{
+                      padding: '7px 8px',
+                      textAlign: 'center',
+                      color: '#a3e635',
+                      width: 80,
+                    }}
+                  >
+                    Копий
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {barcodeSelection.map((row, idx) => (
+                  <tr
+                    key={idx}
+                    style={{
+                      background: row.selected ? '#0d1f0d' : '#090f18',
+                      opacity: row.selected ? 1 : 0.5,
+                      cursor: 'pointer',
+                    }}
+                    onClick={() =>
+                      setBarcodeSelection((prev) =>
+                        prev.map((r, i) =>
+                          i === idx ? { ...r, selected: !r.selected } : r
+                        )
+                      )
+                    }
+                  >
+                    <td style={{ padding: '6px 8px', textAlign: 'center' }}>
+                      <input
+                        type="checkbox"
+                        checked={row.selected}
+                        readOnly
+                        style={{ cursor: 'pointer' }}
+                      />
+                    </td>
+                    <td
+                      style={{
+                        padding: '6px 8px',
+                        fontFamily: 'monospace',
+                        color: row.barcode ? '#e2e8f0' : '#374151',
+                      }}
+                    >
+                      {row.barcode || '— нет ШК —'}
+                    </td>
+                    <td style={{ padding: '6px 8px', textAlign: 'center' }}>
+                      {row.size && (
+                        <span
+                          style={{
+                            background: '#1e3a5f',
+                            color: '#a3e635',
+                            borderRadius: 4,
+                            padding: '2px 8px',
+                            fontWeight: 700,
+                            fontSize: 11,
+                          }}
+                        >
+                          {row.size}
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ padding: '6px 8px', color: '#cbd5e1' }}>
+                      {row.name || '—'}
+                    </td>
+                    <td style={{ padding: '6px 8px', color: '#94a3b8' }}>
+                      {row.color || '—'}
+                    </td>
+                    <td
+                      style={{ padding: '4px 8px', textAlign: 'center' }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={row.copies}
+                        onChange={(e) =>
+                          setBarcodeSelection((prev) =>
+                            prev.map((r, i) =>
+                              i === idx
+                                ? {
+                                    ...r,
+                                    copies: Math.min(
+                                      100,
+                                      Math.max(1, parseInt(e.target.value, 10) || 1)
+                                    ),
+                                  }
+                                : r
+                            )
+                          )
+                        }
+                        style={{
+                          width: 55,
+                          textAlign: 'center',
+                          background: '#1a1a2e',
+                          color: '#a3e635',
+                          border: '1px solid #374151',
+                          borderRadius: 4,
+                          padding: 4,
+                          fontSize: 12,
+                          fontWeight: 700,
+                        }}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div
+              style={{
+                marginTop: 12,
+                padding: '10px 14px',
+                background: '#1e3a5f',
+                borderRadius: 8,
+                display: 'flex',
+                gap: 24,
+                fontSize: 13,
+              }}
+            >
+              <span>
+                ✅ Выбрано:
+                <b style={{ color: '#a3e635', marginLeft: 6 }}>
+                  {barcodeSelection.filter((r) => r.selected).length}
+                </b>
+              </span>
+              <span>
+                🖨️ Итого к печати:
+                <b style={{ color: '#fbbf24', marginLeft: 6 }}>
+                  {barcodeSelection
+                    .filter((r) => r.selected)
+                    .reduce((a, r) => a + (r.copies || 1), 0)}
+                </b>
+              </span>
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                gap: 8,
+                marginBottom: 12,
+                flexWrap: 'wrap',
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 12,
+                  color: '#64748b',
+                  alignSelf: 'center',
+                }}
+              >
+                Формат:
+              </span>
+              {[
+                { key: 'a4_4x', label: 'A4 — 4 в ряд' },
+                { key: 'a4_2x', label: 'A4 — 2 в ряд' },
+                { key: 'label_58', label: 'Этикетка 58мм' },
+                { key: 'label_40x30', label: '40×30мм' },
+              ].map((f) => (
+                <button
+                  key={f.key}
+                  type="button"
+                  onClick={() => setPrintFormat(f.key)}
+                  style={{
+                    background: printFormat === f.key ? '#7c3aed' : '#1e2a3a',
+                    color: printFormat === f.key ? '#fff' : '#94a3b8',
+                    border: `1px solid ${
+                      printFormat === f.key ? '#7c3aed' : '#374151'
+                    }`,
+                    borderRadius: 6,
+                    padding: '5px 12px',
+                    cursor: 'pointer',
+                    fontSize: 12,
+                    fontWeight: printFormat === f.key ? 600 : 400,
+                  }}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+              <button
+                type="button"
+                onClick={() => {
+                  const selected = barcodeSelection.filter((r) => r.selected);
+                  if (selected.length === 0) {
+                    alert('Выберите хотя бы один баркод');
+                    return;
+                  }
+                  const toPrint = [];
+                  for (const row of selected) {
+                    for (let i = 0; i < (row.copies || 1); i++) {
+                      toPrint.push(row);
+                    }
+                  }
+                  doPrintBarcodes(toPrint, printFormat);
+                  setBarcodeModal(false);
+                }}
+                style={{
+                  flex: 1,
+                  background: '#7c3aed',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 8,
+                  padding: 12,
+                  cursor: 'pointer',
+                  fontSize: 14,
+                  fontWeight: 700,
+                }}
+              >
+                🖨️ Печатать выбранные
+              </button>
+              <button
+                type="button"
+                onClick={() => setBarcodeModal(false)}
+                style={{
+                  background: '#1e2a3a',
+                  color: '#94a3b8',
+                  border: '1px solid #374151',
+                  borderRadius: 8,
+                  padding: '12px 20px',
+                  cursor: 'pointer',
+                  fontSize: 14,
+                }}
+              >
+                Отмена
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <ProcurementPlanModal

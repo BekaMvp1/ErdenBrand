@@ -3,6 +3,7 @@
  */
 
 const http = require('http');
+const https = require('https');
 const { execSync } = require('child_process');
 const db = require('./models');
 const app = require('./app');
@@ -44,6 +45,93 @@ async function fixWarehouseMaterialsTable() {
     console.log('[DB] warehouse_materials таблица обновлена (ФИФО поля)');
   } catch (err) {
     console.error('[DB] Ошибка обновления warehouse_materials:', err.message);
+  }
+}
+
+/** Длинные JSON в item_name (партии раскрой→пошив) — VARCHAR(255) ломает загрузку/проведение */
+async function fixMovementTables() {
+  const { sequelize } = db;
+  const alters = [
+    {
+      label: 'movement_document_items.item_name → TEXT',
+      sql: `
+        ALTER TABLE movement_document_items
+        ALTER COLUMN item_name TYPE TEXT USING item_name::text;
+      `,
+    },
+    {
+      label: 'warehouse_movements.item_name → TEXT',
+      sql: `
+        ALTER TABLE warehouse_movements
+        ALTER COLUMN item_name TYPE TEXT USING item_name::text;
+      `,
+    },
+  ];
+  for (const { label, sql } of alters) {
+    try {
+      await sequelize.query(sql);
+      console.log(`[DB] ${label}`);
+    } catch (err) {
+      const msg = err.parent?.message || err.message || '';
+      if (/does not exist|Undefined table|relation.*does not exist/i.test(msg)) {
+        console.log(`[DB] ${label} skip (таблица/колонка):`, msg);
+      } else {
+        console.log(`[DB] ${label} skip:`, msg);
+      }
+    }
+  }
+}
+
+/** Старые строки с JSON в item_name — правка через прямой SQL при старте */
+async function fixOldMovementItems() {
+  try {
+    const { sequelize } = db;
+
+    const [rows] = await sequelize.query(`
+      SELECT id, item_name
+      FROM movement_document_items
+      WHERE item_name LIKE 'CUT_SEW_BATCH_JSON:%'
+         OR item_name LIKE 'SEW_OTK_JSON:%'
+    `);
+
+    console.log(`[fixItems] Найдено проблемных записей: ${rows.length}`);
+
+    for (const row of rows) {
+      let newName = '';
+      try {
+        let raw = row.item_name;
+        if (raw.startsWith('CUT_SEW_BATCH_JSON:')) {
+          raw = raw.replace('CUT_SEW_BATCH_JSON:', '');
+          const json = JSON.parse(raw);
+          newName = json.fabric_name || json.material_name || 'Ткань';
+        } else if (raw.startsWith('SEW_OTK_JSON:')) {
+          raw = raw.replace('SEW_OTK_JSON:', '');
+          const json = JSON.parse(raw);
+          newName = json.model_name || json.material_name || 'Изделие';
+        }
+
+        if (newName) {
+          const safe = newName.replace(/'/g, "''");
+          await sequelize.query(`
+            UPDATE movement_document_items
+            SET item_name = '${safe}'
+            WHERE id = ${row.id}
+          `);
+          console.log(`[fixItems] ID ${row.id}: "${newName}"`);
+        }
+      } catch (parseErr) {
+        console.error(`[fixItems] ID ${row.id} parse error:`, parseErr.message);
+        await sequelize.query(`
+          UPDATE movement_document_items
+          SET item_name = 'Материал'
+          WHERE id = ${row.id}
+        `);
+      }
+    }
+
+    console.log('[fixItems] Готово');
+  } catch (err) {
+    console.error('[fixItems] ОШИБКА:', err.message);
   }
 }
 
@@ -116,11 +204,76 @@ function bindServer(port) {
   });
 }
 
+const SEWING_ACCESSORIES_WAREHOUSE_NAME = 'Склад фурнитуры пошива';
+
+async function addModelsBaseIndexes() {
+  try {
+    const { sequelize } = db;
+    await sequelize.query(`
+      CREATE INDEX IF NOT EXISTS idx_models_base_name
+      ON models_base(name);
+    `);
+    await sequelize.query(`
+      CREATE INDEX IF NOT EXISTS idx_models_base_code
+      ON models_base(code);
+    `);
+    await sequelize.query(`
+      CREATE INDEX IF NOT EXISTS idx_models_base_created
+      ON models_base(created_at DESC);
+    `);
+    console.log('[DB] Индексы models_base проверены');
+  } catch (e) {
+    console.error('[addModelsBaseIndexes]:', e.message);
+  }
+}
+
+async function createDefaultWarehouses() {
+  try {
+    const needed = [{ name: SEWING_ACCESSORIES_WAREHOUSE_NAME }];
+    for (const w of needed) {
+      const exists = await db.WarehouseRef.findOne({ where: { name: w.name } });
+      if (!exists) {
+        await db.WarehouseRef.create(w);
+        console.log(`[DB] Создан склад: ${w.name}`);
+      }
+    }
+  } catch (e) {
+    console.error('[createWarehouses]:', e.message);
+  }
+}
+
+// ═══ KEEPALIVE — не даём Railway засыпать ═══
+function startKeepalive() {
+  const BACKEND_URL = process.env.RAILWAY_PUBLIC_DOMAIN
+    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+    : process.env.BACKEND_URL || 'http://localhost:3001';
+
+  setInterval(() => {
+    try {
+      const url = new URL(`${BACKEND_URL}/api/health`);
+      const client = url.protocol === 'https:' ? https : http;
+      client
+        .get(url.toString(), (res) => {
+          console.log(
+            `[keepalive] ping ${res.statusCode} ` +
+              new Date().toLocaleTimeString('ru-RU')
+          );
+        })
+        .on('error', () => {});
+    } catch {}
+  }, 4 * 60 * 1000);
+}
+// ════════════════════════════════════════════
+
 async function start() {
   try {
     await db.sequelize.authenticate();
     console.log('Подключение к БД успешно');
+    await fixOldMovementItems();
     await fixWarehouseMaterialsTable();
+    await fixMovementTables();
+    await createDefaultWarehouses();
+    await addModelsBaseIndexes();
   } catch (err) {
     const pg = err.parent || err.original;
     const pgMsg = String(pg?.message || err.message || '');
@@ -200,19 +353,7 @@ async function start() {
   // Локально — как в .env.example / vite proxy (3001). На Render/Fly PORT задаётся средой.
   const PORT = Number(process.env.PORT) || 3001;
   bindServer(PORT);
+  startKeepalive();
 }
 
 start();
-
-if (process.env.NODE_ENV === 'production' && process.env.RENDER_URL) {
-  const https = require('https');
-  setInterval(() => {
-    https
-      .get(`${process.env.RENDER_URL}/api/health`, (res) => {
-        console.log('[Keep-alive] ping:', res.statusCode);
-      })
-      .on('error', (err) => {
-        console.error('[Keep-alive] ошибка:', err.message);
-      });
-  }, 10 * 60 * 1000);
-}

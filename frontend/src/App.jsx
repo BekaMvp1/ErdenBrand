@@ -2,7 +2,9 @@
  * Корневой компонент приложения
  */
 
+import { useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { API_URL } from "./apiBaseUrl";
 import { AuthProvider } from "./context/AuthContext";
 import { OrderProgressProvider } from "./context/OrderProgressContext";
 import { ThemeProvider } from "./context/ThemeContext";
@@ -44,13 +46,22 @@ import OrdersBoard from "./pages/OrdersBoard";
 import ProductionDashboard from "./pages/ProductionDashboard";
 import ServerStatus from "./components/ServerStatus";
 import StageTabsLayout from "./components/stage/StageTabsLayout";
+import ExpensePlan from "./pages/stage/ExpensePlan";
 import StageExpensesPlaceholder from "./pages/stage/StageExpensesPlaceholder";
 import StageReportsPage from "./pages/stage/StageReportsPage";
 import PurchaseReportList from "./pages/stage/PurchaseReportList";
 import PurchaseReportForm from "./pages/stage/PurchaseReportForm";
 import MovementForm from "./pages/movements/MovementForm";
+import Production from "./pages/Production";
 
 export default function App() {
+  // Один ping при старте приложения (без setInterval)
+  useEffect(() => {
+    const base = (API_URL || import.meta.env.VITE_API_URL || "").trim().replace(/\/$/, "");
+    const url = base ? `${base}/api/health` : "/api/health";
+    fetch(url, { signal: AbortSignal.timeout(30000) }).catch(() => {});
+  }, []);
+
   return (
     <ThemeProvider>
       <FontProvider>
@@ -84,7 +95,7 @@ export default function App() {
                   <Route path="report" element={<PurchaseReportList />} />
                   <Route path="report/new" element={<PurchaseReportForm />} />
                   <Route path="report/:id" element={<PurchaseReportForm />} />
-                  <Route path="expenses" element={<StageExpensesPlaceholder />} />
+                  <Route path="expenses" element={<ExpensePlan stage="procurement" />} />
                 </Route>
                 <Route path="purchase" element={<StageTabsLayout title="Закуп" />}>
                   <Route index element={<Navigate to="plan" replace />} />
@@ -92,14 +103,16 @@ export default function App() {
                   <Route path="report" element={<PurchaseReportList />} />
                   <Route path="report/new" element={<PurchaseReportForm />} />
                   <Route path="report/:id" element={<PurchaseReportForm />} />
-                  <Route path="expenses" element={<StageExpensesPlaceholder />} />
+                  <Route path="expenses" element={<ExpensePlan stage="procurement" />} />
                 </Route>
                 <Route path="production-chain" element={<ProductionChain />} />
+                <Route path="production" element={<Production />} />
+                <Route path="production/cost" element={<Production />} />
                 <Route path="sewing" element={<StageTabsLayout title="Пошив" />}>
                   <Route index element={<Navigate to="plan" replace />} />
                   <Route path="plan" element={<Sewing />} />
                   <Route path="report" element={<StageReportsPage stage="sewing" />} />
-                  <Route path="expenses" element={<StageExpensesPlaceholder />} />
+                  <Route path="expenses" element={<ExpensePlan stage="sewing" />} />
                 </Route>
                 <Route path="floor-tasks" element={<Navigate to="/sewing" replace />} />
                 <Route path="print/procurement/:id" element={<PrintProcurement />} />
@@ -111,7 +124,7 @@ export default function App() {
                   <Route index element={<Navigate to="plan" replace />} />
                   <Route path="plan" element={<Cutting />} />
                   <Route path="report" element={<StageReportsPage stage="cutting" />} />
-                  <Route path="expenses" element={<StageExpensesPlaceholder />} />
+                  <Route path="expenses" element={<ExpensePlan stage="cutting" />} />
                 </Route>
                 <Route path="cutting/:type" element={<Cutting />} />
                 <Route path="warehouse" element={<Warehouse />} />
@@ -124,7 +137,7 @@ export default function App() {
                   <Route index element={<Navigate to="plan" replace />} />
                   <Route path="plan" element={<Otk />} />
                   <Route path="report" element={<StageReportsPage stage="otk" />} />
-                  <Route path="expenses" element={<StageExpensesPlaceholder />} />
+                  <Route path="expenses" element={<ExpensePlan stage="otk" />} />
                 </Route>
                 <Route path="/dekatirovka" element={<Dekatirovka />} />
                 <Route path="/proverka" element={<Proverka />} />

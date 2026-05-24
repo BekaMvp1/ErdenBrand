@@ -164,6 +164,28 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       defaultValue: [],
     },
+    /** Строки баркодов: { barcode, size, name, color } */
+    barcodes: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+      defaultValue: [],
+    },
+    /** Операции раскрой / пошив / ОТК (формат groups как в models_base) */
+    cutting_ops: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+      defaultValue: [],
+    },
+    sewing_ops: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+      defaultValue: [],
+    },
+    otk_ops: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+      defaultValue: [],
+    },
   }, {
     tableName: 'orders',
     timestamps: true,

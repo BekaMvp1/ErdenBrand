@@ -63,25 +63,6 @@ export default function ProductionDashboard() {
   const [deadlinesLoading, setDeadlinesLoading] = useState(true);
 
   useEffect(() => {
-    console.log('[Dashboard] монтирование');
-
-    api.orders
-      .stats()
-      .then((r) => console.log('[Dashboard] stats:', r))
-      .catch((e) => console.error('[Dashboard] stats ERROR:', e?.status, e?.message));
-
-    api.productionPanel
-      .dailyLoad()
-      .then((r) => console.log('[Dashboard] daily-load:', r))
-      .catch((e) => console.error('[Dashboard] daily-load ERROR:', e?.status, e?.message));
-
-    api.productionPanel
-      .tasksToday()
-      .then((r) => console.log('[Dashboard] tasks:', r))
-      .catch((e) => console.error('[Dashboard] tasks ERROR:', e?.status, e?.message));
-  }, []);
-
-  useEffect(() => {
     let cancelled = false;
     const timeout = setTimeout(() => {
       if (cancelled) return;

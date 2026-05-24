@@ -75,6 +75,7 @@ const UNIFIED_BOX_CLASS = 'w-full min-h-full rounded-lg border border-white/15 b
 
 // Кэш фото на уровне модуля (живёт пока открыта вкладка)
 const photoCache = {};
+const photoLoading = new Set();
 
 function OrderPhoto({ orderId }) {
   const [src, setSrc] = useState(
@@ -82,20 +83,26 @@ function OrderPhoto({ orderId }) {
   );
 
   useEffect(() => {
-    // Если уже в кэше — не грузить
-    if (photoCache[orderId] !== undefined) return;
+    const key = String(orderId);
+    if (!key) return undefined;
+    if (photoCache[key] !== undefined) return undefined;
+    if (photoLoading.has(key)) return undefined;
 
+    photoLoading.add(key);
     let cancelled = false;
     api.orders
-      .photo(orderId)
+      .photo(key)
       .then((res) => {
         const photo = res?.data?.photo ?? res?.photo ?? null;
-        photoCache[orderId] = photo;
+        photoCache[key] = photo;
         if (!cancelled) setSrc(photo);
       })
       .catch(() => {
-        photoCache[orderId] = null;
+        photoCache[key] = null;
         if (!cancelled) setSrc(null);
+      })
+      .finally(() => {
+        photoLoading.delete(key);
       });
 
     return () => {
@@ -733,7 +740,7 @@ export default function OrdersBoard() {
       />
 
       <div className="p-3 md:p-4">
-        {loading && <NeonCard className="p-4 text-sm text-neon-muted">Загрузка...</NeonCard>}
+        {loading && !hasOrders && <NeonCard className="p-4 text-sm text-neon-muted">Загрузка...</NeonCard>}
         {!loading && error && <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-300">{error}</div>}
 
         {!loading && !error && !hasOrders && (

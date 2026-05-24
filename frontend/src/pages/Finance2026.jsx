@@ -4,9 +4,11 @@
  */
 
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api';
 import PrintButton from '../components/PrintButton';
+import PaymentCalendar from './PaymentCalendar';
 
 const MONTH_LABELS = {
   '2026-01': 'Янв', '2026-02': 'Фев', '2026-03': 'Мар', '2026-04': 'Апр',
@@ -21,7 +23,11 @@ function formatNum(n) {
 
 export default function Finance2026() {
   const { user } = useAuth();
-  const [tab, setTab] = useState('BDR');
+  const [searchParams] = useSearchParams();
+  const tabFromUrl = searchParams.get('tab');
+  const [tab, setTab] = useState(() =>
+    tabFromUrl === 'payment' ? 'payment_calendar' : 'BDR'
+  );
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -44,7 +50,11 @@ export default function Finance2026() {
   };
 
   useEffect(() => {
-    load();
+    if (tabFromUrl === 'payment') setTab('payment_calendar');
+  }, [tabFromUrl]);
+
+  useEffect(() => {
+    if (tab === 'BDR' || tab === 'BDDS') load();
   }, [tab]);
 
   const handlePlanChange = async (categoryId, month, value) => {
@@ -115,14 +125,16 @@ export default function Finance2026() {
         <h1 className="text-xl md:text-2xl lg:text-3xl font-bold text-[#ECECEC] dark:text-dark-text">Финансы 2026</h1>
         <div className="flex flex-wrap gap-2 w-full sm:w-auto">
           <PrintButton />
-          <button
-            type="button"
-            onClick={exportCsv}
-            disabled={!data}
-            className="px-4 py-2 rounded-lg bg-accent-1/30 dark:bg-dark-2 text-[#ECECEC] dark:text-dark-text hover:bg-accent-1/40 dark:hover:bg-dark-3 disabled:opacity-50"
-          >
-            Экспорт CSV
-          </button>
+          {(tab === 'BDR' || tab === 'BDDS') && (
+            <button
+              type="button"
+              onClick={exportCsv}
+              disabled={!data}
+              className="px-4 py-2 rounded-lg bg-accent-1/30 dark:bg-dark-2 text-[#ECECEC] dark:text-dark-text hover:bg-accent-1/40 dark:hover:bg-dark-3 disabled:opacity-50"
+            >
+              Экспорт CSV
+            </button>
+          )}
         </div>
       </div>
 
@@ -141,15 +153,27 @@ export default function Finance2026() {
         >
           БДДС 2026
         </button>
+        <button
+          type="button"
+          onClick={() => setTab('payment_calendar')}
+          className={`px-4 py-2 rounded-lg ${tab === 'payment_calendar' ? 'bg-primary-600 text-white' : 'bg-accent-1/30 dark:bg-dark-2 text-[#ECECEC] dark:text-dark-text'}`}
+        >
+          📅 Платёжный календарь
+        </button>
       </div>
 
-      {error && (
+      {error && tab !== 'payment_calendar' && (
         <div className="mb-4 p-4 rounded-lg bg-red-500/20 text-red-400 border border-red-500/30">
           {error}
         </div>
       )}
 
-      {loading ? (
+      {tab === 'payment_calendar' ? (
+        <PaymentCalendar
+          initialWeek={searchParams.get('week')}
+          initialYear={searchParams.get('year')}
+        />
+      ) : loading ? (
         <div className="p-8 text-center text-[#ECECEC]/80 dark:text-dark-text/80">Загрузка...</div>
       ) : data ? (
         <div className="overflow-x-auto">

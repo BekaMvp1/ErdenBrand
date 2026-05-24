@@ -1602,7 +1602,7 @@ export default function PlanningDraft({ viewMode = 'month' }) {
       setError('');
       try {
         const [o, c, w] = await Promise.all([
-          api.orders.list({ limit: 500 }),
+          api.orders.list({ limit: 500, full: '1', light: '0' }),
           api.references.clients(),
           api.workshops.list(true),
         ]);
@@ -1771,8 +1771,10 @@ export default function PlanningDraft({ viewMode = 'month' }) {
           for (const iso of displayDays) {
             const w = dayCellsMap[row.id]?.[iso] || {};
             days[iso] = {
-              plan: parseCellNum(w.pp) + parseCellNum(w.mp),
-              fact: parseCellNum(w.pf) + parseCellNum(w.mf),
+              plan: parseCellNum(w.mp),
+              fact: parseCellNum(w.mf),
+              prep_plan: parseCellNum(w.pp),
+              prep_fact: parseCellNum(w.pf),
             };
           }
           return {
@@ -1782,8 +1784,6 @@ export default function PlanningDraft({ viewMode = 'month' }) {
           };
         })
       );
-      console.log('[Print] первая строка:', filledRows[0]);
-      console.log('[Print] ключи:', Object.keys(filledRows[0] || {}));
       const sections = PD_PRODUCTION_SECTIONS.map((d) => ({ id: d.id, label: d.label }));
       const html = buildPlanningWeekPrintHtml({
         rowsWithPhotos: filledRows,
@@ -1824,13 +1824,13 @@ export default function PlanningDraft({ viewMode = 'month' }) {
 
   useEffect(() => {
     if (loading) return;
-    if (lastLoadedMonthKeyRef.current === effectiveMonthKey && prevDraftScopeRef.current === draftScopeKey) {
+    if (
+      draftInitDoneRef.current &&
+      lastLoadedMonthKeyRef.current === effectiveMonthKey &&
+      prevDraftScopeRef.current === draftScopeKey
+    ) {
       return;
     }
-    const prev = prevDraftScopeRef.current;
-    if (prev === draftScopeKey && prev !== null) return;
-    prevDraftScopeRef.current = draftScopeKey;
-    lastLoadedMonthKeyRef.current = effectiveMonthKey;
 
     draftInitDoneRef.current = false;
     let cancelled = false;
@@ -1844,7 +1844,8 @@ export default function PlanningDraft({ viewMode = 'month' }) {
         if (cancelled) return;
         skipDraftAutosaveRef.current = true;
         if (payload && typeof payload === 'object') {
-          const maxStart = Math.max(0, allWeeks.length - 4);
+          const weeksInMonth = getWeeksInMonth(effectiveMonthKey);
+          const maxStart = Math.max(0, weeksInMonth.length - 4);
           const ws = Math.min(
             Math.max(0, parseInt(payload.week_slice_start, 10) || 0),
             maxStart
@@ -1886,6 +1887,8 @@ export default function PlanningDraft({ viewMode = 'month' }) {
         console.warn('PlanningDraft draft load:', e);
       } finally {
         if (!cancelled) {
+          lastLoadedMonthKeyRef.current = effectiveMonthKey;
+          prevDraftScopeRef.current = draftScopeKey;
           draftInitDoneRef.current = true;
           setTimeout(() => {
             skipDraftAutosaveRef.current = false;
@@ -1896,7 +1899,7 @@ export default function PlanningDraft({ viewMode = 'month' }) {
     return () => {
       cancelled = true;
     };
-  }, [loading, draftScopeKey, effectiveMonthKey, workshopId, floorId, allWeeks.length, isWeek]);
+  }, [loading, draftScopeKey, effectiveMonthKey, workshopId, floorId, isWeek]);
 
   const persistDraft = useCallback(async () => {
     if (!canPersistDraft || skipDraftAutosaveRef.current) return;
@@ -4228,7 +4231,7 @@ export default function PlanningDraft({ viewMode = 'month' }) {
                             })
                           : r.weeks.map((w, wi) => {
                               return (
-                                <React.Fragment key={wi}>
+                                <React.Fragment key={`${r.id}-w${wi}`}>
                                   <td
                                     className="group-hover/row:bg-[var(--surface2)] border p-0 align-top transition-colors group-hover/row:!bg-[#1d2229]"
                                     style={{
@@ -4244,7 +4247,7 @@ export default function PlanningDraft({ viewMode = 'month' }) {
                                     <input
                                       type="number"
                                       min={0}
-                                      title="План"
+                                      title="План (подготовка)"
                                       className={`${inputCls} !py-1 text-[10px]`}
                                       value={w.pp === '' || w.pp === '0' ? '' : w.pp}
                                       onChange={(e) =>
@@ -4265,11 +4268,52 @@ export default function PlanningDraft({ viewMode = 'month' }) {
                                     <input
                                       type="number"
                                       min={0}
-                                      title="Факт"
+                                      title="Факт (подготовка)"
                                       className={`${inputCls} !py-1 text-[10px]`}
                                       value={w.pf === '' || w.pf === '0' ? '' : w.pf}
                                       onChange={(e) =>
                                         updateWeekCell(r.id, wi, 'pf', e.target.value)
+                                      }
+                                    />
+                                  </td>
+                                  <td
+                                    className="group-hover/row:bg-[var(--surface2)] border p-0 align-top transition-colors group-hover/row:!bg-[#1d2229]"
+                                    style={{
+                                      borderLeft: '2px solid var(--accent)',
+                                      borderColor: 'var(--border)',
+                                      minWidth: weekColWidths.plan,
+                                      width: weekColWidths.plan,
+                                      verticalAlign: 'top',
+                                    }}
+                                  >
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      title="План (основное)"
+                                      className={`${inputCls} !py-1 text-[10px]`}
+                                      value={w.mp === '' || w.mp === '0' ? '' : w.mp}
+                                      onChange={(e) =>
+                                        updateWeekCell(r.id, wi, 'mp', e.target.value)
+                                      }
+                                    />
+                                  </td>
+                                  <td
+                                    className="group-hover/row:bg-[var(--surface2)] border p-0 transition-colors group-hover/row:!bg-[#1d2229]"
+                                    style={{
+                                      borderColor: 'var(--border)',
+                                      minWidth: weekColWidths.fact,
+                                      width: weekColWidths.fact,
+                                      borderRight: PD_BR_WEEK_GAP,
+                                    }}
+                                  >
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      title="Факт (основное)"
+                                      className={`${inputCls} !py-1 text-[10px]`}
+                                      value={w.mf === '' || w.mf === '0' ? '' : w.mf}
+                                      onChange={(e) =>
+                                        updateWeekCell(r.id, wi, 'mf', e.target.value)
                                       }
                                     />
                                   </td>

@@ -397,3 +397,69 @@ html.dark * {
     content: none !important;
   }
 }
+
+/* DatePicker тёмная тема ErdenBrand */
+.react-datepicker {
+  background-color: #0f172a !important;
+  border: 1px solid #1e3a5f !important;
+  border-radius: 10px !important;
+  font-family: inherit !important;
+  font-size: 13px !important;
+  color: #e2e8f0 !important;
+}
+.react-datepicker__header {
+  background-color: #1e3a5f !important;
+  border-bottom: 1px solid #2d4a7f !important;
+  border-radius: 10px 10px 0 0 !important;
+  padding: 10px !important;
+}
+.react-datepicker__current-month,
+.react-datepicker__day-name,
+.react-datepicker__week-number {
+  color: #e2e8f0 !important;
+  font-weight: 600 !important;
+}
+.react-datepicker__day {
+  color: #cbd5e1 !important;
+  border-radius: 6px !important;
+  width: 2rem !important;
+  line-height: 2rem !important;
+}
+.react-datepicker__day:hover {
+  background-color: #1e3a5f !important;
+  color: #a3e635 !important;
+}
+.react-datepicker__day--selected,
+.react-datepicker__day--keyboard-selected {
+  background-color: #a3e635 !important;
+  color: #000 !important;
+  font-weight: 700 !important;
+}
+.react-datepicker__day--today {
+  border: 1px solid #a3e635 !important;
+  color: #a3e635 !important;
+}
+.react-datepicker__day--outside-month {
+  color: #374151 !important;
+}
+.react-datepicker__navigation-icon::before {
+  border-color: #a3e635 !important;
+}
+.react-datepicker__month-select,
+.react-datepicker__year-select {
+  background: #0f172a !important;
+  color: #e2e8f0 !important;
+  border: 1px solid #1e3a5f !important;
+  border-radius: 4px !important;
+  padding: 2px 6px !important;
+}
+.react-datepicker__week-number {
+  color: #475569 !important;
+  font-size: 10px !important;
+}
+.react-datepicker__triangle {
+  display: none !important;
+}
+.react-datepicker-popper {
+  z-index: 9999 !important;
+}

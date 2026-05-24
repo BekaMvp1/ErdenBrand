@@ -18,9 +18,8 @@ export function OrderProgressProvider({ children }) {
   const [dashboardStats, setDashboardStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
-  const intervalRef = useRef(null);
   const activeControllerRef = useRef(null);
-  const hasFetched = useRef(false);
+  const loadInFlightRef = useRef(false);
 
   const loadProgress = useCallback(async (options = {}, signal) => {
     const silent = options.silent === true;
@@ -53,33 +52,30 @@ export function OrderProgressProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    if (hasFetched.current) return;
-    hasFetched.current = true;
-    const triggerLoad = (silent) => {
-      if (activeControllerRef.current) {
-        activeControllerRef.current.abort();
-      }
-      const controller = new AbortController();
-      activeControllerRef.current = controller;
-      const timeoutId = window.setTimeout(() => controller.abort(), 8000);
-      loadProgress({ silent }, controller.signal)
-        .catch(() => {})
-        .finally(() => {
-          window.clearTimeout(timeoutId);
-        });
-    };
+    if (loadInFlightRef.current) return;
+    loadInFlightRef.current = true;
 
-    triggerLoad(false);
+    if (activeControllerRef.current) {
+      activeControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    activeControllerRef.current = controller;
+    const timeoutId = window.setTimeout(() => controller.abort(), 8000);
+
+    loadProgress({ silent: false }, controller.signal)
+      .catch(() => {})
+      .finally(() => {
+        window.clearTimeout(timeoutId);
+        loadInFlightRef.current = false;
+      });
 
     return () => {
-      if (intervalRef.current != null) {
-        window.clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-      if (activeControllerRef.current) {
-        activeControllerRef.current.abort();
+      controller.abort();
+      window.clearTimeout(timeoutId);
+      if (activeControllerRef.current === controller) {
         activeControllerRef.current = null;
       }
+      loadInFlightRef.current = false;
     };
   }, [loadProgress]);
 
@@ -88,7 +84,22 @@ export function OrderProgressProvider({ children }) {
     dashboardStats,
     loading,
     lastUpdated,
-    refresh: () => loadProgress({ silent: false }),
+    refresh: () => {
+      if (loadInFlightRef.current) return;
+      if (activeControllerRef.current) {
+        activeControllerRef.current.abort();
+      }
+      const controller = new AbortController();
+      activeControllerRef.current = controller;
+      const timeoutId = window.setTimeout(() => controller.abort(), 8000);
+      loadInFlightRef.current = true;
+      loadProgress({ silent: false }, controller.signal)
+        .catch(() => {})
+        .finally(() => {
+          window.clearTimeout(timeoutId);
+          loadInFlightRef.current = false;
+        });
+    },
   };
 
   return (

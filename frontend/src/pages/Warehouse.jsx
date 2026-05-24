@@ -11,8 +11,39 @@ const CARD_STYLE = { border: '1px solid #1e3a5f', background: '#0d1117', borderR
 const emptyGood = { name: '', article: '', photo: '', warehouse_id: '', qty: '', price: '', received_at: '' };
 const emptyMaterial = { name: '', type: 'fabric', unit: 'м', warehouse_id: '', qty: '', price: '', received_at: '' };
 
+const STAGE_LABELS = {
+  warehouse: 'Склад',
+  cutting: 'Раскрой',
+  sewing: 'Пошив',
+  otk: 'ОТК',
+  shipment: 'Отгрузка',
+};
+
 const toNum = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const money = (v) => `${Math.round(toNum(v)).toLocaleString('ru-RU')} сом`;
+const stageLabel = (k) => (k && STAGE_LABELS[k]) || k || '—';
+
+function parseItemName(name) {
+  if (!name) return '—';
+  const s = String(name);
+  if (s.startsWith('CUT_SEW_BATCH_JSON:')) {
+    try {
+      const json = JSON.parse(s.replace(/^CUT_SEW_BATCH_JSON:/, ''));
+      return json.fabric_name || json.material_name || '—';
+    } catch {
+      return '—';
+    }
+  }
+  if (s.startsWith('SEW_OTK_JSON:')) {
+    try {
+      const json = JSON.parse(s.replace(/^SEW_OTK_JSON:/, ''));
+      return json.model_name || json.material_name || '—';
+    } catch {
+      return '—';
+    }
+  }
+  return s;
+}
 
 export default function Warehouse() {
   const navigate = useNavigate();
@@ -22,6 +53,7 @@ export default function Warehouse() {
   const [notice, setNotice] = useState('');
   const [warehouses, setWarehouses] = useState([]);
   const [goods, setGoods] = useState([]);
+  const [stageGoods, setStageGoods] = useState([]);
   const [materials, setMaterials] = useState([]);
   const [q, setQ] = useState('');
   const [warehouseFilter, setWarehouseFilter] = useState('');
@@ -40,14 +72,16 @@ export default function Warehouse() {
     setLoading(true);
     setError('');
     try {
-      const [ww, gg, mm, ss] = await Promise.all([
+      const [ww, gg, stageGg, mm, ss] = await Promise.all([
         api.warehouse.warehouses(),
         api.warehouse.goods(),
+        api.warehouse.goods({ kind: 'stage_products' }),
         api.warehouse.materials(),
         api.warehouse.stock(),
       ]);
       setWarehouses(Array.isArray(ww) ? ww : []);
       setGoods(Array.isArray(gg) ? gg : []);
+      setStageGoods(Array.isArray(stageGg) ? stageGg : []);
       setMaterials(Array.isArray(mm) ? mm : []);
       setStockRows(Array.isArray(ss) ? ss : []);
       setOpenGroups((prev) => {
@@ -76,6 +110,16 @@ export default function Warehouse() {
     return true;
   }), [goods, warehouseFilter, q]);
 
+  const filteredStageGoods = useMemo(() => stageGoods.filter((g) => {
+    if (warehouseFilter && String(g.warehouse_id) !== String(warehouseFilter)) return false;
+    if (q.trim()) {
+      const s = q.trim().toLowerCase();
+      const hay = `${parseItemName(g.model_name)} ${g.model_name || ''} ${g.order_id ?? ''} ${g.stage || ''} ${g.warehouse_name || ''}`.toLowerCase();
+      if (!hay.includes(s)) return false;
+    }
+    return true;
+  }), [stageGoods, warehouseFilter, q]);
+
   const filteredMaterials = useMemo(() => materials.filter((m) => {
     if (warehouseFilter && String(m.warehouse_id) !== String(warehouseFilter)) return false;
     if (typeFilter && String(m.type) !== String(typeFilter)) return false;
@@ -101,17 +145,20 @@ export default function Warehouse() {
     if (typeFilter && String(r.material_type || r.type || '') !== String(typeFilter)) return false;
     if (q.trim()) {
       const s = q.trim().toLowerCase();
-      const nm = `${r.material_name || r.name || ''}`.toLowerCase();
+      const nm = `${parseItemName(r.material_name || r.name)} ${r.material_name || r.name || ''}`.toLowerCase();
       if (!nm.includes(s)) return false;
     }
     return true;
   }), [stockRows, warehouseFilter, typeFilter, q]);
 
   const dashboard = useMemo(() => {
-    const goodsSum = goods.reduce((s, g) => s + toNum(g.qty) * toNum(g.price), 0);
+    const manualGoodsSum = goods.reduce((s, g) => s + toNum(g.qty) * toNum(g.price), 0);
+    const stageSum = stageGoods.reduce((s, g) => s + toNum(g.total_sum), 0);
+    const goodsSum = manualGoodsSum + stageSum;
+    const goodsCount = goods.length + stageGoods.length;
     const matSum = materials.reduce((s, m) => s + toNum(m.qty) * toNum(m.price), 0);
-    return { goodsCount: goods.length, goodsSum, matCount: materials.length, matSum, warehouseCount: warehouses.length, total: goodsSum + matSum };
-  }, [goods, materials, warehouses]);
+    return { goodsCount, goodsSum, matCount: materials.length, matSum, warehouseCount: warehouses.length, total: goodsSum + matSum };
+  }, [goods, stageGoods, materials, warehouses]);
 
   const fifoStockStats = useMemo(() => {
     let sum = 0;
@@ -219,8 +266,6 @@ export default function Warehouse() {
     setGoodForm((p) => ({ ...p, photo: data }));
   };
 
-  const groups = tab === TAB_GOODS ? groupedGoods : tab === TAB_MATERIALS ? groupedMaterials : [];
-
   return (
     <div className="min-h-screen bg-slate-950 p-4 text-white">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -314,7 +359,7 @@ export default function Warehouse() {
                     <tr className="border-t border-white/10 odd:bg-[#111] even:bg-[#0d0d0d]">
                       <td className="px-2 py-2 text-center">{idx + 1}</td>
                       <td className="px-2 py-2">
-                        <div>{row.material_name || row.name}</div>
+                        <div>{parseItemName(row.material_name || row.name)}</div>
                         <button
                           type="button"
                           onClick={() => toggleBatches(rowKey)}
@@ -393,21 +438,59 @@ export default function Warehouse() {
           </table>
           {!filteredStock.length ? <div className="p-4 text-sm text-white/60">Пусто</div> : null}
         </div>
-      ) : (
+      ) : tab === TAB_GOODS ? (
         <div className="space-y-3">
-          {groups.map((group) => {
+          <div style={CARD_STYLE} className="overflow-x-auto">
+            <div className="border-b border-white/10 px-4 py-3 font-semibold" style={{ background: '#0f2744' }}>
+              Поступления изделий (этапы производства)
+            </div>
+            <table className="min-w-[900px] w-full text-sm">
+              <thead className="bg-white/5">
+                <tr>
+                  <th className="px-2 py-2 text-left">№</th>
+                  <th className="px-2 py-2 text-left">Заказ</th>
+                  <th className="px-2 py-2 text-left">Модель</th>
+                  <th className="px-2 py-2 text-left">Этап</th>
+                  <th className="px-2 py-2 text-left">Склад</th>
+                  <th className="px-2 py-2 text-left">Кол-во</th>
+                  <th className="px-2 py-2 text-left">Сумма</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredStageGoods.map((g, i) => (
+                  <tr
+                    key={`${g.order_id}_${g.model_name}_${g.stage}_${g.warehouse_id}`}
+                    className="border-t border-white/10 odd:bg-[#111] even:bg-[#0d0d0d]"
+                  >
+                    <td className="px-2 py-2 text-center">{i + 1}</td>
+                    <td className="px-2 py-2">{g.order_id ?? '—'}</td>
+                    <td className="px-2 py-2">{parseItemName(g.model_name)}</td>
+                    <td className="px-2 py-2">{stageLabel(g.stage)}</td>
+                    <td className="px-2 py-2 text-white/80">{g.warehouse_name || g.warehouse_id || '—'}</td>
+                    <td className="px-2 py-2">{toNum(g.total_qty)} шт</td>
+                    <td className="px-2 py-2 text-emerald-400">{toNum(g.total_sum).toLocaleString('ru-RU')} сом</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!filteredStageGoods.length ? <div className="p-4 text-sm text-white/60">Нет поступлений по этапам</div> : null}
+          </div>
+
+          <div className="text-sm text-white/60">Учётные позиции (вручную)</div>
+          {groupedGoods.map((group) => {
             const key = `${tab}-${group.warehouse.id}`;
             const expanded = !!openGroups[key];
             return (
               <div key={key} style={CARD_STYLE}>
                 <button
+                  type="button"
                   className="flex w-full items-center justify-between rounded-t-xl px-4 py-4 text-left"
                   style={{ background: '#0f2744' }}
                   onClick={() => toggleGroup(key)}
                 >
                   <div>
                     <div className="font-semibold">📍 {group.warehouse.name}</div>
-                    <div className="text-xs text-white/70">{group.rows.length ? `Итого: ${Math.round(group.qty)} ${tab === TAB_GOODS ? 'шт' : 'м/шт'} | ` : ''}<span className="text-emerald-400">{money(group.sum)}</span></div>
+                    <div className="text-xs text-white/70">{group.rows.length ? `Итого: ${Math.round(group.qty)} шт | ` : ''}<span className="text-emerald-400">{money(group.sum)}</span></div>
                   </div>
                   <div className="text-sm text-white/80">{group.rows.length} позиции {expanded ? '▲' : '▼'}</div>
                 </button>
@@ -416,11 +499,7 @@ export default function Warehouse() {
                     <div className="overflow-x-auto">
                       <table className="min-w-[1000px] w-full text-sm">
                         <thead className="bg-white/5">
-                          {tab === TAB_GOODS ? (
-                            <tr><th className="px-2 py-2">№</th><th>Наименование</th><th>Ед.</th><th>Кол-во</th><th>Цена</th><th>Сумма</th><th /></tr>
-                          ) : (
-                            <tr><th className="px-2 py-2">№</th><th>Наименование</th><th>Тип</th><th>Ед.</th><th>Кол-во</th><th>Цена</th><th>Сумма</th><th /></tr>
-                          )}
+                          <tr><th className="px-2 py-2">№</th><th>Наименование</th><th>Ед.</th><th>Кол-во</th><th>Цена</th><th>Сумма</th><th /></tr>
                         </thead>
                         <tbody>
                           {group.rows.map((row, idx) => {
@@ -430,15 +509,71 @@ export default function Warehouse() {
                               <tr key={row.id} className="group border-t border-white/10 odd:bg-[#111] even:bg-[#0d0d0d]">
                                 <td className="px-2 py-2 text-center">{idx + 1}</td>
                                 <td className="px-2 py-2">{row.name}</td>
-                                {tab === TAB_MATERIALS ? <td className="px-2 py-2">{row.type === 'fabric' ? 'Ткань' : 'Фурнитура'}</td> : null}
-                                <td className="px-2 py-2">{tab === TAB_GOODS ? 'шт' : row.unit}</td>
+                                <td className="px-2 py-2">шт</td>
                                 <td className={`px-2 py-2 ${qtyClass}`}>{qty}</td>
                                 <td className="px-2 py-2">{money(row.price)}</td>
                                 <td className="px-2 py-2 text-emerald-400">{money(toNum(row.qty) * toNum(row.price))}</td>
                                 <td className="px-2 py-2">
                                   <div className="invisible flex gap-2 group-hover:visible">
-                                    <button className="rounded bg-sky-700 px-2 py-1 text-xs" onClick={() => openEdit(row)}>✏️ Редактировать</button>
-                                    <button className="rounded bg-red-700 px-2 py-1 text-xs" onClick={() => removeItem(row)}>🗑️ Удалить</button>
+                                    <button type="button" className="rounded bg-sky-700 px-2 py-1 text-xs" onClick={() => openEdit(row)}>✏️ Редактировать</button>
+                                    <button type="button" className="rounded bg-red-700 px-2 py-1 text-xs" onClick={() => removeItem(row)}>🗑️ Удалить</button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : <div className="p-4 text-sm text-white/60">Пусто</div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {groupedMaterials.map((group) => {
+            const key = `${tab}-${group.warehouse.id}`;
+            const expanded = !!openGroups[key];
+            return (
+              <div key={key} style={CARD_STYLE}>
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between rounded-t-xl px-4 py-4 text-left"
+                  style={{ background: '#0f2744' }}
+                  onClick={() => toggleGroup(key)}
+                >
+                  <div>
+                    <div className="font-semibold">📍 {group.warehouse.name}</div>
+                    <div className="text-xs text-white/70">{group.rows.length ? `Итого: ${Math.round(group.qty)} м/шт | ` : ''}<span className="text-emerald-400">{money(group.sum)}</span></div>
+                  </div>
+                  <div className="text-sm text-white/80">{group.rows.length} позиции {expanded ? '▲' : '▼'}</div>
+                </button>
+                {expanded ? (
+                  group.rows.length ? (
+                    <div className="overflow-x-auto">
+                      <table className="min-w-[1000px] w-full text-sm">
+                        <thead className="bg-white/5">
+                          <tr><th className="px-2 py-2">№</th><th>Наименование</th><th>Тип</th><th>Ед.</th><th>Кол-во</th><th>Цена</th><th>Сумма</th><th /></tr>
+                        </thead>
+                        <tbody>
+                          {group.rows.map((row, idx) => {
+                            const qty = toNum(row.qty);
+                            const qtyClass = qty === 0 ? 'text-red-400' : qty < 10 ? 'text-yellow-400' : '';
+                            return (
+                              <tr key={row.id} className="group border-t border-white/10 odd:bg-[#111] even:bg-[#0d0d0d]">
+                                <td className="px-2 py-2 text-center">{idx + 1}</td>
+                                <td className="px-2 py-2">{row.name}</td>
+                                <td className="px-2 py-2">{row.type === 'fabric' ? 'Ткань' : 'Фурнитура'}</td>
+                                <td className="px-2 py-2">{row.unit}</td>
+                                <td className={`px-2 py-2 ${qtyClass}`}>{qty}</td>
+                                <td className="px-2 py-2">{money(row.price)}</td>
+                                <td className="px-2 py-2 text-emerald-400">{money(toNum(row.qty) * toNum(row.price))}</td>
+                                <td className="px-2 py-2">
+                                  <div className="invisible flex gap-2 group-hover:visible">
+                                    <button type="button" className="rounded bg-sky-700 px-2 py-1 text-xs" onClick={() => openEdit(row)}>✏️ Редактировать</button>
+                                    <button type="button" className="rounded bg-red-700 px-2 py-1 text-xs" onClick={() => removeItem(row)}>🗑️ Удалить</button>
                                   </div>
                                 </td>
                               </tr>

@@ -3,7 +3,7 @@
  * Заголовок по центру, фильтр статусов, поиск по клиенту и названию (debounce 300ms)
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api';
@@ -119,6 +119,10 @@ export default function Dashboard() {
   const [isPrinting, setIsPrinting] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [selectMode, setSelectMode] = useState(false);
+  const ordersLoadInFlightRef = useRef(false);
+  const statusesLoadedRef = useRef(false);
+  const ordersRef = useRef([]);
+  ordersRef.current = orders;
 
   const toggleSelect = useCallback((id) => {
     setSelectedIds((prev) => {
@@ -146,8 +150,10 @@ export default function Dashboard() {
   }, []);
 
   const loadOrders = useCallback(async () => {
-    setLoading(true);
+    if (ordersLoadInFlightRef.current) return;
+    ordersLoadInFlightRef.current = true;
     setError('');
+    if (ordersRef.current.length === 0) setLoading(true);
     try {
       const params = {};
       if (statusFilter) params.status_id = statusFilter;
@@ -161,10 +167,13 @@ export default function Dashboard() {
       setOrders([]);
     } finally {
       setLoading(false);
+      ordersLoadInFlightRef.current = false;
     }
   }, [statusFilter, searchTerm]);
 
   useEffect(() => {
+    if (statusesLoadedRef.current) return;
+    statusesLoadedRef.current = true;
     loadStatuses();
   }, [loadStatuses]);
 
@@ -566,7 +575,7 @@ export default function Dashboard() {
       )}
 
       <NeonCard className="overflow-hidden p-0">
-        {loading ? (
+        {loading && orders.length === 0 ? (
           <div className="p-6 md:p-8 text-center text-neon-muted">Загрузка...</div>
         ) : orders.length === 0 ? (
           <div className="p-6 md:p-8 text-center text-neon-muted">

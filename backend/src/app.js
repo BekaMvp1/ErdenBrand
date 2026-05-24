@@ -34,6 +34,7 @@ const referencesRoutes = require("./routes/references");
 const clientsRoutes = require("./routes/clients");
 const workshopsRoutes = require("./routes/workshops");
 const financeRoutes = require("./routes/finance");
+const paymentCalendarRoutes = require("./routes/paymentCalendar");
 const aiRoutes = require("./routes/ai");
 const settingsRoutes = require("./routes/settings");
 const sizesRoutes = require("./routes/sizes");
@@ -49,6 +50,7 @@ const proverkaRouter = require("./routes/proverka");
 const modelsBaseRoutes = require("./routes/models-base");
 const modelRefsRoutes = require("./routes/model-refs");
 const stageReportsRoutes = require("./routes/stageReports");
+const costCalculationsRoutes = require("./routes/costCalculations");
 const { sequelize } = require("./models");
 
 const app = express();
@@ -331,6 +333,14 @@ app.use(
   stageReportsRoutes,
 );
 app.use(
+  "/api/cost-calculations",
+  authenticate,
+  requireRole("admin", "manager", "technologist"),
+  technologistFloorOnly,
+  operatorRestricted,
+  costCalculationsRoutes,
+);
+app.use(
   "/api/models-base",
   authenticate,
   requireRole("admin", "manager", "technologist"),
@@ -356,6 +366,12 @@ app.use(
   authenticate,
   requireRole("admin", "manager", "technologist", "operator"),
   financeRoutes,
+);
+app.use(
+  "/api/payment-calendar",
+  authenticate,
+  requireRole("admin", "manager", "technologist", "operator"),
+  paymentCalendarRoutes,
 );
 app.use(
   "/api/ai",

@@ -77,6 +77,23 @@ const MAX_PHOTO_STR = 5 * 1024 * 1024;
  * Сохраняем в JSONB ткань/фурнитуру: массив строк или { groups: [{ rows }] }.
  * Пустой ввод → null.
  */
+/** Баркоды заказа: массив { barcode, size, name, color } */
+function normalizeOrderBarcodes(input) {
+  if (input == null) return [];
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((row) => {
+      if (!row || typeof row !== 'object') return null;
+      return {
+        barcode: String(row.barcode ?? '').trim().slice(0, 64),
+        size: String(row.size ?? '').trim().slice(0, 40),
+        name: String(row.name ?? '').trim().slice(0, 200),
+        color: String(row.color ?? '').trim().slice(0, 100),
+      };
+    })
+    .filter(Boolean);
+}
+
 function normalizeOrderMaterialsPayload(input) {
   if (input == null) return null;
 
@@ -145,6 +162,126 @@ function normalizeOrderMaterialsPayload(input) {
   }
 
   return null;
+}
+
+function normalizeOrderOpsRow(r, i) {
+  const cost =
+    r.cost != null && String(r.cost).trim() !== ''
+      ? String(r.cost).slice(0, 500)
+      : r.price != null && String(r.price).trim() !== ''
+        ? String(r.price).slice(0, 500)
+        : r.rateSom != null && String(r.rateSom).trim() !== ''
+          ? String(r.rateSom).slice(0, 500)
+          : '';
+  return {
+    id: r.id != null ? String(r.id).slice(0, 80) : `op-${i}`,
+    name: r.name != null ? String(r.name).slice(0, 4000) : '',
+    cost,
+    note: r.note != null ? String(r.note).slice(0, 8000) : '',
+  };
+}
+
+function defaultOrderOpsGroups(kind) {
+  const title = kind === 'cutting' ? 'Раскрой' : kind === 'sewing' ? 'Пошив' : 'ОТК';
+  return { groups: [{ id: 1, title, rows: [] }] };
+}
+
+function normalizeOrderOpsPayload(input, kind) {
+  if (input == null) return defaultOrderOpsGroups(kind);
+  if (Array.isArray(input)) {
+    const rows = input.map(normalizeOrderOpsRow).filter((r) => r.name);
+    const title = kind === 'cutting' ? 'Раскрой' : kind === 'sewing' ? 'Пошив' : 'ОТК';
+    return { groups: [{ id: 1, title, rows }] };
+  }
+  if (typeof input === 'object' && input.rows && !input.groups) {
+    const rows = Array.isArray(input.rows) ? input.rows.map(normalizeOrderOpsRow).filter((r) => r.name) : [];
+    const title = kind === 'cutting' ? 'Раскрой' : kind === 'sewing' ? 'Пошив' : 'ОТК';
+    return { groups: [{ id: 1, title, rows }] };
+  }
+  if (typeof input === 'object' && Array.isArray(input.groups)) {
+    const groups = input.groups
+      .map((g, gi) => ({
+        id: g != null && g.id != null ? g.id : gi + 1,
+        title: String((g && g.title) || '').slice(0, 500),
+        rows: (g && Array.isArray(g.rows) ? g.rows : [])
+          .map(normalizeOrderOpsRow)
+          .filter((r) => r.name),
+      }))
+      .filter((g) => g.rows.length > 0);
+    return groups.length ? { groups } : defaultOrderOpsGroups(kind);
+  }
+  return defaultOrderOpsGroups(kind);
+}
+
+function orderOpsHasRows(raw) {
+  if (!raw || typeof raw !== 'object') return false;
+  if (Array.isArray(raw)) return raw.some((r) => r && String(r.name || '').trim());
+  if (Array.isArray(raw.groups)) {
+    return raw.groups.some((g) =>
+      (g.rows || []).some((r) => r && String(r.name || '').trim())
+    );
+  }
+  return false;
+}
+
+function applyModelsBaseOpsToOrder(plain, mb) {
+  if (!mb) return plain;
+  const out = { ...plain };
+  if (!orderOpsHasRows(out.cutting_ops)) out.cutting_ops = mb.cutting_ops;
+  if (!orderOpsHasRows(out.sewing_ops)) out.sewing_ops = mb.sewing_ops;
+  if (!orderOpsHasRows(out.otk_ops)) out.otk_ops = mb.otk_ops;
+  return out;
+}
+
+function orderNeedsModelsBaseOps(plain) {
+  return (
+    !orderOpsHasRows(plain.cutting_ops) ||
+    !orderOpsHasRows(plain.sewing_ops) ||
+    !orderOpsHasRows(plain.otk_ops)
+  );
+}
+
+async function enrichOrderOpsFromModelsBase(plain) {
+  try {
+    const tz = String(plain.tz_code || '').trim();
+    if (!tz || !orderNeedsModelsBaseOps(plain)) return plain;
+    const mb = await db.ModelsBase.findOne({
+      where: { code: tz },
+      attributes: ['cutting_ops', 'sewing_ops', 'otk_ops'],
+    });
+    return applyModelsBaseOpsToOrder(plain, mb);
+  } catch (err) {
+    console.error('[orders] enrichOrderOpsFromModelsBase:', err.message);
+    return plain;
+  }
+}
+
+async function enrichOrderOpsListFromModelsBase(plains) {
+  try {
+    const needTz = new Set();
+    for (const plain of plains) {
+      const tz = String(plain.tz_code || '').trim();
+      if (tz && orderNeedsModelsBaseOps(plain)) needTz.add(tz);
+    }
+    if (needTz.size === 0) return plains;
+
+    const rows = await db.ModelsBase.findAll({
+      where: { code: { [Op.in]: [...needTz] } },
+      attributes: ['code', 'cutting_ops', 'sewing_ops', 'otk_ops'],
+    });
+    const byCode = new Map();
+    for (const row of rows) {
+      const code = String(row.code || '').trim();
+      if (code) byCode.set(code, row);
+    }
+    return plains.map((plain) => {
+      const tz = String(plain.tz_code || '').trim();
+      return applyModelsBaseOpsToOrder(plain, byCode.get(tz));
+    });
+  } catch (err) {
+    console.error('[orders] enrichOrderOpsListFromModelsBase:', err.message);
+    return plains;
+  }
 }
 
 /**
@@ -307,6 +444,10 @@ router.post('/', async (req, res, next) => {
       total_cost,
       fabric_data,
       fittings_data,
+      barcodes,
+      cutting_ops,
+      sewing_ops,
+      otk_ops,
     } = req.body;
 
     const nameFields = resolveOrderNameFields({ title, tz_code, model_name });
@@ -491,6 +632,10 @@ router.post('/', async (req, res, next) => {
           total_cost: parseOptionalCost(total_cost),
           fabric_data: fabricDataNorm,
           fittings_data: fittingsDataNorm,
+          barcodes: normalizeOrderBarcodes(barcodes),
+          cutting_ops: normalizeOrderOpsPayload(cutting_ops, 'cutting'),
+          sewing_ops: normalizeOrderOpsPayload(sewing_ops, 'sewing'),
+          otk_ops: normalizeOrderOpsPayload(otk_ops, 'otk'),
         },
         { transaction: t }
       );
@@ -634,9 +779,13 @@ router.post('/', async (req, res, next) => {
  * search — ILIKE по clients.name, orders.title, orders.tz_code, orders.model_name
  */
 router.get('/', async (req, res, next) => {
+  const t0 = Date.now();
   try {
-    const { status_id, floor_id, building_floor_id, client_id, workshop_id, search, page, limit } =
+    const { status_id, floor_id, building_floor_id, client_id, workshop_id, search, page, limit, light, full } =
       req.query;
+    const fullList = full === '1' || full === 'true';
+    const explicitHeavy = light === '0' || light === 'false';
+    const lightList = !fullList && !explicitHeavy;
     const andConditions = [];
 
     if (status_id) andConditions.push({ status_id });
@@ -727,26 +876,31 @@ router.get('/', async (req, res, next) => {
 
     const where = andConditions.length > 0 ? { [Op.and]: andConditions } : {};
 
-    const include = [
-      { model: db.Client, as: 'Client', required: !!search },
-      { model: db.OrderStatus, as: 'OrderStatus' },
-      { model: db.Floor, as: 'Floor' },
-      { model: db.Workshop, as: 'Workshop', required: false, attributes: ['id', 'name'] },
-      { model: db.BuildingFloor, as: 'BuildingFloor' },
-      { model: db.Technologist, as: 'Technologist', include: [{ model: db.User, as: 'User' }] },
-      {
-        model: db.OrderOperation,
-        as: 'OrderOperations',
-        required: false,
-        attributes: ['id', 'order_id', 'operation_id', 'actual_quantity', 'actual_qty', 'stage_key'],
-        include: [{ model: db.Operation, as: 'Operation', attributes: ['category', 'name'] }],
-      },
-    ];
+    const include = lightList
+      ? [
+          { model: db.Client, as: 'Client', required: !!search, attributes: ['id', 'name'] },
+          { model: db.OrderStatus, as: 'OrderStatus', attributes: ['id', 'name'] },
+        ]
+      : [
+          { model: db.Client, as: 'Client', required: !!search },
+          { model: db.OrderStatus, as: 'OrderStatus' },
+          { model: db.Floor, as: 'Floor' },
+          { model: db.Workshop, as: 'Workshop', required: false, attributes: ['id', 'name'] },
+          { model: db.BuildingFloor, as: 'BuildingFloor' },
+          {
+            model: db.OrderOperation,
+            as: 'OrderOperations',
+            required: false,
+            separate: true,
+            attributes: ['id', 'order_id', 'operation_id', 'actual_quantity', 'actual_qty', 'stage_key'],
+            include: [{ model: db.Operation, as: 'Operation', attributes: ['category', 'name'] }],
+          },
+        ];
 
     const order = [['created_at', 'DESC']];
     const limitVal = Math.min(
       Math.max(1, parseInt(limit, 10) || 50),
-      50
+      100
     );
     const offsetVal = page && limitVal ? (Math.max(1, parseInt(page, 10)) - 1) * limitVal : undefined;
 
@@ -760,18 +914,23 @@ router.get('/', async (req, res, next) => {
     if (offsetVal !== undefined) options.offset = offsetVal;
 
     const orders = await db.Order.findAll(options);
-    const normalized = orders.map((orderItem) => {
-      const plain = typeof orderItem?.toJSON === 'function' ? orderItem.toJSON() : orderItem;
-      return {
-        ...plain,
-        tz: plain.tz ?? plain.tz_code ?? null,
-        total_qty: plain.total_qty ?? plain.total_quantity ?? plain.quantity ?? 0,
-        client_name: plain.client_name ?? plain.Client?.name ?? null,
-      };
-    });
+    const plains = orders.map((orderItem) =>
+      typeof orderItem?.toJSON === 'function' ? orderItem.toJSON() : orderItem
+    );
+    const enrichedList = await enrichOrderOpsListFromModelsBase(plains);
+    const normalized = enrichedList.map((enriched) => ({
+      ...enriched,
+      tz: enriched.tz ?? enriched.tz_code ?? null,
+      total_qty: enriched.total_qty ?? enriched.total_quantity ?? enriched.quantity ?? 0,
+      client_name: enriched.client_name ?? enriched.Client?.name ?? null,
+    }));
 
+    console.log(
+      `[orders GET] ${Date.now() - t0}ms count=${normalized.length} light=${lightList}`
+    );
     res.json(normalized);
   } catch (err) {
+    console.error('[orders GET] error:', err.message, `${Date.now() - t0}ms`);
     next(err);
   }
 });
@@ -1724,6 +1883,7 @@ router.put('/:id', async (req, res, next) => {
       size_grid_quantities,
       fabric_data,
       fittings_data,
+      barcodes,
     } = req.body;
 
     const updates = {};
@@ -1778,6 +1938,9 @@ router.put('/:id', async (req, res, next) => {
     }
     if (fittings_data !== undefined) {
       updates.fittings_data = normalizeOrderMaterialsPayload(fittings_data);
+    }
+    if (barcodes !== undefined) {
+      updates.barcodes = normalizeOrderBarcodes(barcodes);
     }
 
     const { order_height_type, order_height_value } = req.body;
@@ -2186,11 +2349,16 @@ router.get('/:id', async (req, res, next) => {
       photos: Array.isArray(c.photos) ? c.photos : [],
     }));
 
+    const enriched = await enrichOrderOpsFromModelsBase(plain);
+
     res.json({
-      ...plain,
+      ...enriched,
       /** Явно отдаём JSONB материалов (форма создания / блок «Закуп») */
-      fabric_data: plain.fabric_data ?? null,
-      fittings_data: plain.fittings_data ?? null,
+      fabric_data: enriched.fabric_data ?? null,
+      fittings_data: enriched.fittings_data ?? null,
+      cutting_ops: enriched.cutting_ops ?? null,
+      sewing_ops: enriched.sewing_ops ?? null,
+      otk_ops: enriched.otk_ops ?? null,
       variants: variants.map((v) => ({
         color: v.color,
         size: v.Size?.name,

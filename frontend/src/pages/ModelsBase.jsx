@@ -18,6 +18,7 @@ import {
 import { PlusOutlined, DeleteOutlined, ArrowLeftOutlined, PrinterOutlined } from '@ant-design/icons';
 import ruRU from 'antd/locale/ru_RU';
 import { api } from '../api';
+import { API_URL } from '../apiBaseUrl';
 import SelectWithAdd from '../components/SelectWithAdd';
 
 const { TextArea } = Input;
@@ -929,15 +930,220 @@ function normalizeDraft(row) {
   };
 }
 
+function getPhotoUrl(model) {
+  const raw =
+    model?.photo ||
+    (Array.isArray(model?.photos) && model.photos.length > 0 ? model.photos[0] : null) ||
+    model?.image ||
+    model?.image_url ||
+    null;
+  if (!raw) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  if (s.startsWith('http://') || s.startsWith('https://') || s.startsWith('data:')) return s;
+  if (s.startsWith('/')) return `${API_URL}${s}`;
+  return `${API_URL}/uploads/${s}`;
+}
+
+function toListCardItem(m) {
+  if (!m || m.id == null) return m;
+  const photo = getPhotoUrl(m);
+  return {
+    id: m.id,
+    name: m.name,
+    code: m.code,
+    description: m.description,
+    created_at: m.created_at,
+    updated_at: m.updated_at,
+    photo,
+    photos: photo ? [photo] : [],
+  };
+}
+
+function ModelListPhoto({ model, className = 'w-full h-full object-cover' }) {
+  const [failed, setFailed] = useState(false);
+  const photoUrl = getPhotoUrl(model);
+  if (!photoUrl || failed) {
+    return (
+      <div className="w-full h-full flex items-center justify-center text-2xl text-white/20">👗</div>
+    );
+  }
+  return (
+    <img
+      src={photoUrl}
+      alt={model?.name || ''}
+      className={className}
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+function ModelsBaseListSkeleton() {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+      {[1, 2, 3, 4, 5, 6].map((i) => (
+        <div
+          key={i}
+          className="rounded-xl p-4 flex gap-4 border border-white/[0.06] bg-[var(--surface)]"
+          style={{ minHeight: 120 }}
+        >
+          <div
+            className="w-24 h-24 flex-shrink-0 rounded-lg bg-[#1e2a3a] models-base-skeleton-pulse"
+          />
+          <div className="flex-1 flex flex-col gap-2 pt-1">
+            <div className="h-3 rounded bg-[#1e2a3a] w-[40%] models-base-skeleton-pulse" />
+            <div className="h-4 rounded bg-[#1e2a3a] w-[70%] models-base-skeleton-pulse" />
+            <div className="h-3 rounded bg-[#1e2a3a] w-[90%] models-base-skeleton-pulse mt-2" />
+          </div>
+        </div>
+      ))}
+      <style>{`
+        @keyframes models-base-pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.4; }
+        }
+        .models-base-skeleton-pulse {
+          animation: models-base-pulse 1.5s ease-in-out infinite;
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function readFileAsDataURL(file, timeoutMs = 60000) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    const timer = setTimeout(() => {
+      try {
+        reader.abort();
+      } catch {
+        /* ignore */
+      }
+      const err = new Error('Timeout');
+      err.name = 'AbortError';
+      reject(err);
+    }, timeoutMs);
+    reader.onload = () => {
+      clearTimeout(timer);
+      if (typeof reader.result === 'string') resolve(reader.result);
+      else reject(new Error('read'));
+    };
+    reader.onerror = () => {
+      clearTimeout(timer);
+      reject(reader.error || new Error('read'));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function ModelsBaseUploadStatus({ active, message }) {
+  if (!active) return null;
+  return (
+    <>
+      <div
+        style={{
+          padding: '8px 12px',
+          background: '#1e3a5f',
+          borderRadius: 6,
+          fontSize: 12,
+          color: '#93c5fd',
+          marginTop: 8,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+        }}
+      >
+        <span
+          style={{
+            display: 'inline-block',
+            width: 12,
+            height: 12,
+            border: '2px solid #93c5fd',
+            borderTopColor: 'transparent',
+            borderRadius: '50%',
+            animation: 'models-base-spin 0.8s linear infinite',
+            flexShrink: 0,
+          }}
+        />
+        {message || 'Загрузка...'}
+      </div>
+      <style>{`
+        @keyframes models-base-spin {
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
+    </>
+  );
+}
+
+function ModelsBaseSlowServerBanner({ visible }) {
+  if (!visible) return null;
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: 70,
+        right: 20,
+        zIndex: 1000,
+        background: '#1e3a5f',
+        border: '1px solid #93c5fd',
+        borderRadius: 8,
+        padding: '10px 16px',
+        fontSize: 12,
+        color: '#93c5fd',
+        maxWidth: 280,
+        boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+      }}
+    >
+      ⏳ Сервер просыпается...
+      <br />
+      <span style={{ color: '#64748b' }}>Подождите 10–30 секунд</span>
+    </div>
+  );
+}
+
+function ModelsBaseToast({ toast }) {
+  if (!toast) return null;
+  return (
+    <div
+      role="status"
+      style={{
+        position: 'fixed',
+        bottom: 32,
+        right: 32,
+        zIndex: 9999,
+        padding: '12px 24px',
+        borderRadius: 8,
+        fontSize: 14,
+        fontWeight: 600,
+        color: '#fff',
+        background:
+          toast.type === 'success' ? '#16a34a' : toast.type === 'error' ? '#dc2626' : '#2563eb',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+        minWidth: 260,
+      }}
+    >
+      {toast.type === 'success' ? '✅' : toast.type === 'error' ? '❌' : 'ℹ️'} {toast.msg}
+    </div>
+  );
+}
+
 export default function ModelsBase() {
   const [list, setList] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [toast, setToast] = useState(null);
+  const toastTimerRef = useRef(null);
+  const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState(null);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [editing, setEditing] = useState(null);
   /** Режим карточки: просмотр (только чтение) или редактирование */
   const [detailMode, setDetailMode] = useState('edit');
   const [saving, setSaving] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [photoUploading, setPhotoUploading] = useState(false);
+  const [photoUploadProgress, setPhotoUploadProgress] = useState('');
+  const [slowServer, setSlowServer] = useState(false);
   const [refs, setRefs] = useState({
     fabricNames: [],
     fabricUnits: [],
@@ -948,6 +1154,61 @@ export default function ModelsBase() {
   });
 
   const readOnly = Boolean(editing) && detailMode === 'view';
+
+  const showToast = useCallback((msg, type = 'success') => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast({ msg, type });
+    toastTimerRef.current = setTimeout(() => setToast(null), 3000);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    },
+    []
+  );
+
+  const pageBusy = loading || detailLoading || saving;
+
+  useEffect(() => {
+    if (!pageBusy) {
+      setSlowServer(false);
+      return undefined;
+    }
+    const timer = setTimeout(() => setSlowServer(true), 5000);
+    return () => clearTimeout(timer);
+  }, [pageBusy]);
+
+  const handleDelete = async (modelId) => {
+    if (!window.confirm('Удалить модель? Это действие нельзя отменить.')) return;
+
+    const snapshot = list;
+    setList((prev) => prev.filter((m) => m.id !== modelId));
+    if (editing?.id === modelId) {
+      setEditing(null);
+      setDetailMode('edit');
+    }
+
+    try {
+      await api.modelsBase.delete(modelId);
+      showToast('Модель удалена', 'success');
+    } catch (err) {
+      console.error('[delete model]:', err.message);
+      setList(snapshot);
+      showToast(`Ошибка удаления: ${err.error || err.message}`, 'error');
+    }
+  };
+
+  const handleDuplicate = async (modelId) => {
+    try {
+      const newModel = await api.modelsBase.duplicate(modelId);
+      setList((prev) => [toListCardItem(newModel), ...prev]);
+      showToast('Модель дублирована — отредактируйте копию', 'success');
+    } catch (err) {
+      console.error('[duplicate model]:', err.message);
+      showToast(`Ошибка дублирования: ${err.message}`, 'error');
+    }
+  };
 
   /** Добавление строки справочника: POST на /api/model-refs/… (не PUT /api/models-base). */
   const addRef = useCallback(async (endpoint, refKey, name) => {
@@ -999,13 +1260,16 @@ export default function ModelsBase() {
 
   const loadList = useCallback(async () => {
     setLoading(true);
+    setListError(null);
     try {
       const rows = await api.modelsBase.list(
         debouncedSearch ? { search: debouncedSearch } : {}
       );
-      setList(Array.isArray(rows) ? rows : []);
+      const arr = Array.isArray(rows) ? rows : [];
+      setList(arr.map((r) => toListCardItem(r)));
     } catch (e) {
-      message.error(e?.message || 'Ошибка загрузки');
+      console.error('[ModelsBase]:', e?.message);
+      setListError(e?.message || 'Не удалось загрузить модели');
       setList([]);
     } finally {
       setLoading(false);
@@ -1013,11 +1277,33 @@ export default function ModelsBase() {
   }, [debouncedSearch]);
 
   useEffect(() => {
-    if (editing) return;
-    loadList();
-  }, [loadList, editing]);
+    if (editing) return undefined;
+    let cancelled = false;
+    setLoading(true);
+    setListError(null);
+    api.modelsBase
+      .list(debouncedSearch ? { search: debouncedSearch } : {})
+      .then((rows) => {
+        if (cancelled) return;
+        const arr = Array.isArray(rows) ? rows : [];
+        setList(arr.map((r) => toListCardItem(r)));
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        console.error('[ModelsBase]:', e?.message);
+        setListError(e?.message || 'Не удалось загрузить модели');
+        setList([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedSearch, editing]);
 
   const openCreate = async () => {
+    setDetailLoading(true);
     try {
       const row = await api.modelsBase.create({
         code: '',
@@ -1050,16 +1336,21 @@ export default function ModelsBase() {
       setDetailMode('edit');
     } catch (e) {
       message.error(e?.message || 'Не удалось создать');
+    } finally {
+      setDetailLoading(false);
     }
   };
 
   const openDetail = async (item, mode) => {
+    setDetailLoading(true);
     try {
       const row = await api.modelsBase.get(item.id);
       setEditing(normalizeDraft(row));
       setDetailMode(mode === 'edit' ? 'edit' : 'view');
     } catch (e) {
       message.error(e?.message || 'Ошибка загрузки карточки');
+    } finally {
+      setDetailLoading(false);
     }
   };
 
@@ -1077,6 +1368,8 @@ export default function ModelsBase() {
   const saveDraft = async () => {
     if (!editing?.id) return;
     setSaving(true);
+    const controller = new AbortController();
+    const saveTimeout = setTimeout(() => controller.abort(), 60000);
     try {
       const payload = {
         code: editing.code,
@@ -1102,39 +1395,25 @@ export default function ModelsBase() {
         sewing_ops: editing.sewing_ops,
         otk_ops: editing.otk_ops,
       };
-      const updated = await api.modelsBase.update(editing.id, payload);
+      const updated = await api.modelsBase.update(editing.id, payload, {
+        signal: controller.signal,
+      });
       message.success('Сохранено');
+      showToast('Модель сохранена', 'success');
       setEditing(normalizeDraft(updated));
       setDetailMode('view');
       loadList();
     } catch (e) {
-      message.error(e?.message || 'Ошибка сохранения');
+      if (e?.name === 'AbortError') {
+        showToast('Сервер долго отвечает. Попробуйте ещё раз.', 'error');
+      } else {
+        message.error(e?.message || 'Ошибка сохранения');
+        showToast(`Ошибка: ${e?.message || 'сохранение'}`, 'error');
+      }
     } finally {
+      clearTimeout(saveTimeout);
       setSaving(false);
     }
-  };
-
-  const confirmDelete = (item) => {
-    Modal.confirm({
-      title: 'Удалить модель?',
-      content: `${item.name || 'Без названия'} (${item.code || '—'})`,
-      okText: 'Удалить',
-      okType: 'danger',
-      cancelText: 'Отмена',
-      onOk: async () => {
-        try {
-          await api.modelsBase.delete(item.id);
-          message.success('Удалено');
-          if (editing?.id === item.id) {
-            setEditing(null);
-            setDetailMode('edit');
-          }
-          loadList();
-        } catch (e) {
-          message.error(e?.message || 'Ошибка удаления');
-        }
-      },
-    });
   };
 
   const updateField = (key, value) => {
@@ -1235,37 +1514,56 @@ export default function ModelsBase() {
     });
   };
 
-  const appendDataUrl = (field, file) =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const url = reader.result;
-        if (typeof url === 'string') {
-          setEditing((d) => {
-            if (!d) return d;
-            if (field === 'lekala') {
-              const prev = normalizeLekala(d.lekala);
-              const nextId =
-                prev.length === 0
-                  ? 1
-                  : Math.max(
-                      ...prev.map((x) => {
-                        const n = Number(x.id);
-                        return Number.isFinite(n) ? n : 0;
-                      }),
-                    ) + 1;
-              return { ...d, lekala: [...prev, { id: nextId, title: '', data: url }] };
-            }
-            const arr = Array.isArray(d[field]) ? [...d[field]] : [];
-            arr.push(url);
-            return { ...d, [field]: arr };
-          });
-          resolve();
-        } else reject(new Error('read'));
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
+  const applyDataUrlToField = (field, url) => {
+    setEditing((d) => {
+      if (!d) return d;
+      if (field === '__pamyatka_photos__') {
+        const p = normalizeDraftPamyatka(d.pamyatka);
+        return { ...d, pamyatka: { ...p, photos: [...p.photos, url] } };
+      }
+      if (field === 'lekala') {
+        const prev = normalizeLekala(d.lekala);
+        const nextId =
+          prev.length === 0
+            ? 1
+            : Math.max(
+                ...prev.map((x) => {
+                  const n = Number(x.id);
+                  return Number.isFinite(n) ? n : 0;
+                }),
+              ) + 1;
+        return { ...d, lekala: [...prev, { id: nextId, title: '', data: url }] };
+      }
+      const arr = Array.isArray(d[field]) ? [...d[field]] : [];
+      arr.push(url);
+      return { ...d, [field]: arr };
     });
+  };
+
+  const handlePhotoUpload = async (file, field = 'photos') => {
+    if (!file) return false;
+    setPhotoUploading(true);
+    setPhotoUploadProgress('Чтение файла...');
+    try {
+      const url = await readFileAsDataURL(file, 60000);
+      applyDataUrlToField(field, url);
+      setPhotoUploadProgress('Готово!');
+      setTimeout(() => setPhotoUploadProgress(''), 2000);
+    } catch (err) {
+      const msg =
+        err?.name === 'AbortError'
+          ? 'Таймаут — попробуйте файл меньше или снова'
+          : 'Не удалось прочитать файл';
+      setPhotoUploadProgress(msg);
+      showToast(msg, 'error');
+      setTimeout(() => setPhotoUploadProgress(''), 3000);
+    } finally {
+      setPhotoUploading(false);
+    }
+    return false;
+  };
+
+  const appendDataUrl = (field, file) => handlePhotoUpload(file, field);
 
   const removeAsset = (field, index) => {
     setEditing((d) => {
@@ -1316,23 +1614,7 @@ export default function ModelsBase() {
     });
   };
 
-  const appendPamyatkaPhoto = (file) =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const url = reader.result;
-        if (typeof url === 'string') {
-          setEditing((d) => {
-            if (!d) return d;
-            const p = normalizeDraftPamyatka(d.pamyatka);
-            return { ...d, pamyatka: { ...p, photos: [...p.photos, url] } };
-          });
-          resolve();
-        } else reject(new Error('read'));
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
+  const handlePamyatkaPhotoUpload = (file) => handlePhotoUpload(file, '__pamyatka_photos__');
 
   const removePamyatkaPhoto = (index) => {
     setEditing((d) => {
@@ -2201,16 +2483,19 @@ export default function ModelsBase() {
                 ))}
               </div>
               {!readOnly && (
-                <Upload
-                  accept="image/*"
-                  showUploadList={false}
-                  beforeUpload={(file) => {
-                    void appendDataUrl('photos', file).catch(() => message.error('Не удалось прочитать файл'));
-                    return false;
-                  }}
-                >
-                  <Button icon={<PlusOutlined />}>Добавить фото</Button>
-                </Upload>
+                <>
+                  <Upload
+                    accept="image/*"
+                    showUploadList={false}
+                    disabled={photoUploading}
+                    beforeUpload={(file) => void handlePhotoUpload(file, 'photos')}
+                  >
+                    <Button icon={<PlusOutlined />} disabled={photoUploading}>
+                      Добавить фото
+                    </Button>
+                  </Upload>
+                  <ModelsBaseUploadStatus active={photoUploading} message={photoUploadProgress} />
+                </>
               )}
             </div>
           ),
@@ -2965,18 +3250,19 @@ export default function ModelsBase() {
                       ))}
                     </div>
                     {!readOnly && (
-                      <Upload
-                        accept="image/*"
-                        showUploadList={false}
-                        beforeUpload={(file) => {
-                          void appendPamyatkaPhoto(file).catch(() =>
-                            message.error('Не удалось прочитать файл'),
-                          );
-                          return false;
-                        }}
-                      >
-                        <Button icon={<PlusOutlined />}>Добавить фото</Button>
-                      </Upload>
+                      <>
+                        <Upload
+                          accept="image/*"
+                          showUploadList={false}
+                          disabled={photoUploading}
+                          beforeUpload={(file) => void handlePamyatkaPhotoUpload(file)}
+                        >
+                          <Button icon={<PlusOutlined />} disabled={photoUploading}>
+                            Добавить фото
+                          </Button>
+                        </Upload>
+                        <ModelsBaseUploadStatus active={photoUploading} message={photoUploadProgress} />
+                      </>
                     )}
                   </div>
                 </>
@@ -3054,9 +3340,16 @@ export default function ModelsBase() {
                 </Button>
               ) : (
                 <>
-                  <Button onClick={cancelEdit}>Отмена</Button>
-                  <Button type="primary" loading={saving} onClick={saveDraft}>
-                    💾 Сохранить
+                  <Button onClick={cancelEdit} disabled={saving || photoUploading}>
+                    Отмена
+                  </Button>
+                  <Button
+                    type="primary"
+                    loading={saving}
+                    disabled={saving || photoUploading}
+                    onClick={saveDraft}
+                  >
+                    {saving ? 'Сохранение...' : '💾 Сохранить'}
                   </Button>
                 </>
               )}
@@ -3072,12 +3365,15 @@ export default function ModelsBase() {
           />
           <Tabs items={tabItems} destroyInactiveTabPane={false} />
         </div>
+        <ModelsBaseSlowServerBanner visible={slowServer} />
+        <ModelsBaseToast toast={toast} />
       </ConfigProvider>
     );
   }
 
   return (
     <ConfigProvider locale={ruRU} theme={antdTheme}>
+      <ModelsBaseSlowServerBanner visible={slowServer} />
       <div className="min-h-[calc(100vh-56px)] p-4 md:p-6 max-w-7xl mx-auto">
         <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-6">
           <h1 className="text-xl font-semibold text-[var(--text)]">База моделей</h1>
@@ -3093,23 +3389,19 @@ export default function ModelsBase() {
           </Button>
         </div>
 
+        {listError ? <p className="text-red-400 mb-4">{listError}</p> : null}
+
         {loading ? (
-          <p className="text-[var(--muted)]">Загрузка…</p>
+          <ModelsBaseListSkeleton />
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-            {list.map((item) => {
-              const thumb = Array.isArray(item.photos) && item.photos[0] ? item.photos[0] : null;
-              return (
+            {list.map((item) => (
                 <div
                   key={item.id}
                   className="card-neon rounded-xl p-4 flex gap-4 border border-white/[0.06] bg-[var(--surface)] hover:border-[var(--accent)]/30 transition-colors"
                 >
                   <div className="w-24 h-24 flex-shrink-0 rounded-lg overflow-hidden bg-black/30 border border-white/10">
-                    {thumb ? (
-                      <img src={thumb} alt="" className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-2xl text-white/20">📦</div>
-                    )}
+                    <ModelListPhoto model={item} />
                   </div>
                   <div className="min-w-0 flex-1 flex flex-col">
                     <div className="text-sm text-[var(--muted)] font-mono truncate">{item.code || '—'}</div>
@@ -3124,14 +3416,24 @@ export default function ModelsBase() {
                       <Button size="small" type="primary" onClick={() => openDetail(item, 'edit')}>
                         ✏️ Изменить
                       </Button>
-                      <Button size="small" danger onClick={() => confirmDelete(item)}>
+                      <Button
+                        size="small"
+                        onClick={() => handleDuplicate(item.id)}
+                        style={{
+                          background: '#1e3a5f',
+                          color: '#93c5fd',
+                          border: '1px solid #374151',
+                        }}
+                      >
+                        📋 Дублировать
+                      </Button>
+                      <Button size="small" danger onClick={() => handleDelete(item.id)}>
                         🗑 Удалить
                       </Button>
                     </div>
                   </div>
                 </div>
-              );
-            })}
+            ))}
           </div>
         )}
 
@@ -3139,6 +3441,8 @@ export default function ModelsBase() {
           <p className="text-[var(--muted)] mt-8 text-center">Моделей пока нет. Нажмите «Добавить модель».</p>
         )}
       </div>
+      <ModelsBaseToast toast={toast} />
     </ConfigProvider>
   );
 }
+

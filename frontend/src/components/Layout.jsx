@@ -2,7 +2,7 @@
  * Основной layout: Topbar + Sidebar + контент + ИИ-ассистент
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { usePrintHeader } from '../context/PrintContext';
@@ -261,14 +261,19 @@ export default function Layout() {
       });
   }, [shouldShowSummary]);
 
+  const serverCheckedRef = useRef(false);
+  const summaryLoadedRef = useRef(false);
+
   useEffect(() => {
+    if (serverCheckedRef.current) return;
+    serverCheckedRef.current = true;
     checkServer();
   }, [checkServer]);
 
   useEffect(() => {
-    if (serverOk && shouldShowSummary) {
-      loadLayoutData();
-    }
+    if (!serverOk || !shouldShowSummary || summaryLoadedRef.current) return;
+    summaryLoadedRef.current = true;
+    loadLayoutData();
   }, [serverOk, shouldShowSummary, loadLayoutData]);
 
   // Структура sidebar: Дашборд сверху, блок заказов, разделитель, производственный блок, разделитель, системный блок
@@ -291,6 +296,7 @@ export default function Layout() {
   const canSeeProduction = ['admin', 'manager', 'technologist'].includes(userRole);
   const productionBlockItems = canSeeProduction
     ? [
+        { type: 'item', to: '/production', label: '🏭 Производство', icon: 'planning' },
         {
           type: 'group',
           id: 'procurement',

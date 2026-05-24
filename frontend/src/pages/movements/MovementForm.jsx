@@ -289,6 +289,18 @@ function movementRoute(from, to) {
   return `${from}→${to}`;
 }
 
+/** Формат таблицы: материалы (А) или изделия/партии (Б/В) */
+function getTableFormat(from, to) {
+  if (from === 'warehouse' && to === 'sewing') return 'materials';
+  if (from === 'warehouse' && to === 'otk') return 'materials';
+  if (to === 'shipment') return 'products';
+  if (from === 'cutting' && to === 'sewing') return 'products';
+  if (from === 'sewing' && to === 'otk') return 'products';
+  if (from === 'otk') return 'products';
+  if (from === 'warehouse') return 'materials';
+  return 'products';
+}
+
 /** Таблица А — все маршруты, кроме B и C */
 function isRouteA(from, to) {
   const R = movementRoute(from, to);
@@ -310,7 +322,7 @@ function isRouteC(from, to) {
   return R === 'sewing→otk' || R === 'otk→warehouse' || R === 'otk→shipment';
 }
 
-/** Сохранение партии раскрой→пошив в item_name без изменений бэкенда */
+/** Legacy-префикс в старых документах (парсинг при открытии) */
 const CUT_BATCH_PREFIX = 'CUT_SEW_BATCH_JSON:';
 
 function displayBatchColor(batch) {
@@ -318,30 +330,41 @@ function displayBatchColor(batch) {
   return String(batch.color || '').trim();
 }
 
-function buildCutBatchMaterialName(batch) {
-  const payload = {
-    color: displayBatchColor(batch),
-    colorOther: String(batch.colorOther || ''),
-    fabric_name: String(batch.fabric_name || ''),
-    stock_qty: toNum(batch.stock_qty),
-    plan_meters: toNum(batch.plan_meters),
-    fact_meters: toNum(batch.fact_meters),
-    sizes: batch.sizes && typeof batch.sizes === 'object' ? batch.sizes : {},
-    total_qty: toNum(batch.total_qty),
-    marking: String(batch.marking || ''),
-    remainder: toNum(batch.remainder),
-    shortage: toNum(batch.shortage),
-    defect_meters: toNum(batch.defect_meters),
-    operation: String(batch.operation || ''),
-    operation_cost: toNum(batch.operation_cost),
-    norm_per_unit: toNum(batch.norm_per_unit),
-  };
-  return `${CUT_BATCH_PREFIX}${JSON.stringify(payload)}`;
+function cutBatchDisplayName(batch) {
+  const fabric = String(batch.fabric_name || '').trim();
+  const col = displayBatchColor(batch);
+  if (fabric && col) return `${fabric} · ${col}`;
+  return fabric || col || '—';
 }
 
 function parseCutBatchItemToBatch(it, activeSizes, idx) {
-  const raw = String(it?.item_name || it?.material_name || '').trim();
+  const meta = it?.item_meta && typeof it.item_meta === 'object' ? it.item_meta : null;
   const baseSizes = emptySizes(activeSizes);
+  if (meta) {
+    const mergedSizes = { ...baseSizes, ...(meta.sizes && typeof meta.sizes === 'object' ? meta.sizes : {}) };
+    const total_qty =
+      Object.values(mergedSizes).reduce((a, b) => a + toNum(b), 0) || toNum(meta.total_qty);
+    const col = String(meta.color || '');
+    return {
+      id: `b-db-${it.id}-${idx}`,
+      color: col,
+      colorOther: String(meta.colorOther || ''),
+      fabric_name: String(meta.fabric_name || ''),
+      stock_qty: toNum(meta.stock_qty),
+      plan_meters: toNum(meta.plan_meters),
+      fact_meters: toNum(meta.fact_meters),
+      sizes: mergedSizes,
+      total_qty,
+      marking: String(meta.marking || ''),
+      remainder: toNum(meta.remainder),
+      shortage: toNum(meta.shortage),
+      defect_meters: toNum(meta.defect_meters),
+      operation: String(meta.operation || ''),
+      operation_cost: toNum(meta.operation_cost ?? it.price),
+      norm_per_unit: toNum(meta.norm_per_unit),
+    };
+  }
+  const raw = String(it?.item_name || it?.material_name || '').trim();
   if (raw.startsWith(CUT_BATCH_PREFIX)) {
     try {
       const p = JSON.parse(raw.slice(CUT_BATCH_PREFIX.length));
@@ -675,22 +698,29 @@ async function fetchStockItemsForWarehouseCutting(orderId, warehouseId) {
   return items;
 }
 
-function buildSewingOtkMaterialName(row) {
-  const payload = {
-    photo: row.photo || '',
-    model_name: String(row.model_name || '').trim(),
-    color: String(row.color || ''),
-    colorOther: String(row.colorOther || ''),
-    sizes: row.sizes && typeof row.sizes === 'object' ? row.sizes : {},
-    operation: String(row.operation || ''),
-    operation_cost: toNum(row.operation_cost),
-  };
-  return `${SEW_OTK_PREFIX}${JSON.stringify(payload)}`;
-}
-
-function parseSewingOtkItemToProductRow(it, activeSizes, idx) {
-  const raw = String(it?.item_name || it?.material_name || '').trim();
+function parseSewingOtkItemToProductRow(it, activeSizes, idx, fallbackModel = '') {
+  const meta = it?.item_meta && typeof it.item_meta === 'object' ? it.item_meta : null;
   const baseSizes = emptySizes(activeSizes);
+  const fb = String(fallbackModel || '').trim();
+  if (meta) {
+    const mergedSizes = { ...baseSizes, ...(meta.sizes && typeof meta.sizes === 'object' ? meta.sizes : {}) };
+    const total_qty = Object.values(mergedSizes).reduce((a, b) => a + toNum(b), 0);
+    const operation_cost = toNum(meta.operation_cost ?? it.price);
+    const mn = String(meta.model_name || '').trim();
+    return {
+      id: `pr-db-${it.id}-${idx}`,
+      photo: meta.photo || '',
+      model_name: mn || fb,
+      color: String(meta.color || ''),
+      colorOther: String(meta.colorOther || ''),
+      sizes: mergedSizes,
+      total_qty,
+      operation: meta.operation || '',
+      operation_cost,
+      total_cost: total_qty * operation_cost,
+    };
+  }
+  const raw = String(it?.item_name || it?.material_name || '').trim();
   let parsed = null;
   if (raw.startsWith(SEW_OTK_PREFIX)) {
     try {
@@ -703,10 +733,11 @@ function parseSewingOtkItemToProductRow(it, activeSizes, idx) {
     const mergedSizes = { ...baseSizes, ...(parsed.sizes && typeof parsed.sizes === 'object' ? parsed.sizes : {}) };
     const total_qty = Object.values(mergedSizes).reduce((a, b) => a + toNum(b), 0);
     const operation_cost = toNum(parsed.operation_cost ?? it.price);
+    const mn = String(parsed.model_name || '').trim();
     return {
       id: `pr-db-${it.id}-${idx}`,
       photo: parsed.photo || '',
-      model_name: parsed.model_name || '',
+      model_name: mn || fb,
       color: String(parsed.color || ''),
       colorOther: String(parsed.colorOther || ''),
       sizes: mergedSizes,
@@ -722,7 +753,7 @@ function parseSewingOtkItemToProductRow(it, activeSizes, idx) {
   return {
     id: `pr-db-${it.id}-${idx}`,
     photo: '',
-    model_name: modelGuess,
+    model_name: (modelGuess && modelGuess !== '—' ? modelGuess : '') || fb,
     color: '',
     colorOther: '',
     sizes: { ...baseSizes },
@@ -731,6 +762,120 @@ function parseSewingOtkItemToProductRow(it, activeSizes, idx) {
     operation_cost: price,
     total_cost: qty * price,
   };
+}
+
+function simpleRowsFromKanbanPrefill(items, stockList) {
+  if (!Array.isArray(items) || !items.length) return [createEmptyRowA()];
+  return items.map((item) => {
+    const name = String(item.material_name || '').trim();
+    const qtyVal = toNum(item.qty);
+    const unit = String(item.unit || 'м').trim() || 'м';
+    let stockQty = 0;
+    let matName = name;
+    let material_id = null;
+    let price = 0;
+    if (Array.isArray(stockList) && name) {
+      const low = name.toLowerCase();
+      const s = stockList.find((x) => {
+        const mn = String(x.material_name || x.name || '').trim().toLowerCase();
+        return mn && (mn.includes(low) || low.includes(mn));
+      });
+      if (s) {
+        const mid = s.id != null ? Number(s.id) : NaN;
+        material_id = Number.isFinite(mid) ? mid : null;
+        stockQty = toNum(s.quantity ?? s.qty);
+        matName = String(s.material_name || s.name || name);
+        price = toNum(s.price_per_unit ?? s.price ?? 0);
+      }
+    }
+    return {
+      id: newSimpleRowId(),
+      color: '',
+      colorOther: '',
+      material_id,
+      material_name: matName,
+      unit,
+      stock_qty: stockQty,
+      qty: qtyVal,
+      rolls: 0,
+      price,
+      overStock: stockQty > 0 ? qtyVal > stockQty : false,
+    };
+  });
+}
+
+function stripMovementPrefillSearchParam() {
+  if (typeof window === 'undefined') return;
+  try {
+    const u = new URL(window.location.href);
+    if (!u.searchParams.has('prefill')) return;
+    u.searchParams.delete('prefill');
+    window.history.replaceState({}, '', `${u.pathname}${u.search}${u.hash || ''}`);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** После загрузки строк склада для маршрута с таблицей А — строки из канбана «Списание» */
+function tryApplyKanbanPrefillAfterStockLoad({
+  orderIdNum,
+  fromType,
+  toType,
+  stockItems,
+  setRowsA,
+}) {
+  if (typeof window === 'undefined') return;
+  let sp;
+  try {
+    sp = new URLSearchParams(window.location.search);
+  } catch {
+    return;
+  }
+  if (sp.get('prefill') !== '1') return;
+
+  let raw;
+  try {
+    raw = sessionStorage.getItem('movement_prefill');
+  } catch {
+    stripMovementPrefillSearchParam();
+    return;
+  }
+  if (!raw) {
+    stripMovementPrefillSearchParam();
+    return;
+  }
+
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    try {
+      sessionStorage.removeItem('movement_prefill');
+    } catch {
+      /* ignore */
+    }
+    stripMovementPrefillSearchParam();
+    return;
+  }
+
+  const sameOrder = data.order_id != null && String(data.order_id) === String(orderIdNum);
+  const sameRoute =
+    data.from_stage != null &&
+    data.to_stage != null &&
+    String(data.from_stage) === String(fromType) &&
+    String(data.to_stage) === String(toType);
+
+  try {
+    sessionStorage.removeItem('movement_prefill');
+  } catch {
+    /* ignore */
+  }
+  stripMovementPrefillSearchParam();
+
+  if (!sameOrder || !sameRoute || !Array.isArray(data.items) || !data.items.length) return;
+  if (!isRouteA(fromType, toType) || isRouteB(fromType, toType) || isRouteC(fromType, toType)) return;
+
+  setRowsA(simpleRowsFromKanbanPrefill(data.items, stockItems));
 }
 
 function parseMovementItemToSimpleRow(it, idx, stockList, orderColorsList) {
@@ -797,7 +942,10 @@ export default function MovementForm(props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [docDate, setDocDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [orderId, setOrderId] = useState('');
+  const [orderId, setOrderId] = useState(() => {
+    const q = searchParams.get('order_id');
+    return q != null && String(q).trim() !== '' ? String(q).trim() : '';
+  });
   const [note, setNote] = useState('');
   const [orders, setOrders] = useState([]);
   const [docStatus, setDocStatus] = useState(null);
@@ -813,6 +961,8 @@ export default function MovementForm(props) {
   const [movementOps, setMovementOps] = useState([]);
   const [orderQuantity, setOrderQuantity] = useState(0);
   const [orderFabrics, setOrderFabrics] = useState([]);
+  /** Название модели заказа — fallback для таблицы В (маршрут C) */
+  const [orderModelName, setOrderModelName] = useState('');
   /** Остатки тканей для маршрута Б: все склады и (опционально) выбранный склад «откуда» */
   const [routeBStockAll, setRouteBStockAll] = useState([]);
   const [routeBStockSpecific, setRouteBStockSpecific] = useState([]);
@@ -946,7 +1096,20 @@ export default function MovementForm(props) {
       setProductRows([]);
       setMovementOps([]);
       setOrderQuantity(0);
+      setOrderModelName('');
       return;
+    }
+
+    if (typeof window !== 'undefined') {
+      try {
+        const sp = new URLSearchParams(window.location.search);
+        if (sp.get('prefill') === '1' && (routeIsB || routeIsC)) {
+          sessionStorage.removeItem('movement_prefill');
+          stripMovementPrefillSearchParam();
+        }
+      } catch {
+        /* ignore */
+      }
     }
 
     if (routeIsB && reinitBatches === false) {
@@ -977,27 +1140,31 @@ export default function MovementForm(props) {
         const sizes = extractActiveSizes(order);
         const sz = sizes.length ? sizes : ERDEN_SIZES;
         setActiveSizes(sz);
-        setOrderColors(extractOrderColors(order));
+        const colorList = extractOrderColors(order);
+        const colorsForC = colorList.length > 0 ? colorList : [''];
+        setOrderColors(colorList.length > 0 ? colorList : []);
         setOrderQuantity(toNum(order.total_quantity ?? order.quantity ?? order.total_qty));
-        const photo = order.photo || order.model_photo || order.image_url || order.image || '';
+        const photo =
+          order.photo || order.model_photo || order.image_url || order.image || '';
         const modelName =
           order.product_name || order.model_name || order.name || order.title || '';
+        setOrderModelName(modelName);
         setMovementOps(loadMovementOps(order, fromType, toType));
         setOrderFabrics([]);
-        setProductRows([
-          {
-            id: Date.now(),
+        setProductRows(
+          colorsForC.map((color, idx) => ({
+            id: Date.now() + idx,
             photo,
             model_name: modelName,
-            color: '',
+            color,
             colorOther: '',
             sizes: Object.fromEntries(sz.map((s) => [s, 0])),
             total_qty: 0,
             operation: '',
             operation_cost: 0,
             total_cost: 0,
-          },
-        ]);
+          }))
+        );
         setRowsA([createEmptyRowA()]);
         setBatches([]);
         setStockItems([]);
@@ -1007,6 +1174,7 @@ export default function MovementForm(props) {
         setOrderQuantity(0);
         setMovementOps([]);
         setOrderFabrics([]);
+        setOrderModelName('');
         setProductRows([]);
         setRowsA([createEmptyRowA()]);
         setBatches([]);
@@ -1071,6 +1239,13 @@ export default function MovementForm(props) {
       setBatches([]);
       setMovementOps([]);
       setRowsA([createEmptyRowA()]);
+      tryApplyKanbanPrefillAfterStockLoad({
+        orderIdNum: oid,
+        fromType,
+        toType,
+        stockItems: items,
+        setRowsA,
+      });
     } catch {
       setStockItems([]);
       setOrderColors([]);
@@ -1080,6 +1255,12 @@ export default function MovementForm(props) {
       setBatches([]);
       setMovementOps([]);
       setRowsA([createEmptyRowA()]);
+      try {
+        sessionStorage.removeItem('movement_prefill');
+      } catch {
+        /* ignore */
+      }
+      stripMovementPrefillSearchParam();
     }
   }, [fromType, toType, fromWarehouseId, routeIsB, routeIsC]);
 
@@ -1087,6 +1268,7 @@ export default function MovementForm(props) {
     if (docId) return;
     if (!isRouteC(fromType, toType)) return;
     if (orderId) return;
+    setOrderModelName('');
     setProductRows([
       {
         id: Date.now(),
@@ -1218,36 +1400,41 @@ export default function MovementForm(props) {
           setBatches([]);
           setActiveSizes(effSizes);
           setMovementOps(loadMovementOps(orderJson, resolvedFrom, resolvedTo));
+          const photo =
+            orderJson?.photo ||
+            orderJson?.model_photo ||
+            orderJson?.image_url ||
+            orderJson?.image ||
+            '';
+          const modelName =
+            orderJson?.product_name ||
+            orderJson?.model_name ||
+            orderJson?.name ||
+            orderJson?.title ||
+            '';
+          setOrderModelName(modelName);
           if (items.length) {
-            setProductRows(items.map((it, i) => parseSewingOtkItemToProductRow(it, effSizes, i)));
+            setProductRows(
+              items.map((it, i) => parseSewingOtkItemToProductRow(it, effSizes, i, modelName))
+            );
           } else if (orderJson) {
-            const photo =
-              orderJson.photo ||
-              orderJson.model_photo ||
-              orderJson.image_url ||
-              orderJson.image ||
-              '';
-            const modelName =
-              orderJson.product_name ||
-              orderJson.model_name ||
-              orderJson.name ||
-              orderJson.title ||
-              '';
-            setProductRows([
-              {
-                id: Date.now(),
+            const colorsForC = colorsList.length > 0 ? colorsList : [''];
+            setProductRows(
+              colorsForC.map((color, idx) => ({
+                id: Date.now() + idx,
                 photo,
                 model_name: modelName,
-                color: '',
+                color,
                 colorOther: '',
                 sizes: Object.fromEntries(effSizes.map((s) => [s, 0])),
                 total_qty: 0,
                 operation: '',
                 operation_cost: 0,
                 total_cost: 0,
-              },
-            ]);
+              }))
+            );
           } else {
+            setOrderModelName('');
             setProductRows([]);
           }
         }
@@ -1260,7 +1447,7 @@ export default function MovementForm(props) {
     return () => {
       cancelled = true;
     };
-  }, [docId, fromType, toType]);
+  }, [docId]);
 
   useEffect(() => {
     if (docId) return;
@@ -1288,7 +1475,7 @@ export default function MovementForm(props) {
     }
 
     void loadOrderAndStock(oid, { reinitBatches: true });
-  }, [orderId, docId, fromType, toType, fromWarehouseId, loadOrderAndStock, routeIsB]);
+  }, [orderId, docId, fromType, toType, fromWarehouseId, routeIsB]);
 
   const totA = useMemo(() => {
     if (!routeIsA) return null;
@@ -1391,14 +1578,32 @@ export default function MovementForm(props) {
         const fm = toNum(b.fact_meters);
         if (total_qty <= 0 && pm <= 0 && fm <= 0) continue;
         const qtyLine = total_qty > 0 ? total_qty : Math.max(pm, fm);
+        const item_meta = {
+          color: displayBatchColor(b),
+          colorOther: String(b.colorOther || ''),
+          fabric_name: String(b.fabric_name || ''),
+          stock_qty: toNum(b.stock_qty),
+          plan_meters: pm,
+          fact_meters: fm,
+          sizes: b.sizes && typeof b.sizes === 'object' ? b.sizes : {},
+          total_qty: toNum(b.total_qty),
+          marking: String(b.marking || ''),
+          remainder: toNum(b.remainder),
+          shortage: toNum(b.shortage),
+          defect_meters: toNum(b.defect_meters),
+          operation: String(b.operation || ''),
+          operation_cost: toNum(b.operation_cost),
+          norm_per_unit: toNum(b.norm_per_unit),
+        };
         items.push({
           item_id: null,
-          material_name: buildCutBatchMaterialName(b),
+          material_name: cutBatchDisplayName(b),
           material_type: 'fabric',
           unit: total_qty > 0 ? 'шт' : 'м',
           qty: qtyLine,
           price: toNum(b.operation_cost),
           defect_qty: toNum(b.defect_meters),
+          item_meta,
         });
       }
       return {
@@ -1417,14 +1622,24 @@ export default function MovementForm(props) {
       for (const row of productRows) {
         const total_qty = Object.values(row.sizes || {}).reduce((a, x) => a + toNum(x), 0);
         if (total_qty <= 0) continue;
+        const item_meta = {
+          photo: row.photo || '',
+          model_name: String(row.model_name || '').trim(),
+          color: String(row.color || ''),
+          colorOther: String(row.colorOther || ''),
+          sizes: row.sizes && typeof row.sizes === 'object' ? row.sizes : {},
+          operation: String(row.operation || ''),
+          operation_cost: toNum(row.operation_cost),
+        };
         items.push({
           item_id: null,
-          material_name: buildSewingOtkMaterialName(row),
+          material_name: String(row.model_name || '').trim() || '—',
           material_type: 'fabric',
           unit: 'шт',
           qty: total_qty,
           price: toNum(row.operation_cost),
           defect_qty: 0,
+          item_meta,
         });
       }
       return {
@@ -1814,6 +2029,10 @@ export default function MovementForm(props) {
             }}
           >
             📦 Таблица А — материалы
+            {getTableFormat(fromType, toType) === 'materials' &&
+            movementRoute(fromType, toType) === 'warehouse→sewing'
+              ? ' (в т.ч. фурнитура в пошив — выберите склад «Склад фурнитуры пошива»)'
+              : ''}
           </span>
         )}
         {routeIsB && (
@@ -2624,7 +2843,7 @@ export default function MovementForm(props) {
 
                     <td style={TD}>
                       <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>
-                        {row.model_name || '—'}
+                        {row.model_name || orderModelName || '—'}
                       </div>
                     </td>
 
@@ -2829,7 +3048,7 @@ export default function MovementForm(props) {
                   {
                     id: Date.now(),
                     photo: '',
-                    model_name: '',
+                    model_name: orderModelName || '',
                     color: '',
                     colorOther: '',
                     sizes: Object.fromEntries(sizeCols.map((s) => [s, 0])),

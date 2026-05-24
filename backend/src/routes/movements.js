@@ -9,7 +9,39 @@ const db = require('../models');
 
 const router = express.Router();
 
+/** Склад для списания фурнитуры при пошив→ОТК (создаётся при старте сервера, см. server.js) */
+const SEWING_ACCESSORIES_WAREHOUSE_NAME = 'Склад фурнитуры пошива';
+
 const VALID_STAGES = ['warehouse', 'cutting', 'sewing', 'otk', 'shipment'];
+
+/** Списание материалов со склада (ФИФО) при проведении */
+const MATERIAL_ROUTES = new Set([
+  'warehouse→cutting',
+  'warehouse→sewing',
+  'warehouse→otk',
+  'warehouse→warehouse',
+]);
+
+/** Перемещение между этапами без списания/оприходования материалов на складе */
+const PRODUCT_ROUTES = new Set([
+  'cutting→sewing',
+  'sewing→otk',
+  'otk→warehouse',
+  'otk→shipment',
+  'warehouse→shipment',
+]);
+
+function movementRouteKey(fromStage, toStage) {
+  return `${String(fromStage || '')}→${String(toStage || '')}`;
+}
+
+function isMaterialMovementRoute(fromStage, toStage) {
+  return MATERIAL_ROUTES.has(movementRouteKey(fromStage, toStage));
+}
+
+function isProductMovementRoute(fromStage, toStage) {
+  return PRODUCT_ROUTES.has(movementRouteKey(fromStage, toStage));
+}
 
 const STAGE_HINTS = {
   warehouse: ['сырья', 'основной', 'склад сырья', 'склад'],
@@ -24,30 +56,64 @@ function toMoney(v) {
   return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
 }
 
+/** Ключ для поиска партии ткани/материала (частичное совпадение по имени) */
+function fabricSearchKeyForFifo(rawName) {
+  let s = String(rawName || '').trim();
+  if (!s) return '';
+  const up = s.toUpperCase();
+  if (up.startsWith('SEW_OTK') || up.startsWith('CUT_SEW')) return '';
+  let out = s.split(/\s·\s/)[0].trim();
+  if (!out || out === s) {
+    out = s.split(/\s*[—–-]\s*/)[0].trim();
+  }
+  return (out || s).trim();
+}
+
 /**
  * Списание по ФИФО: старые партии first (received_at / created_at).
+ * Поиск партии — частичное совпадение имени (strpos по lower(name), затем fallback на полный перебор).
  */
 async function fifoDeductFromWarehouse(itemName, warehouseId, qtyToDeduct, transaction) {
   const rawName = String(itemName || '').trim();
-  const baseFabric = rawName.split(/\s·\s/)[0].trim();
+  const baseFabric = fabricSearchKeyForFifo(rawName);
   if (!baseFabric || !(qtyToDeduct > 0)) {
     return { remaining: qtyToDeduct, qtyTaken: 0, valueWithdrawn: 0, meta: null };
   }
 
-  const all = await db.WarehouseMaterial.findAll({
-    where: {
-      warehouse_id: warehouseId,
-      qty: { [Op.gt]: 0 },
-    },
-    transaction,
-    lock: transaction.LOCK.UPDATE,
-  });
+  const safeForIlike = String(baseFabric).replace(/[%_\\]/g, '').trim();
 
-  const bf = baseFabric.toLowerCase();
-  const matched = all.filter((m) => {
-    const mn = String(m.name).toLowerCase();
-    return mn === bf || mn.includes(bf) || bf.includes(mn);
-  });
+  let all;
+  if (safeForIlike) {
+    all = await db.WarehouseMaterial.findAll({
+      where: {
+        warehouse_id: warehouseId,
+        qty: { [Op.gt]: 0 },
+        name: { [Op.iLike]: `%${safeForIlike}%` },
+      },
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+  } else {
+    all = [];
+  }
+
+  if (!all.length) {
+    all = await db.WarehouseMaterial.findAll({
+      where: {
+        warehouse_id: warehouseId,
+        qty: { [Op.gt]: 0 },
+      },
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    const bf = baseFabric.toLowerCase();
+    all = all.filter((m) => {
+      const mn = String(m.name).toLowerCase();
+      return mn === bf || mn.includes(bf) || bf.includes(mn);
+    });
+  }
+
+  const matched = all;
   matched.sort((a, b) => {
     const ta = new Date(a.received_at || a.created_at || 0).getTime();
     const tb = new Date(b.received_at || b.created_at || 0).getTime();
@@ -84,6 +150,68 @@ async function fifoDeductFromWarehouse(itemName, warehouseId, qtyToDeduct, trans
   }
 
   return { remaining, qtyTaken, valueWithdrawn, meta };
+}
+
+/** Себестоимость / списание фурнитуры при approve — ошибки только в лог, approve не отменяем */
+async function ensureCostCalculation(orderId, transaction) {
+  let costCalc = await db.CostCalculation.findOne({
+    where: { order_id: orderId },
+    transaction,
+    lock: transaction.LOCK.UPDATE,
+  });
+  if (!costCalc) {
+    costCalc = await db.CostCalculation.create(
+      { order_id: orderId, status: 'in_progress' },
+      { transaction }
+    );
+  }
+  return costCalc;
+}
+
+/** Метры ткани для строки «склад → раскрой» */
+function fabricQtyFromMovementItem(it) {
+  const plain = typeof it.get === 'function' ? it.get({ plain: true }) : it;
+  const m = plain.item_meta && typeof plain.item_meta === 'object' ? plain.item_meta : null;
+  const q = parseFloat(plain.qty || m?.fact_meters || m?.plan_meters || 0);
+  return toMoney(q);
+}
+
+/** Метры для списания ткани при раскрой→пошив (не использовать qty в шт. как метры) */
+function fabricMetersForCuttingToSewingItem(it) {
+  const plain = typeof it.get === 'function' ? it.get({ plain: true }) : it;
+  const m = plain.item_meta && typeof plain.item_meta === 'object' ? plain.item_meta : null;
+  const unit = String(plain.unit || '').toLowerCase();
+  if (m) {
+    const fm = parseFloat(m.fact_meters ?? m.fact_qty ?? '');
+    if (Number.isFinite(fm) && fm > 0) return toMoney(fm);
+    const pm = parseFloat(m.plan_meters ?? '');
+    if (Number.isFinite(pm) && pm > 0) return toMoney(pm);
+  }
+  if (unit === 'м' || unit === 'm') {
+    return fabricQtyFromMovementItem(it);
+  }
+  return 0;
+}
+
+function toIntSafe(v) {
+  const n = parseInt(String(v), 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function movementItemPieceQtyAndOpCost(it) {
+  const line = parseMovementItemToProductLine(it);
+  const plain = typeof it.get === 'function' ? it.get({ plain: true }) : it;
+  const m = plain.item_meta && typeof plain.item_meta === 'object' ? plain.item_meta : null;
+  let qty = toIntSafe(m?.total_qty);
+  if (!qty) qty = toIntSafe(line.qty);
+  if (!qty) qty = toIntSafe(plain.qty);
+  return { qty, opCost: toMoney(line.operationCost) };
+}
+
+function orderFittingsList(order) {
+  const raw = order?.fittings_data;
+  if (!raw) return [];
+  return Array.isArray(raw) ? raw : [];
 }
 
 function toIntOrNaN(v) {
@@ -124,6 +252,64 @@ function stripStageTag(comment) {
     .trim();
 }
 
+const STAGE_PRODUCT_TAG = '[stage_product]';
+
+function parseMovementItemToProductLine(it) {
+  const plain = typeof it.get === 'function' ? it.get({ plain: true }) : it;
+  let modelName = String(plain.item_name || '').trim();
+  let sizes = {};
+  let color = '';
+  let operationCost = toMoney(plain.price || 0);
+  let qty = Number(plain.qty || 0);
+
+  const meta = plain.item_meta && typeof plain.item_meta === 'object' ? plain.item_meta : null;
+  if (meta) {
+    modelName = String(meta.model_name || meta.fabric_name || meta.material_name || meta.name || modelName).trim();
+    sizes = meta.sizes && typeof meta.sizes === 'object' ? meta.sizes : {};
+    color = String(meta.color || '').trim();
+    if (meta.operation_cost != null) operationCost = toMoney(meta.operation_cost);
+    const fromSizes = Object.values(sizes).reduce((a, b) => a + (parseInt(b, 10) || 0), 0);
+    if (fromSizes > 0) qty = fromSizes;
+    else if (meta.total_qty != null) qty = Number(meta.total_qty) || qty;
+    else qty = Number(plain.qty || 0);
+    return {
+      modelName,
+      sizes,
+      color,
+      operationCost,
+      qty: toMoney(qty),
+    };
+  }
+
+  if (modelName.startsWith('SEW_OTK_JSON:')) {
+    try {
+      const json = JSON.parse(modelName.replace(/^SEW_OTK_JSON:/, ''));
+      modelName = String(json.model_name || json.name || '').trim();
+      sizes = json.sizes && typeof json.sizes === 'object' ? json.sizes : {};
+      color = String(json.color || '').trim();
+      if (json.operation_cost != null) operationCost = toMoney(json.operation_cost);
+      const fromSizes = Object.values(sizes).reduce((a, b) => a + (parseInt(b, 10) || 0), 0);
+      if (fromSizes > 0) qty = fromSizes;
+      else if (json.total_qty != null) qty = Number(json.total_qty) || qty;
+    } catch {
+      /* keep raw */
+    }
+  }
+
+  return {
+    modelName,
+    sizes,
+    color,
+    operationCost,
+    qty: toMoney(qty),
+  };
+}
+
+function buildStageProductComment(payload) {
+  const raw = `${STAGE_PRODUCT_TAG}${JSON.stringify(payload)}`;
+  return raw.length > 500 ? `${raw.slice(0, 497)}...` : raw;
+}
+
 async function resolveWarehouseIds(fromStage, toStage) {
   const warehouses = await db.WarehouseRef.findAll({
     attributes: ['id', 'name'],
@@ -153,20 +339,64 @@ async function resolveWarehouseIds(fromStage, toStage) {
   return { from_warehouse_id: fromId, to_warehouse_id: toId };
 }
 
+/** Разбор legacy: весь объект батча/строки был в item_name */
+function normalizeLegacyMovementItem(it) {
+  let item_name = String(it?.material_name || it?.item_name || '').trim();
+  let unit = String(it?.unit || 'шт').trim().slice(0, 30);
+  let qty = it?.qty;
+  let price = it?.price ?? 0;
+  let item_meta =
+    it?.item_meta != null && typeof it.item_meta === 'object' ? { ...it.item_meta } : null;
+
+  if (item_name.startsWith('CUT_SEW_BATCH_JSON:')) {
+    try {
+      const json = JSON.parse(item_name.slice('CUT_SEW_BATCH_JSON:'.length));
+      item_name = String(json.fabric_name || json.material_name || '').trim() || item_name;
+      item_meta = { ...json, ...(item_meta || {}) };
+    } catch {
+      /* keep */
+    }
+  }
+  if (item_name.startsWith('SEW_OTK_JSON:')) {
+    try {
+      const json = JSON.parse(item_name.slice('SEW_OTK_JSON:'.length));
+      item_name = String(json.model_name || json.material_name || '').trim() || item_name;
+      item_meta = { ...json, ...(item_meta || {}) };
+    } catch {
+      /* keep */
+    }
+  }
+
+  const metaClean =
+    item_meta && typeof item_meta === 'object' && Object.keys(item_meta).length > 0 ? item_meta : null;
+
+  return {
+    item_name,
+    unit,
+    qty,
+    price,
+    item_meta: metaClean,
+  };
+}
+
 function sanitizeItems(items) {
   return (Array.isArray(items) ? items : [])
-    .map((it) => ({
-      item_id:
-        it?.item_id != null && !Number.isNaN(toIntOrNaN(it.item_id))
-          ? toIntOrNaN(it.item_id)
-          : it?.id != null && !Number.isNaN(toIntOrNaN(it.id))
-            ? toIntOrNaN(it.id)
-            : null,
-      item_name: String(it?.material_name || it?.item_name || '').trim(),
-      unit: String(it?.unit || 'шт').trim().slice(0, 30),
-      qty: toMoney(it?.qty),
-      price: toMoney(it?.price ?? 0),
-    }))
+    .map((it) => {
+      const n = normalizeLegacyMovementItem(it);
+      return {
+        item_id:
+          it?.item_id != null && !Number.isNaN(toIntOrNaN(it.item_id))
+            ? toIntOrNaN(it.item_id)
+            : it?.id != null && !Number.isNaN(toIntOrNaN(it.id))
+              ? toIntOrNaN(it.id)
+              : null,
+        item_name: n.item_name,
+        unit: n.unit || 'шт',
+        qty: toMoney(n.qty),
+        price: toMoney(n.price ?? 0),
+        item_meta: n.item_meta,
+      };
+    })
     .filter((it) => it.item_name && it.qty > 0);
 }
 
@@ -269,9 +499,9 @@ router.post('/', async (req, res, next) => {
 
     const defects = {};
     for (const it of rawItems || []) {
-      const name = String(it?.material_name || it?.item_name || '').trim();
+      const n = normalizeLegacyMovementItem(it);
       const dq = toMoney(it?.defect_qty);
-      if (name && dq > 0) defects[name] = dq;
+      if (n.item_name && dq > 0) defects[n.item_name] = dq;
     }
 
     const meta = {
@@ -329,14 +559,22 @@ router.post('/', async (req, res, next) => {
  */
 router.get('/', async (req, res, next) => {
   try {
-    const { order_id, from_stage, to_stage } = req.query;
+    const { order_id, from_stage, to_stage, status: statusQ } = req.query;
+
+    const where = { move_type: 'materials' };
+    if (statusQ != null && String(statusQ).trim() !== '') {
+      const st = String(statusQ).trim();
+      if (st === 'draft' || st === 'posted') {
+        where.status = st;
+      }
+    }
 
     const rows = await db.MovementDocument.findAll({
-      where: { move_type: 'materials' },
+      where,
       include: [
         { model: db.WarehouseRef, as: 'FromWarehouse', attributes: ['id', 'name'] },
         { model: db.WarehouseRef, as: 'ToWarehouse', attributes: ['id', 'name'] },
-        { model: db.MovementDocumentItem, as: 'Items' },
+        { model: db.MovementDocumentItem, as: 'Items', required: false },
       ],
       order: [['doc_date', 'DESC'], ['id', 'DESC']],
       limit: 500,
@@ -439,60 +677,562 @@ router.put('/:id/approve', async (req, res, next) => {
     const meta = parseStageMeta(doc.comment);
     const orderIdForMov = meta?.order_id != null ? toIntOrNaN(meta.order_id) : null;
 
+    const fromStage = meta?.from_stage;
+    const toStage = meta?.to_stage;
+    const routeKey = movementRouteKey(fromStage, toStage);
+    const runFifo =
+      meta &&
+      isMaterialMovementRoute(fromStage, toStage) &&
+      !isProductMovementRoute(fromStage, toStage);
+    const runProduct = meta && isProductMovementRoute(fromStage, toStage);
+
     const fromId = Number(doc.from_warehouse_id);
     const toId = Number(doc.to_warehouse_id);
 
-    for (const it of items) {
-      const qty = Number(it.qty || 0);
-      if (!(qty > 0)) continue;
+    if (runFifo) {
+      for (const it of items) {
+        const qty = Number(it.qty || 0);
+        if (!(qty > 0)) continue;
 
-      const fifo = await fifoDeductFromWarehouse(it.item_name, fromId, qty, t);
-      if (fifo.remaining > 0 || fifo.qtyTaken <= 0 || !fifo.meta) {
+        const fifo = await fifoDeductFromWarehouse(it.item_name, fromId, qty, t);
+        if (fifo.remaining > 0 || fifo.qtyTaken <= 0 || !fifo.meta) {
+          await t.rollback();
+          const label =
+            String(it.item_name || '').length > 120
+              ? `${String(it.item_name).slice(0, 120)}…`
+              : String(it.item_name || '');
+          return res.status(400).json({
+            error:
+              fifo.remaining > 0
+                ? `Недостаточно остатка для «${label}» (ФИФО: не хватает ${toMoney(fifo.remaining)})`
+                : `Материал «${label}» не найден на складе отправителя`,
+          });
+        }
+
+        const avgPrice =
+          fifo.qtyTaken > 0 ? toMoney(fifo.valueWithdrawn / fifo.qtyTaken) : toMoney(it.price || 0);
+
+        const destBatch = await db.WarehouseMaterial.create(
+          {
+            name: fifo.meta.name,
+            type: fifo.meta.type,
+            unit: fifo.meta.unit,
+            warehouse_id: toId,
+            qty: fifo.qtyTaken,
+            price: avgPrice,
+            total_sum: toMoney(fifo.valueWithdrawn),
+            received_at: doc.doc_date,
+            batch_number: `ПЭ-${doc.doc_number}-${it.id}`,
+          },
+          { transaction: t }
+        );
+
+        await db.WarehouseMovement.create(
+          {
+            movement_kind: 'materials',
+            ref_id: destBatch.id,
+            item_name: it.item_name,
+            from_warehouse_id: fromId,
+            to_warehouse_id: toId,
+            qty: fifo.qtyTaken,
+            moved_at: doc.doc_date,
+            user_id: req.user?.id || null,
+            comment: `Этап ${meta?.from_stage || '?'}→${meta?.to_stage || '?'} док.${doc.doc_number}`,
+            type: 'РАСХОД',
+            quantity: fifo.qtyTaken,
+            item_id: null,
+            order_id: Number.isFinite(orderIdForMov) && orderIdForMov > 0 ? orderIdForMov : null,
+          },
+          { transaction: t }
+        );
+      }
+    } else if (meta && !isProductMovementRoute(fromStage, toStage) && !isMaterialMovementRoute(fromStage, toStage)) {
+      await t.rollback();
+      return res.status(400).json({
+        error: `Проведение со складом для маршрута «${routeKey}» не настроено. Обратитесь к администратору.`,
+      });
+    }
+
+    if (runProduct) {
+      if (!Number.isFinite(toId) || toId < 1) {
         await t.rollback();
-        return res.status(400).json({
-          error:
-            fifo.remaining > 0
-              ? `Недостаточно остатка для «${it.item_name}» (ФИФО: не хватает ${toMoney(fifo.remaining)})`
-              : `Материал «${it.item_name}» не найден на складе отправителя`,
-        });
+        return res.status(400).json({ error: 'Не указан склад назначения для изделий' });
       }
 
-      const avgPrice =
-        fifo.qtyTaken > 0 ? toMoney(fifo.valueWithdrawn / fifo.qtyTaken) : toMoney(it.price || 0);
+      for (const it of items) {
+        const line = parseMovementItemToProductLine(it);
+        const { modelName, sizes, color, operationCost, qty } = line;
+        if (!(qty > 0) || !modelName) continue;
 
-      const destBatch = await db.WarehouseMaterial.create(
-        {
-          name: fifo.meta.name,
-          type: fifo.meta.type,
-          unit: fifo.meta.unit,
-          warehouse_id: toId,
-          qty: fifo.qtyTaken,
-          price: avgPrice,
-          total_sum: toMoney(fifo.valueWithdrawn),
-          received_at: doc.doc_date,
-          batch_number: `ПЭ-${doc.doc_number}-${it.id}`,
-        },
-        { transaction: t }
-      );
+        const displayName = modelName.substring(0, 255);
+        const articleNorm = color ? color.substring(0, 120).trim() : null;
 
-      await db.WarehouseMovement.create(
-        {
-          movement_kind: 'materials',
-          ref_id: destBatch.id,
-          item_name: it.item_name,
-          from_warehouse_id: fromId,
-          to_warehouse_id: toId,
-          qty: fifo.qtyTaken,
-          moved_at: doc.doc_date,
-          user_id: req.user?.id || null,
-          comment: `Этап ${meta?.from_stage || '?'}→${meta?.to_stage || '?'} док.${doc.doc_number}`,
-          type: 'РАСХОД',
-          quantity: fifo.qtyTaken,
-          item_id: null,
-          order_id: Number.isFinite(orderIdForMov) && orderIdForMov > 0 ? orderIdForMov : null,
-        },
-        { transaction: t }
-      );
+        const [destGood] = await db.WarehouseGood.findOrCreate({
+          where: {
+            name: displayName,
+            warehouse_id: toId,
+            article: articleNorm,
+          },
+          defaults: {
+            name: displayName,
+            article: articleNorm,
+            photo: null,
+            warehouse_id: toId,
+            qty: 0,
+            price: operationCost,
+            received_at: doc.doc_date,
+          },
+          transaction: t,
+        });
+
+        const prevQty = toMoney(destGood.qty || 0);
+        const prevPrice = toMoney(destGood.price || 0);
+        const addQty = toMoney(qty);
+        const newQty = toMoney(prevQty + addQty);
+        const newPrice =
+          newQty > 0 ? toMoney((prevQty * prevPrice + addQty * operationCost) / newQty) : operationCost;
+
+        await destGood.update(
+          { qty: newQty, price: newPrice, received_at: doc.doc_date },
+          { transaction: t }
+        );
+
+        const commentPayload = {
+          from_stage: fromStage,
+          to_stage: toStage,
+          color,
+          sizes,
+          unit_price: operationCost,
+          movement_doc_id: doc.id,
+          item_line_id: it.id,
+        };
+        let comment = buildStageProductComment(commentPayload);
+        if (comment.length > 500) {
+          comment = buildStageProductComment({
+            from_stage: fromStage,
+            to_stage: toStage,
+            color,
+            unit_price: operationCost,
+            movement_doc_id: doc.id,
+            item_line_id: it.id,
+          });
+        }
+
+        await db.WarehouseMovement.create(
+          {
+            movement_kind: 'goods',
+            ref_id: doc.id,
+            item_name: displayName,
+            from_warehouse_id: Number.isFinite(fromId) && fromId > 0 ? fromId : null,
+            to_warehouse_id: toId,
+            qty: addQty,
+            moved_at: doc.doc_date,
+            user_id: req.user?.id || null,
+            comment,
+            type: 'ПРИХОД',
+            quantity: addQty,
+            item_id: null,
+            order_id: Number.isFinite(orderIdForMov) && orderIdForMov > 0 ? orderIdForMov : null,
+          },
+          { transaction: t }
+        );
+      }
+    }
+
+    // Раскрой → пошив: списание ткани со склада раскроя (ФИФО); нехватка — только предупреждение
+    if (routeKey === 'cutting→sewing' && runProduct && Number.isFinite(fromId) && fromId > 0) {
+      try {
+        const fabricItems = items.filter((item) => {
+          const plain = typeof item.get === 'function' ? item.get({ plain: true }) : item;
+          const name = String(plain.item_name || '').trim();
+          const up = name.toUpperCase();
+          return (
+            name.length > 0 &&
+            !up.startsWith('SEW_OTK') &&
+            !up.startsWith('CUT_SEW') &&
+            fabricMetersForCuttingToSewingItem(item) > 0
+          );
+        });
+
+        for (const item of fabricItems) {
+          const plain = typeof item.get === 'function' ? item.get({ plain: true }) : item;
+          const fabricName = String(plain.item_name || '').trim();
+          const factMeters = fabricMetersForCuttingToSewingItem(item);
+          if (!(fabricName && factMeters > 0)) continue;
+
+          const fifo = await fifoDeductFromWarehouse(fabricName, fromId, factMeters, t);
+          if (fifo.remaining > 0) {
+            console.warn(
+              `[cutting→sewing] Нехватка ${fifo.remaining}м для "${fabricName}" на складе #${fromId}`
+            );
+          }
+          if (fifo.qtyTaken > 0) {
+            try {
+              await db.WarehouseMovement.create(
+                {
+                  movement_kind: 'materials',
+                  ref_id: doc.id,
+                  item_name: fabricName,
+                  from_warehouse_id: fromId,
+                  to_warehouse_id: Number.isFinite(toId) && toId > 0 ? toId : null,
+                  qty: fifo.qtyTaken,
+                  moved_at: doc.doc_date,
+                  user_id: req.user?.id || null,
+                  comment: `Раскрой→Пошив: списание ткани док.${doc.doc_number}`,
+                  type: 'РАСХОД',
+                  quantity: fifo.qtyTaken,
+                  item_id: null,
+                  order_id:
+                    Number.isFinite(orderIdForMov) && orderIdForMov > 0 ? orderIdForMov : null,
+                },
+                { transaction: t }
+              );
+            } catch (e) {
+              console.error('[movement record]:', e.message);
+            }
+          }
+        }
+      } catch (fabricErr) {
+        console.error('[cutting→sewing fabric]:', fabricErr.message);
+      }
+    }
+
+    const oidForCost = Number.isFinite(orderIdForMov) && orderIdForMov > 0 ? orderIdForMov : null;
+
+    if (oidForCost) {
+      try {
+        if (routeKey === 'warehouse→cutting' && runFifo) {
+          let fabricQty = 0;
+          let fabricSum = 0;
+          for (const item of items) {
+            const qty = fabricQtyFromMovementItem(item);
+            const price = toMoney(item.price || 0);
+            fabricQty = toMoney(fabricQty + qty);
+            fabricSum = toMoney(fabricSum + qty * price);
+          }
+          const costCalc = await ensureCostCalculation(oidForCost, t);
+          const newFabricQty = toMoney(parseFloat(costCalc.cutting_fabric_qty || 0) + fabricQty);
+          const newFabricSum = toMoney(parseFloat(costCalc.cutting_fabric_sum || 0) + fabricSum);
+          const acc = toMoney(parseFloat(costCalc.cutting_accessories_sum || 0));
+          const op = toMoney(parseFloat(costCalc.cutting_op_total || 0));
+          const newCuttingTotal = toMoney(newFabricSum + acc + op);
+          await costCalc.update(
+            {
+              cutting_fabric_qty: newFabricQty,
+              cutting_fabric_sum: newFabricSum,
+              cutting_cost_total: newCuttingTotal,
+            },
+            { transaction: t }
+          );
+          await db.CostCalculationItem.create(
+            {
+              cost_calculation_id: costCalc.id,
+              stage: 'cutting',
+              material_type: 'fabric',
+              material_name: 'Ткань (перемещение со склада)',
+              qty: fabricQty,
+              unit: 'м',
+              price: fabricQty > 0 ? toMoney(fabricSum / fabricQty) : 0,
+              total_sum: fabricSum,
+              note: `Перемещение #${doc.id} со склада в раскрой`,
+            },
+            { transaction: t }
+          );
+        }
+      } catch (costErr) {
+        console.error('[costCalc approve]:', costErr.message);
+      }
+
+      try {
+        if (routeKey === 'cutting→sewing' && runProduct) {
+          let outputQty = 0;
+          let cuttingZP = 0;
+          for (const item of items) {
+            const { qty, opCost } = movementItemPieceQtyAndOpCost(item);
+            outputQty += qty;
+            cuttingZP = toMoney(cuttingZP + qty * opCost);
+          }
+          const costCalc = await ensureCostCalculation(oidForCost, t);
+          const newCuttingOpTotal = toMoney(parseFloat(costCalc.cutting_op_total || 0) + cuttingZP);
+          const newCuttingOutputQty = toIntSafe(costCalc.cutting_output_qty || 0) + outputQty;
+          const newCuttingTotal = toMoney(
+            parseFloat(costCalc.cutting_fabric_sum || 0) +
+              parseFloat(costCalc.cutting_accessories_sum || 0) +
+              newCuttingOpTotal
+          );
+          await costCalc.update(
+            {
+              cutting_output_qty: newCuttingOutputQty,
+              cutting_op_total: newCuttingOpTotal,
+              cutting_op_cost_per_unit:
+                newCuttingOutputQty > 0 ? toMoney(newCuttingOpTotal / newCuttingOutputQty) : 0,
+              cutting_cost_total: newCuttingTotal,
+            },
+            { transaction: t }
+          );
+          if (cuttingZP > 0) {
+            await db.CostCalculationItem.create(
+              {
+                cost_calculation_id: costCalc.id,
+                stage: 'cutting',
+                material_type: 'operation',
+                material_name: 'ЗП раскройного отдела',
+                qty: outputQty,
+                unit: 'шт',
+                price: outputQty > 0 ? toMoney(cuttingZP / outputQty) : 0,
+                total_sum: cuttingZP,
+                note: `Перемещение #${doc.id} раскрой→пошив`,
+              },
+              { transaction: t }
+            );
+          }
+        }
+      } catch (costErr) {
+        console.error('[costCalc approve]:', costErr.message);
+      }
+
+      try {
+        if (routeKey === 'sewing→otk' && runProduct) {
+          let sewingQty = 0;
+          let sewingZP = 0;
+          for (const item of items) {
+            const { qty, opCost } = movementItemPieceQtyAndOpCost(item);
+            sewingQty += qty;
+            sewingZP = toMoney(sewingZP + qty * opCost);
+          }
+
+          let sewingAccSum = 0;
+          const costCalc = await ensureCostCalculation(oidForCost, t);
+
+          const accWarehouse = await db.WarehouseRef.findOne({
+            where: { name: SEWING_ACCESSORIES_WAREHOUSE_NAME },
+            transaction: t,
+          });
+          const accWarehouseId = accWarehouse?.id || null;
+          const fittingsFifoWhId =
+            accWarehouseId && accWarehouseId > 0
+              ? accWarehouseId
+              : Number.isFinite(fromId) && fromId > 0
+                ? fromId
+                : null;
+
+          const order = await db.Order.findByPk(oidForCost, { transaction: t });
+          if (order) {
+            const fittings = orderFittingsList(order);
+            for (const fitting of fittings) {
+              const fittingName = String(fitting.name || fitting.material_name || '').trim();
+              if (!fittingName) continue;
+
+              const perUnit = parseFloat(
+                fitting.qty_per_unit != null ? fitting.qty_per_unit : fitting.qtyPerUnit || 0
+              );
+              const planQty = toMoney(perUnit * sewingQty);
+              if (!(planQty > 0)) continue;
+
+              const price = toMoney(parseFloat(fitting.price || 0));
+              const sum = toMoney(planQty * price);
+              sewingAccSum = toMoney(sewingAccSum + sum);
+
+              let fifo = { remaining: planQty, qtyTaken: 0, valueWithdrawn: 0, meta: null };
+              if (fittingsFifoWhId) {
+                try {
+                  fifo = await fifoDeductFromWarehouse(
+                    fittingName,
+                    fittingsFifoWhId,
+                    planQty,
+                    t
+                  );
+                  if (fifo.remaining > 0) {
+                    console.warn(
+                      `[sewing→otk] Нехватка фурнитуры: "${fittingName}" ${fifo.remaining} (склад #${fittingsFifoWhId})`
+                    );
+                  }
+                } catch (e) {
+                  console.error('[fifo accessories]:', e.message);
+                }
+              }
+
+              try {
+                if (fifo.qtyTaken > 0) {
+                  await db.WarehouseMovement.create(
+                    {
+                      movement_kind: 'materials',
+                      ref_id: doc.id,
+                      item_name: fittingName,
+                      from_warehouse_id: fittingsFifoWhId,
+                      to_warehouse_id: Number.isFinite(toId) && toId > 0 ? toId : null,
+                      qty: fifo.qtyTaken,
+                      moved_at: doc.doc_date,
+                      user_id: req.user?.id || null,
+                      comment: `Пошив→ОТК: списание фурнитуры док.${doc.doc_number}`,
+                      type: 'РАСХОД',
+                      quantity: fifo.qtyTaken,
+                      item_id: null,
+                      order_id: oidForCost,
+                    },
+                    { transaction: t }
+                  );
+                }
+              } catch (e) {
+                console.error('[acc movement]:', e.message);
+              }
+
+              try {
+                await db.CostCalculationItem.create(
+                  {
+                    cost_calculation_id: costCalc.id,
+                    stage: 'sewing',
+                    material_type: 'accessories',
+                    material_name: fittingName,
+                    qty: planQty,
+                    unit: String(fitting.unit || 'шт').slice(0, 50),
+                    price,
+                    total_sum: sum,
+                    note: `Пошив→ОТК: списание #${doc.id}`,
+                  },
+                  { transaction: t }
+                );
+              } catch (e) {
+                console.error('[cost item acc]:', e.message);
+              }
+            }
+          }
+          const prevCuttingTotal = toMoney(parseFloat(costCalc.cutting_cost_total || 0));
+          const newSewingOpTotal = toMoney(parseFloat(costCalc.sewing_op_total || 0) + sewingZP);
+          const newSewingAccSum = toMoney(parseFloat(costCalc.sewing_accessories_sum || 0) + sewingAccSum);
+          const newSewingOutputQty = toIntSafe(costCalc.sewing_output_qty || 0) + sewingQty;
+          const newSewingTotal = toMoney(prevCuttingTotal + newSewingAccSum + newSewingOpTotal);
+          await costCalc.update(
+            {
+              sewing_output_qty: newSewingOutputQty,
+              sewing_op_total: newSewingOpTotal,
+              sewing_op_cost_per_unit:
+                newSewingOutputQty > 0 ? toMoney(newSewingOpTotal / newSewingOutputQty) : 0,
+              sewing_accessories_sum: newSewingAccSum,
+              sewing_cost_total: newSewingTotal,
+            },
+            { transaction: t }
+          );
+          if (sewingZP > 0) {
+            await db.CostCalculationItem.create(
+              {
+                cost_calculation_id: costCalc.id,
+                stage: 'sewing',
+                material_type: 'operation',
+                material_name: 'ЗП пошивного отдела',
+                qty: sewingQty,
+                unit: 'шт',
+                price: sewingQty > 0 ? toMoney(sewingZP / sewingQty) : 0,
+                total_sum: sewingZP,
+                note: `Перемещение #${doc.id} пошив→отк`,
+              },
+              { transaction: t }
+            );
+          }
+        }
+      } catch (costErr) {
+        console.error('[costCalc approve]:', costErr.message);
+      }
+
+      try {
+        if ((routeKey === 'otk→warehouse' || routeKey === 'otk→shipment') && runProduct) {
+          let otkQty = 0;
+          let otkZP = 0;
+          for (const item of items) {
+            const { qty, opCost } = movementItemPieceQtyAndOpCost(item);
+            otkQty += qty;
+            otkZP = toMoney(otkZP + qty * opCost);
+          }
+
+          let otkAccSum = 0;
+          const order = await db.Order.findByPk(oidForCost, { transaction: t });
+          if (order) {
+            const fittings = orderFittingsList(order);
+            const otkFittings = fittings.filter((f) => f.stage === 'otk');
+            const whOtk = Number.isFinite(fromId) && fromId > 0 ? fromId : null;
+            for (const fitting of otkFittings) {
+              const perUnit = parseFloat(
+                fitting.qty_per_unit != null ? fitting.qty_per_unit : fitting.qtyPerUnit || 0
+              );
+              const planQty = toMoney(perUnit * otkQty);
+              const price = toMoney(parseFloat(fitting.price || 0));
+              otkAccSum = toMoney(otkAccSum + planQty * price);
+              if (whOtk && planQty > 0) {
+                const fitName = String(fitting.name || fitting.material_name || '').trim();
+                if (fitName) {
+                  const fifo = await fifoDeductFromWarehouse(fitName, whOtk, planQty, t);
+                  if (fifo.remaining > 0) {
+                    console.error(
+                      `[costCalc approve] фурнитура ОТК «${fitName}»: не хватает ${fifo.remaining} (склад ${whOtk})`
+                    );
+                  }
+                }
+              }
+            }
+          }
+
+          const costCalc = await ensureCostCalculation(oidForCost, t);
+          const prevSewingTotal = toMoney(parseFloat(costCalc.sewing_cost_total || 0));
+          const newOtkOpTotal = toMoney(parseFloat(costCalc.otk_op_total || 0) + otkZP);
+          const newOtkAccSum = toMoney(parseFloat(costCalc.otk_accessories_sum || 0) + otkAccSum);
+          const newOtkOutputQty = toIntSafe(costCalc.otk_output_qty || 0) + otkQty;
+          const newOtkTotal = toMoney(prevSewingTotal + newOtkAccSum + newOtkOpTotal);
+          const finalQty =
+            newOtkOutputQty ||
+            toIntSafe(costCalc.sewing_output_qty || 0) ||
+            toIntSafe(costCalc.cutting_output_qty || 0);
+          const costPerUnit = finalQty > 0 ? toMoney(newOtkTotal / finalQty) : 0;
+
+          await costCalc.update(
+            {
+              otk_output_qty: newOtkOutputQty,
+              otk_op_total: newOtkOpTotal,
+              otk_op_cost_per_unit:
+                newOtkOutputQty > 0 ? toMoney(newOtkOpTotal / newOtkOutputQty) : 0,
+              otk_accessories_sum: newOtkAccSum,
+              otk_cost_total: newOtkTotal,
+              total_cost: newOtkTotal,
+              cost_per_unit: costPerUnit,
+              status: 'calculated',
+            },
+            { transaction: t }
+          );
+          if (otkZP > 0) {
+            await db.CostCalculationItem.create(
+              {
+                cost_calculation_id: costCalc.id,
+                stage: 'otk',
+                material_type: 'operation',
+                material_name: 'ЗП отдела ОТК',
+                qty: otkQty,
+                unit: 'шт',
+                price: otkQty > 0 ? toMoney(otkZP / otkQty) : 0,
+                total_sum: otkZP,
+                note: `Перемещение #${doc.id} отк→отгрузка/склад`,
+              },
+              { transaction: t }
+            );
+          }
+          if (otkAccSum > 0) {
+            await db.CostCalculationItem.create(
+              {
+                cost_calculation_id: costCalc.id,
+                stage: 'otk',
+                material_type: 'accessories',
+                material_name: 'Фурнитура ОТК (списание)',
+                qty: otkQty,
+                unit: 'шт',
+                price: otkQty > 0 ? toMoney(otkAccSum / otkQty) : 0,
+                total_sum: otkAccSum,
+                note: `Перемещение #${doc.id} отк→отгрузка/склад`,
+              },
+              { transaction: t }
+            );
+          }
+        }
+      } catch (costErr) {
+        console.error('[costCalc approve]:', costErr.message);
+      }
     }
 
     await doc.update({ status: 'posted' }, { transaction: t });
@@ -549,6 +1289,18 @@ router.get('/:id', async (req, res, next) => {
       order_label,
     });
   } catch (err) {
+    const pg = err.parent || err.original;
+    console.error('[movements GET /:id] ОШИБКА:', err.message);
+    console.error('[movements GET /:id] PG:', pg?.message || '(нет)');
+    console.error('[movements GET /:id] sql:', pg?.sql || '(нет)');
+    console.error('[movements GET /:id] stack:', err.stack);
+    if (!res.headersSent) {
+      return res.status(500).json({
+        error: err.message || 'Внутренняя ошибка',
+        pg: pg?.message,
+        code: pg?.code,
+      });
+    }
     next(err);
   }
 });

@@ -7,14 +7,12 @@ import { API_URL } from './apiBaseUrl.js'
 // Периодический ping отключен, чтобы избежать циклов запросов.
 
 async function wakeUpServer() {
-  if (!import.meta.env.PROD) return
-  const base = (API_URL || '').trim().replace(/\/$/, '')
-  if (!base) return
-  const health = `${base}/api/health`
+  const base = (API_URL || import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '')
+  const health = base ? `${base}/api/health` : '/api/health'
   console.log('[App] будим сервер…')
   for (let i = 0; i < 5; i++) {
     try {
-      const res = await fetch(health)
+      const res = await fetch(health, { signal: AbortSignal.timeout(30000) })
       if (res.ok) {
         console.log('[App] сервер проснулся ✓')
         return

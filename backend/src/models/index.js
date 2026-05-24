@@ -67,6 +67,7 @@ const db = {
   FinanceCategory: require('./FinanceCategory')(sequelize, Sequelize.DataTypes),
   FinancePlan2026: require('./FinancePlan2026')(sequelize, Sequelize.DataTypes),
   FinanceFact: require('./FinanceFact')(sequelize, Sequelize.DataTypes),
+  PaymentCalendar: require('./PaymentCalendar')(sequelize, Sequelize.DataTypes),
   OrderFinanceLink: require('./OrderFinanceLink')(sequelize, Sequelize.DataTypes),
   Color: require('./Color')(sequelize, Sequelize.DataTypes),
   OrderFloorDistribution: require('./OrderFloorDistribution')(sequelize, Sequelize.DataTypes),
@@ -81,6 +82,8 @@ const db = {
   WarehouseMaterial: require('./WarehouseMaterial')(sequelize, Sequelize.DataTypes),
   MovementDocument: require('./MovementDocument')(sequelize, Sequelize.DataTypes),
   MovementDocumentItem: require('./MovementDocumentItem')(sequelize, Sequelize.DataTypes),
+  CostCalculation: require('./CostCalculation')(sequelize, Sequelize.DataTypes),
+  CostCalculationItem: require('./CostCalculationItem')(sequelize, Sequelize.DataTypes),
   StageReport: require('./StageReport')(sequelize, Sequelize.DataTypes),
   StageReportItem: require('./StageReportItem')(sequelize, Sequelize.DataTypes),
   Size: require('./Size')(sequelize, Sequelize.DataTypes),
@@ -485,5 +488,13 @@ db.ModelSize.hasMany(db.ShipmentItem, { foreignKey: 'model_size_id' });
 db.ShipmentItem.belongsTo(db.ModelSize, { foreignKey: 'model_size_id' });
 db.Size.hasMany(db.ShipmentItem, { foreignKey: 'size_id' });
 db.ShipmentItem.belongsTo(db.Size, { foreignKey: 'size_id' });
+
+db.Order.hasMany(db.CostCalculation, { foreignKey: 'order_id' });
+db.CostCalculation.belongsTo(db.Order, { foreignKey: 'order_id' });
+db.CostCalculation.hasMany(db.CostCalculationItem, {
+  foreignKey: 'cost_calculation_id',
+  as: 'Items',
+});
+db.CostCalculationItem.belongsTo(db.CostCalculation, { foreignKey: 'cost_calculation_id' });
 
 module.exports = db;

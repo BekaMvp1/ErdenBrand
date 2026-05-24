@@ -376,35 +376,125 @@ function canMutate(req) {
   return ['admin', 'manager', 'technologist'].includes(req.user?.role);
 }
 
+/** Скрыть черновики «Новая модель» без кода (пустые карточки из «Добавить») */
+function buildListWhere(searchQ) {
+  const notPlaceholder = {
+    [Op.not]: {
+      [Op.and]: [{ name: 'Новая модель' }, { code: '' }],
+    },
+  };
+  const q = searchQ != null ? String(searchQ).trim() : '';
+  if (!q) return notPlaceholder;
+  return {
+    [Op.and]: [
+      notPlaceholder,
+      {
+        [Op.or]: [
+          { code: { [Op.iLike]: `%${q}%` } },
+          { name: { [Op.iLike]: `%${q}%` } },
+          { description: { [Op.iLike]: `%${q}%` } },
+        ],
+      },
+    ],
+  };
+}
+
+/** Поля для списка — без тяжёлых JSONB, но с photos для превью */
+const LIST_ATTRIBUTES = ['id', 'name', 'code', 'description', 'photos', 'created_at', 'updated_at'];
+
+/** Первое фото: models_base хранит photos JSONB (массив data URL или путей) */
+function extractFirstPhotoUrl(data) {
+  if (typeof data.photo === 'string' && data.photo.trim()) {
+    return data.photo.trim();
+  }
+  if (Array.isArray(data.photos) && data.photos.length > 0) {
+    const p0 = data.photos[0];
+    if (typeof p0 === 'string' && p0.trim()) return p0.trim();
+    if (p0 && typeof p0 === 'object') {
+      const s = String(p0.url || p0.data || p0.src || '').trim();
+      if (s) return s;
+    }
+  }
+  if (data.image || data.image_url) {
+    return String(data.image || data.image_url).trim() || null;
+  }
+  return null;
+}
+
+function toListCard(plain) {
+  const photo = extractFirstPhotoUrl(plain);
+  return {
+    id: plain.id,
+    name: plain.name,
+    code: plain.code,
+    description: plain.description,
+    created_at: plain.created_at,
+    updated_at: plain.updated_at,
+    photo,
+    photos: photo ? [photo] : [],
+  };
+}
+
 /**
  * GET /api/models-base?search=
  */
 router.get('/', async (req, res, next) => {
   try {
     const q = req.query.search != null ? String(req.query.search).trim() : '';
-    const where = q
-      ? {
-          [Op.or]: [
-            { code: { [Op.iLike]: `%${q}%` } },
-            { name: { [Op.iLike]: `%${q}%` } },
-            { description: { [Op.iLike]: `%${q}%` } },
-          ],
-        }
-      : {};
+    const where = buildListWhere(q);
     const rows = await db.ModelsBase.findAll({
+      attributes: LIST_ATTRIBUTES,
       where,
-      order: [['updated_at', 'DESC']],
-      limit: 500,
+      order: [['created_at', 'DESC']],
+      limit: 100,
     });
-    res.json(
-      rows.map((r) => {
-        const plain = r.get({ plain: true });
-        plain.pamyatka = parsePamyatka(plain.pamyatka);
-        return plain;
-      })
-    );
+    res.json(rows.map((r) => toListCard(r.get({ plain: true }))));
   } catch (err) {
-    next(err);
+    console.error('[models-base GET]:', err.message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    } else {
+      next(err);
+    }
+  }
+});
+
+/**
+ * POST /api/models-base/:id/duplicate
+ */
+router.post('/:id/duplicate', async (req, res, next) => {
+  try {
+    if (!canMutate(req)) return res.status(403).json({ error: 'Недостаточно прав' });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id) || id < 1) return res.status(400).json({ error: 'Некорректный id' });
+    const original = await db.ModelsBase.findByPk(id);
+    if (!original) return res.status(404).json({ error: 'Модель не найдена' });
+
+    const data = original.get({ plain: true });
+    delete data.id;
+    delete data.created_at;
+    delete data.updated_at;
+
+    const baseName = String(data.name || 'Новая модель').trim() || 'Новая модель';
+    data.name = `${baseName} (копия)`;
+    if (data.code) {
+      data.code = `${String(data.code).slice(0, 70)}-copy`;
+    }
+
+    const copy = await db.ModelsBase.create(data);
+    const created = copy.get({ plain: true });
+    created.tabel_mer = normalizeTabelMer(created.tabel_mer);
+    created.pamyatka = parsePamyatka(created.pamyatka);
+    attachModelOpsFields(created);
+    attachFabricAccessoriesExport(created);
+    res.status(201).json(created);
+  } catch (err) {
+    console.error('[models-base DUPLICATE]:', err.message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    } else {
+      next(err);
+    }
   }
 });
 
@@ -572,11 +662,16 @@ router.delete('/:id', async (req, res, next) => {
     const id = parseInt(req.params.id, 10);
     if (!Number.isFinite(id) || id < 1) return res.status(400).json({ error: 'Некорректный id' });
     const row = await db.ModelsBase.findByPk(id);
-    if (!row) return res.status(404).json({ error: 'Не найдено' });
+    if (!row) return res.status(404).json({ error: 'Модель не найдена' });
     await row.destroy();
-    res.status(204).send();
+    res.json({ ok: true, id });
   } catch (err) {
-    next(err);
+    console.error('[models-base DELETE]:', err.message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    } else {
+      next(err);
+    }
   }
 });
 

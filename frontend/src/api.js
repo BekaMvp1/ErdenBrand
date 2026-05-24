@@ -4,7 +4,7 @@
 
 import { API_URL } from './apiBaseUrl';
 
-const API_TIMEOUT_MS = 15000;
+const API_TIMEOUT_MS = 60000;
 
 function getToken() {
   return sessionStorage.getItem('token');
@@ -17,8 +17,40 @@ function isLikelyNetworkError(err) {
   return m.includes('Failed to fetch') || m.includes('NetworkError') || m.includes('Load failed');
 }
 
+function mergeAbortSignals(externalSignal, timeoutMs) {
+  let timeoutSignal;
+  if (typeof AbortSignal.timeout === 'function') {
+    timeoutSignal = AbortSignal.timeout(timeoutMs);
+  } else {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    timeoutSignal = ac.signal;
+    timeoutSignal.addEventListener(
+      'abort',
+      () => clearTimeout(timer),
+      { once: true }
+    );
+  }
+  if (!externalSignal) return timeoutSignal;
+  if (typeof AbortSignal.any === 'function') {
+    return AbortSignal.any([externalSignal, timeoutSignal]);
+  }
+  const merged = new AbortController();
+  const abort = () => merged.abort();
+  if (externalSignal.aborted || timeoutSignal.aborted) {
+    abort();
+  } else {
+    externalSignal.addEventListener('abort', abort, { once: true });
+    timeoutSignal.addEventListener('abort', abort, { once: true });
+  }
+  return merged.signal;
+}
+
 async function request(path, options = {}) {
-  const maxRetries = 3;
+  const maxRetries =
+    Number.isFinite(Number(options.maxRetries)) && Number(options.maxRetries) >= 1
+      ? Number(options.maxRetries)
+      : 3;
   const _timeoutMs =
     Number.isFinite(Number(options.timeout)) && Number(options.timeout) > 0
       ? Number(options.timeout)
@@ -34,15 +66,16 @@ async function request(path, options = {}) {
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     const externalSignal = options.signal;
+    const fetchSignal = mergeAbortSignals(externalSignal, _timeoutMs);
     try {
-      const { timeout: _timeout, ...fetchOptions } = options;
+      const { timeout: _timeout, maxRetries: _maxRetries, ...fetchOptions } = options;
       const res = await fetch(`${API_URL}${path}`, {
         ...fetchOptions,
         headers,
         mode: 'cors',
         credentials: 'include',
         cache: 'no-store',
-        signal: externalSignal,
+        signal: fetchSignal,
       });
 
       if (res.status === 502) {
@@ -139,9 +172,14 @@ export const api = {
     stats: () => request('/api/orders/stats'),
     byWorkshop: (workshopId) =>
       request(`/api/orders/by-workshop?workshop_id=${workshopId}`),
-    list: (params) => {
-      const q = new URLSearchParams(params).toString();
-      return request(`/api/orders${q ? `?${q}` : ''}`);
+    list: (params = {}, opts = {}) => {
+      const merged = { light: '1', ...params };
+      const q = new URLSearchParams(merged).toString();
+      return request(`/api/orders${q ? `?${q}` : ''}`, {
+        timeout: 60000,
+        maxRetries: 2,
+        ...opts,
+      });
     },
     get: (id) => request(`/api/orders/${id}`),
     photo: (id) => request(`/api/orders/${id}/photo`),
@@ -221,13 +259,15 @@ export const api = {
     get: (id) => request(`/api/models-base/${id}`),
     create: (body) =>
       request('/api/models-base', { method: 'POST', body: JSON.stringify(body) }),
-    update: (id, body) =>
+    update: (id, body, opts = {}) =>
       request(`/api/models-base/${id}`, {
         method: 'PUT',
         body: JSON.stringify(body),
         timeout: 120000,
+        ...opts,
       }),
     delete: (id) => request(`/api/models-base/${id}`, { method: 'DELETE' }),
+    duplicate: (id) => request(`/api/models-base/${id}/duplicate`, { method: 'POST' }),
   },
   planning: {
     updateOperation: (id, data) =>
@@ -551,6 +591,34 @@ export const api = {
       request('/api/finance/fact', {
         method: 'POST',
         body: JSON.stringify(data),
+      }),
+  },
+  paymentCalendar: {
+    list: (year = 2026) =>
+      request(`/api/payment-calendar?year=${encodeURIComponent(year)}`),
+    byWeek: (params) => {
+      const q = new URLSearchParams(params).toString();
+      return request(`/api/payment-calendar/by-week${q ? `?${q}` : ''}`);
+    },
+    saveCell: (body) =>
+      request('/api/payment-calendar/cell', {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
+    fromOrder: (body) =>
+      request('/api/payment-calendar/from-order', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    writeToRow: (body) =>
+      request('/api/payment-calendar/write-to-row', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    updateOrderWeek: (body) =>
+      request('/api/payment-calendar/update-order-week', {
+        method: 'POST',
+        body: JSON.stringify(body),
       }),
   },
   procurement: {

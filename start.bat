@@ -1,15 +1,38 @@
 @echo off
-echo Запуск Erden...
+title ErdenBrand — Запуск
+color 0A
 
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr :3001') do taskkill /PID %%a /F 2>nul
+echo ==========================================
+echo    ERDEN BRAND — Запуск системы
+echo ==========================================
+echo.
 
-start cmd /k "cd backend && npm run dev"
+:: Запустить бэкенд в отдельном окне
+echo [1/2] Запускаю бэкенд...
+start "ErdenBrand BACKEND" cmd /k "cd /d "C:\Users\user\Desktop\Cursor Project\ErdenBrand\backend" && npm run dev"
 
-timeout /t 2 /nobreak > nul
+:: Подождать 3 секунды
+timeout /t 3 /nobreak > nul
 
-start cmd /k "cd frontend && npm run dev"
+:: Запустить фронтенд в отдельном окне
+echo [2/2] Запускаю фронтенд...
+start "ErdenBrand FRONTEND" cmd /k "cd /d "C:\Users\user\Desktop\Cursor Project\ErdenBrand\frontend" && npm run dev"
 
-echo Приложение запускается...
-echo Backend:  http://localhost:3001
-echo Frontend: http://localhost:5173
+:: Подождать пока бэкенд стартует
+echo.
+echo Ожидание запуска сервера (10 сек)...
+timeout /t 10 /nobreak > nul
+
+:: Открыть браузер
+echo Открываю браузер...
+start http://localhost:5173/orders
+
+echo.
+echo ==========================================
+echo    Система запущена!
+echo    Бэкенд:  http://localhost:3001
+echo    Фронтенд: http://localhost:5173
+echo ==========================================
+echo.
+echo Не закрывайте окна с BACKEND и FRONTEND
 pause

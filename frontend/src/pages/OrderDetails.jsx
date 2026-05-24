@@ -18,6 +18,7 @@ import { useGridNavigation } from '../hooks/useGridNavigation';
 import { numInputValue } from '../utils/numInput';
 import SizeGrid, { SIZE_GRID_MAP, sizeGridNumericFromSelection } from '../components/SizeGrid';
 import OrderFinanceBlock from '../components/order/OrderFinanceBlock';
+import PrintOrderBlank from '../components/PrintOrderBlank';
 
 const LETTER_SIZES = ['S', 'M', 'L', 'XL', 'XXL', '3XL', '4XL', '5XL'];
 const NUMERIC_SIZES = ['38', '40', '42', '44', '46', '48', '50', '52', '54', '56'];
@@ -1366,6 +1367,97 @@ export default function OrderDetails() {
         </h1>
         <div className="flex gap-2 flex-wrap">
           <PrintButton />
+          <button
+            type="button"
+            onClick={() => {
+              if (!order) return;
+
+              const blankEl = document.getElementById('print-blank-content');
+              if (!blankEl) return;
+
+              const printWindow = window.open('', '_blank', 'width=900,height=700');
+              if (!printWindow) return;
+
+              printWindow.document.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Бланк заказа ${order.number || order.tz_code || ''}</title>
+      <style>
+        body {
+          font-family: Arial, sans-serif;
+          font-size: 11px;
+          color: #000;
+          background: #fff;
+          margin: 0;
+          padding: 10mm;
+        }
+        table {
+          border-collapse: collapse;
+          width: 100%;
+        }
+        td, th {
+          border: 1px solid #000;
+          padding: 3px 5px;
+          font-size: 10px;
+        }
+        th {
+          background: #f0f0f0;
+          font-weight: 700;
+          text-align: center;
+        }
+        .header-cyan {
+          background: #00bcd4;
+          padding: 8px 12px;
+          font-weight: 700;
+          font-size: 11px;
+          border: 2px solid #000;
+          margin-bottom: 0;
+        }
+        .section-yellow {
+          background: #ffff00;
+          border: 1px solid #000;
+          padding: 3px 8px;
+          font-weight: 700;
+          font-size: 11px;
+        }
+        @page {
+          size: A4 portrait;
+          margin: 8mm 10mm;
+        }
+      </style>
+    </head>
+    <body>
+      ${blankEl.innerHTML}
+    </body>
+    </html>
+  `);
+
+              printWindow.document.close();
+
+              printWindow.onload = () => {
+                printWindow.focus();
+                printWindow.print();
+                printWindow.close();
+              };
+            }}
+            style={{
+              background: '#16a34a',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 8,
+              padding: '10px 16px',
+              cursor: 'pointer',
+              fontSize: 13,
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+            }}
+          >
+            🖨️ Бланк раздела
+          </button>
           <button
             type="button"
             onClick={handlePrintChecklist}
@@ -3366,6 +3458,10 @@ export default function OrderDetails() {
           </div>
         </div>
       )}
+
+      <div id="print-blank-content" style={{ display: 'none' }}>
+        {order && <PrintOrderBlank order={order} stage="all" />}
+      </div>
 
       <ProcurementPlanModal
         open={showProcurementPlanModal}

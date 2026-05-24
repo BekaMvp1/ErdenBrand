@@ -344,60 +344,6 @@ html.dark * {
               background-color 0.3s ease;
 }
 
-/* Печать: A4, скрыть непечатаемое, показывать весь контент (включая скроллы) на нескольких листах */
-@media print {
-  @page {
-    size: A4;
-    margin: 12mm;
-  }
-  html,
-  body,
-  #root {
-    background: white;
-    color: black;
-    height: auto !important;
-    min-height: 0 !important;
-    overflow: visible !important;
-  }
-  /* Главное содержимое: убираем прокрутку, чтобы браузер печатал все страницы подряд */
-  main {
-    overflow: visible !important;
-    height: auto !important;
-    max-height: none !important;
-  }
-  /* Любые контейнеры с overflow-auto не должны обрезать содержимое при печати */
-  .overflow-auto,
-  .overflow-y-auto,
-  .overflow-x-auto {
-    overflow: visible !important;
-    max-height: none !important;
-  }
-  /* Печатная область может свободно разбиваться на несколько страниц */
-  .print-area {
-    display: block;
-    max-height: none !important;
-    overflow: visible !important;
-  }
-  .no-print,
-  button.no-print,
-  .print\\:hidden,
-  [class*="no-print"] {
-    display: none !important;
-  }
-  .print-area,
-  .print-area * {
-    color: black !important;
-    background: white !important;
-    border-color: #ccc !important;
-  }
-  .print-only {
-    display: block !important;
-  }
-  a[href]::after {
-    content: none !important;
-  }
-}
-
 /* DatePicker тёмная тема ErdenBrand */
 .react-datepicker {
   background-color: #0f172a !important;

@@ -40,13 +40,6 @@ function todayIso() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function taskPhotoSrc(url) {
-  if (!url) return null;
-  if (String(url).startsWith('http')) return url;
-  const base = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
-  return `${base}${url}`;
-}
-
 function formatRuDate(iso) {
   if (!iso) return '';
   const s = String(iso).slice(0, 10);
@@ -309,7 +302,6 @@ export default function TasksPage() {
                   )}
 
                   {colTasks.map((task) => {
-                    const photo = taskPhotoSrc(task.photo_url);
                     return (
                       <div
                         key={task.id}
@@ -337,9 +329,9 @@ export default function TasksPage() {
                           e.currentTarget.style.borderColor = '#1e3a5f';
                         }}
                       >
-                        {photo ? (
+                        {task.photo_url ? (
                           <img
-                            src={photo}
+                            src={task.photo_url}
                             alt=""
                             style={{
                               width: '100%',
@@ -534,10 +526,10 @@ export default function TasksPage() {
             </div>
 
             <div style={{ padding: '20px' }}>
-              {taskPhotoSrc(selectedTask.photo_url) ? (
+              {selectedTask.photo_url ? (
                 <div style={{ marginBottom: 20 }}>
                   <img
-                    src={taskPhotoSrc(selectedTask.photo_url)}
+                    src={selectedTask.photo_url}
                     alt=""
                     style={{
                       width: '100%',
@@ -548,7 +540,7 @@ export default function TasksPage() {
                       cursor: 'zoom-in',
                     }}
                     onClick={() => {
-                      window.open(taskPhotoSrc(selectedTask.photo_url), '_blank');
+                      window.open(selectedTask.photo_url, '_blank');
                     }}
                   />
                   <div
@@ -963,7 +955,6 @@ export default function TasksPage() {
                 ) : (
                   tasks.map((task, i) => {
                     const st = STATUSES.find((s) => s.key === task.status);
-                    const photo = taskPhotoSrc(task.photo_url);
                     return (
                       <tr
                         key={task.id}
@@ -973,9 +964,9 @@ export default function TasksPage() {
                         }}
                       >
                         <td style={{ padding: '8px 12px' }}>
-                          {photo ? (
+                          {task.photo_url ? (
                             <img
-                              src={photo}
+                              src={task.photo_url}
                               alt=""
                               style={{
                                 width: 40,

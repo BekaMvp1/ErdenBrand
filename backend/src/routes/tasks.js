@@ -4,24 +4,29 @@
 
 const express = require('express');
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
+const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const db = require('../models');
 
 const router = express.Router();
 
 const TASK_STATUSES = new Set(['new', 'in_progress', 'resolved', 'closed']);
 
-const uploadsDir = path.join(__dirname, '../../uploads/tasks');
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-    cb(null, uploadsDir);
-  },
-  filename: (_req, file, cb) => {
-    cb(null, `${Date.now()}${path.extname(file.originalname || '.jpg')}`);
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
+const storage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: 'erden-tasks',
+    allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'heic'],
+    transformation: [{ width: 1200, height: 1200, crop: 'limit', quality: 'auto' }],
   },
 });
+
 const upload = multer({ storage });
 
 function parseOptionalInt(v) {
@@ -34,6 +39,11 @@ function normalizeDate(v) {
   if (v == null || v === '') return null;
   const s = String(v).slice(0, 10);
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+}
+
+function taskPhotoUrl(file) {
+  if (!file) return null;
+  return file.path || file.secure_url || file.url || null;
 }
 
 router.get('/', async (req, res, next) => {
@@ -61,7 +71,9 @@ router.post('/', (req, res, next) => {
     console.log('[tasks POST] body:', req.body);
     console.log('[tasks POST] file:', req.file);
 
-    const photo_url = req.file ? `/uploads/tasks/${req.file.filename}` : null;
+    const photo_url = taskPhotoUrl(req.file);
+    console.log('[tasks POST] photo_url:', photo_url);
+
     const task = await db.Task.create({
       order_id: parseOptionalInt(req.body.order_id),
       order_number: req.body.order_number ? String(req.body.order_number).trim() : null,

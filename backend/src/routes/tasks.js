@@ -1,33 +1,13 @@
 /**
- * Задачи и решения — API
+ * Задачи и решения — API (фото в БД как base64)
  */
 
 const express = require('express');
-const multer = require('multer');
-const cloudinary = require('cloudinary').v2;
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const db = require('../models');
 
 const router = express.Router();
 
 const TASK_STATUSES = new Set(['new', 'in_progress', 'resolved', 'closed']);
-
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
-
-const storage = new CloudinaryStorage({
-  cloudinary,
-  params: {
-    folder: 'erden-tasks',
-    allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'heic'],
-    transformation: [{ width: 1200, height: 1200, crop: 'limit', quality: 'auto' }],
-  },
-});
-
-const upload = multer({ storage });
 
 function parseOptionalInt(v) {
   if (v == null || v === '') return null;
@@ -41,9 +21,11 @@ function normalizeDate(v) {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
 }
 
-function taskPhotoUrl(file) {
-  if (!file) return null;
-  return file.path || file.secure_url || file.url || null;
+function normalizePhotoData(v) {
+  if (v == null || v === '') return null;
+  const s = String(v).trim();
+  if (!s.startsWith('data:image/')) return null;
+  return s;
 }
 
 router.get('/', async (req, res, next) => {
@@ -58,36 +40,35 @@ router.get('/', async (req, res, next) => {
   }
 });
 
-router.post('/', (req, res, next) => {
-  upload.single('photo')(req, res, (multerErr) => {
-    if (multerErr) {
-      console.error('[tasks POST multer]', multerErr.message);
-      return res.status(400).json({ error: multerErr.message });
-    }
-    next();
-  });
-}, async (req, res) => {
+router.post('/', async (req, res) => {
   try {
-    console.log('[tasks POST] body:', req.body);
-    console.log('[tasks POST] file:', req.file);
-
-    const photo_url = taskPhotoUrl(req.file);
-    console.log('[tasks POST] photo_url:', photo_url);
+    const {
+      order_id,
+      order_number,
+      from_stage,
+      to_stage,
+      date_start,
+      date_end,
+      description,
+      status,
+      photo_data,
+    } = req.body;
 
     const task = await db.Task.create({
-      order_id: parseOptionalInt(req.body.order_id),
-      order_number: req.body.order_number ? String(req.body.order_number).trim() : null,
-      from_stage: req.body.from_stage ? String(req.body.from_stage).trim() : null,
-      to_stage: req.body.to_stage ? String(req.body.to_stage).trim() : null,
-      date_start: normalizeDate(req.body.date_start),
-      date_end: normalizeDate(req.body.date_end),
-      description: req.body.description ? String(req.body.description).trim() : null,
-      photo_url,
-      status: TASK_STATUSES.has(req.body.status) ? req.body.status : 'new',
+      order_id: parseOptionalInt(order_id),
+      order_number: order_number ? String(order_number).trim() : null,
+      from_stage: from_stage ? String(from_stage).trim() : null,
+      to_stage: to_stage ? String(to_stage).trim() : null,
+      date_start: normalizeDate(date_start),
+      date_end: normalizeDate(date_end),
+      description: description ? String(description).trim() : null,
+      status: TASK_STATUSES.has(status) ? status : 'new',
+      photo_data: normalizePhotoData(photo_data),
+      photo_url: null,
     });
     res.status(201).json(task.toJSON());
   } catch (err) {
-    console.error('[tasks POST error]:', err);
+    console.error('[tasks POST]:', err);
     res.status(500).json({ error: err.message });
   }
 });

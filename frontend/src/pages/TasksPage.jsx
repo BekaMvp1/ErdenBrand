@@ -40,6 +40,41 @@ function todayIso() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+function taskPhotoSrc(task) {
+  return task?.photo_data || task?.photo_url || null;
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX = 800;
+        let w = img.width;
+        let h = img.height;
+        if (w > h && w > MAX) {
+          h = (h * MAX) / w;
+          w = MAX;
+        } else if (h > MAX) {
+          w = (w * MAX) / h;
+          h = MAX;
+        }
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.7));
+      };
+      img.onerror = reject;
+      img.src = reader.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 function formatRuDate(iso) {
   if (!iso) return '';
   const s = String(iso).slice(0, 10);
@@ -102,33 +137,28 @@ export default function TasksPage() {
   }, []);
 
   const handleSubmit = async () => {
-    console.log('[DEBUG submit] form:', form);
-    console.log('[DEBUG submit] photo:', form.photo);
-
     if (!form.from_stage || !form.to_stage) {
       alert('⚠️ Выберите отделы "откуда" и "куда"');
       return;
     }
 
     try {
-      const formData = new FormData();
-      Object.entries(form).forEach(([k, v]) => {
-        if (k === 'photo') {
-          if (v) formData.append('photo', v);
-          return;
-        }
-        if (v !== null && v !== undefined && v !== '') {
-          formData.append(k, v);
-        }
-      });
-
-      console.log('[DEBUG] FormData entries:');
-      for (const [k, v] of formData.entries()) {
-        console.log(' ', k, '=', v);
+      let photo_data = null;
+      if (form.photo) {
+        photo_data = await fileToBase64(form.photo);
       }
 
-      const created = await api.tasks.create(formData);
-      console.log('[DEBUG] response:', created);
+      const created = await api.tasks.create({
+        order_id: form.order_id || null,
+        order_number: form.order_number,
+        from_stage: form.from_stage,
+        to_stage: form.to_stage,
+        date_start: form.date_start,
+        date_end: form.date_end || null,
+        description: form.description,
+        status: form.status || 'new',
+        photo_data,
+      });
 
       setTasks((prev) => [created, ...prev]);
       setShowForm(false);
@@ -145,7 +175,6 @@ export default function TasksPage() {
       });
       alert('✅ Задача зафиксирована!');
     } catch (err) {
-      console.error('[DEBUG submit error]:', err);
       alert(`❌ Ошибка: ${err?.error || err?.message || 'не удалось сохранить'}`);
     }
   };
@@ -302,6 +331,7 @@ export default function TasksPage() {
                   )}
 
                   {colTasks.map((task) => {
+                    const photoSrc = taskPhotoSrc(task);
                     return (
                       <div
                         key={task.id}
@@ -329,9 +359,9 @@ export default function TasksPage() {
                           e.currentTarget.style.borderColor = '#1e3a5f';
                         }}
                       >
-                        {task.photo_url ? (
+                        {photoSrc ? (
                           <img
-                            src={task.photo_url}
+                            src={photoSrc}
                             alt=""
                             style={{
                               width: '100%',
@@ -526,10 +556,10 @@ export default function TasksPage() {
             </div>
 
             <div style={{ padding: '20px' }}>
-              {selectedTask.photo_url ? (
+              {taskPhotoSrc(selectedTask) ? (
                 <div style={{ marginBottom: 20 }}>
                   <img
-                    src={selectedTask.photo_url}
+                    src={taskPhotoSrc(selectedTask)}
                     alt=""
                     style={{
                       width: '100%',
@@ -540,7 +570,7 @@ export default function TasksPage() {
                       cursor: 'zoom-in',
                     }}
                     onClick={() => {
-                      window.open(selectedTask.photo_url, '_blank');
+                      window.open(taskPhotoSrc(selectedTask), '_blank');
                     }}
                   />
                   <div
@@ -955,6 +985,7 @@ export default function TasksPage() {
                 ) : (
                   tasks.map((task, i) => {
                     const st = STATUSES.find((s) => s.key === task.status);
+                    const photoSrc = taskPhotoSrc(task);
                     return (
                       <tr
                         key={task.id}
@@ -964,9 +995,9 @@ export default function TasksPage() {
                         }}
                       >
                         <td style={{ padding: '8px 12px' }}>
-                          {task.photo_url ? (
+                          {photoSrc ? (
                             <img
-                              src={task.photo_url}
+                              src={photoSrc}
                               alt=""
                               style={{
                                 width: 40,

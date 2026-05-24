@@ -942,11 +942,11 @@ export const api = {
   },
   tasks: {
     list: () => request('/api/tasks'),
-    create: (formData) =>
+    create: (body) =>
       request('/api/tasks', {
         method: 'POST',
-        body: formData,
-        timeout: 30000,
+        body: JSON.stringify(body),
+        timeout: 60000,
       }),
     update: (id, body) =>
       request(`/api/tasks/${id}`, {

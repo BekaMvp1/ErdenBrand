@@ -68,6 +68,8 @@ const db = {
   FinancePlan2026: require('./FinancePlan2026')(sequelize, Sequelize.DataTypes),
   FinanceFact: require('./FinanceFact')(sequelize, Sequelize.DataTypes),
   PaymentCalendar: require('./PaymentCalendar')(sequelize, Sequelize.DataTypes),
+  IncomePlan: require('./IncomePlan')(sequelize, Sequelize.DataTypes),
+  ExpensePlan: require('./ExpensePlan')(sequelize, Sequelize.DataTypes),
   OrderFinanceLink: require('./OrderFinanceLink')(sequelize, Sequelize.DataTypes),
   Color: require('./Color')(sequelize, Sequelize.DataTypes),
   OrderFloorDistribution: require('./OrderFloorDistribution')(sequelize, Sequelize.DataTypes),

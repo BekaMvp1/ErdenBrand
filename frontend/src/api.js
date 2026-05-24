@@ -600,6 +600,36 @@ export const api = {
         body: JSON.stringify(data),
       }),
   },
+  incomePlans: {
+    list: () => request('/api/income-plans'),
+    create: (body) =>
+      request('/api/income-plans', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    update: (id, body) =>
+      request(`/api/income-plans/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
+    delete: (id) =>
+      request(`/api/income-plans/${id}`, { method: 'DELETE' }),
+  },
+  expensePlans: {
+    list: () => request('/api/expense-plans'),
+    create: (body) =>
+      request('/api/expense-plans', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    update: (id, body) =>
+      request(`/api/expense-plans/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
+    delete: (id) =>
+      request(`/api/expense-plans/${id}`, { method: 'DELETE' }),
+  },
   paymentCalendar: {
     list: (year = 2026) =>
       request(`/api/payment-calendar?year=${encodeURIComponent(year)}`),

@@ -6,6 +6,7 @@ const express = require('express');
 const { Op } = require('sequelize');
 const db = require('../models');
 const PaymentCalendar = db.PaymentCalendar;
+const { upsertPaymentCalendarCell } = require('../utils/paymentCalendarCell');
 
 const router = express.Router();
 
@@ -539,66 +540,12 @@ router.post('/update-order-week', async (req, res, next) => {
 
 router.put('/cell', async (req, res, next) => {
   try {
-    const {
-      year = 2026,
-      week_number,
-      week_start,
-      week_end,
-      category,
-      subcategory,
-      plan,
-      fact,
-      note,
-    } = req.body || {};
-
-    if (!category || week_number == null) {
-      return res.status(400).json({ error: 'category и week_number обязательны' });
-    }
-
-    const y = parseInt(year, 10) || 2026;
-    const wn = parseInt(week_number, 10);
-    const sub = normSub(subcategory);
-
-    let row = await PaymentCalendar.findOne({
-      where: {
-        year: y,
-        week_number: wn,
-        category: String(category),
-        subcategory: sub,
-      },
-    });
-
-    const payload = {
-      year: y,
-      week_number: wn,
-      week_start: week_start || null,
-      week_end: week_end || null,
-      category: String(category),
-      subcategory: sub,
-      plan: plan != null ? toNum(plan) : undefined,
-      fact: fact != null ? toNum(fact) : undefined,
-      note: note != null ? note : undefined,
-    };
-
-    if (row) {
-      const update = {};
-      if (plan != null) update.plan = toNum(plan);
-      if (fact != null) update.fact = toNum(fact);
-      if (note !== undefined) update.note = note;
-      if (week_start) update.week_start = week_start;
-      if (week_end) update.week_end = week_end;
-      await row.update(update);
-    } else {
-      row = await PaymentCalendar.create({
-        ...payload,
-        plan: plan != null ? toNum(plan) : 0,
-        fact: fact != null ? toNum(fact) : 0,
-        note: note || null,
-      });
-    }
-
+    const row = await upsertPaymentCalendarCell(PaymentCalendar, req.body);
     res.json(row);
   } catch (err) {
+    if (err.message?.includes('обязательны')) {
+      return res.status(400).json({ error: err.message });
+    }
     next(err);
   }
 });

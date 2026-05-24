@@ -178,6 +178,9 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
   );
   const [loading, setLoading] = useState(true);
   const [popup, setPopup] = useState(null);
+  const [calcPopup, setCalcPopup] = useState(null);
+  const [incomeByWeek, setIncomeByWeek] = useState({});
+  const [expenseByWeek, setExpenseByWeek] = useState({});
   const saveTimerRef = useRef(null);
   const dataRef = useRef(data);
 
@@ -249,6 +252,54 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
           }
         });
 
+        (rows || []).forEach((row) => {
+          const sub = row.subcategory != null ? String(row.subcategory) : '';
+          if (!sub.startsWith('income_plan_')) return;
+
+          const plan = parseFloat(row.plan || 0);
+          const fact = parseFloat(row.fact || 0);
+          const baseKey = cellKey(row.week_number, row.category, '');
+
+          map[cellKey(row.week_number, row.category, sub)] = {
+            plan,
+            fact,
+            id: row.id,
+          };
+
+          if (!mainRowKeys.has(baseKey)) {
+            const cur = map[baseKey] || { plan: 0, fact: 0 };
+            map[baseKey] = {
+              plan: cur.plan + plan,
+              fact: cur.fact + fact,
+              id: row.id,
+            };
+          }
+        });
+
+        (rows || []).forEach((row) => {
+          const sub = row.subcategory != null ? String(row.subcategory) : '';
+          if (!sub.startsWith('expense_plan_')) return;
+
+          const plan = parseFloat(row.plan || 0);
+          const fact = parseFloat(row.fact || 0);
+          const baseKey = cellKey(row.week_number, row.category, '');
+
+          map[cellKey(row.week_number, row.category, sub)] = {
+            plan,
+            fact,
+            id: row.id,
+          };
+
+          if (!mainRowKeys.has(baseKey)) {
+            const cur = map[baseKey] || { plan: 0, fact: 0 };
+            map[baseKey] = {
+              plan: cur.plan + plan,
+              fact: cur.fact + fact,
+              id: row.id,
+            };
+          }
+        });
+
         setData(map);
       })
       .catch((e) => console.warn('[PaymentCalendar load]:', e))
@@ -258,6 +309,88 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
     return () => {
       cancelled = true;
     };
+  }, [year]);
+
+  useEffect(() => {
+    api
+      .get('/api/income-plans')
+      .then((r) => {
+        const plans = Array.isArray(r) ? r : r?.data || [];
+        const byWeek = {};
+
+        plans.forEach((plan) => {
+          const dates = Array.isArray(plan.dates)
+            ? plan.dates
+            : typeof plan.dates === 'string'
+              ? (() => {
+                  try {
+                    return JSON.parse(plan.dates);
+                  } catch {
+                    return [];
+                  }
+                })()
+              : [];
+
+          dates.forEach((d) => {
+            if (!d.week_number || !d.amount) return;
+
+            const key = `${d.year || year}_${d.week_number}`;
+
+            if (!byWeek[key]) {
+              byWeek[key] = {
+                week: d.week_number,
+                year: d.year || year,
+                total: 0,
+                items: [],
+              };
+            }
+
+            byWeek[key].total += parseFloat(d.amount || 0);
+
+            byWeek[key].items.push({
+              client: plan.client,
+              article: plan.article,
+              amount: parseFloat(d.amount || 0),
+              date: d.date,
+            });
+          });
+        });
+
+        console.log('[incomeByWeek]', byWeek);
+        setIncomeByWeek(byWeek);
+      })
+      .catch(() => {});
+  }, [year]);
+
+  useEffect(() => {
+    api
+      .get('/api/expense-plans')
+      .then((r) => {
+        const plans = Array.isArray(r) ? r : r?.data || [];
+        const byWeek = {};
+
+        plans.forEach((plan) => {
+          if (!plan.week_number || !plan.amount) return;
+
+          const key = `${plan.year || year}_${plan.week_number}`;
+          if (!byWeek[key]) {
+            byWeek[key] = { total: 0, items: [] };
+          }
+
+          const amount = parseFloat(plan.amount || 0);
+          byWeek[key].total += amount;
+          byWeek[key].items.push({
+            article: plan.article,
+            supplier: plan.supplier,
+            employee: plan.employee,
+            amount,
+            tz: plan.tz,
+          });
+        });
+
+        setExpenseByWeek(byWeek);
+      })
+      .catch(() => {});
   }, [year]);
 
   useEffect(() => {
@@ -349,6 +482,57 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
     [getTotalIncome, getTotalPayments]
   );
 
+  const getWeekLabel = useCallback((weekNum) => {
+    const w = WEEKS_2026.find((x) => x.number === weekNum);
+    if (!w) return `Неделя ${weekNum}`;
+    const startD = new Date(`${w.start}T12:00:00`);
+    const endD = new Date(`${w.end}T12:00:00`);
+    const sm = String(startD.getMonth() + 1).padStart(2, '0');
+    const em = String(endD.getMonth() + 1).padStart(2, '0');
+    return `${startD.getDate()}.${sm}–${endD.getDate()}.${em}`;
+  }, []);
+
+  const openCalcPopup = useCallback(
+    (weekNum) => {
+      const key = `${year}_${weekNum}`;
+      const weekData = incomeByWeek[key];
+
+      if (weekData?.items?.length) {
+        setCalcPopup({
+          weekNum,
+          weekLabel: getWeekLabel(weekNum),
+          items: weekData.items.map((i) => ({
+            name: [i.article, i.client].filter(Boolean).join(' — '),
+            amount: i.amount,
+          })),
+          total: weekData.total || 0,
+        });
+        return;
+      }
+
+      const items = [];
+      for (const row of SECTIONS[0].rows) {
+        const val = getCell(weekNum, row.key).plan;
+        if (val > 0) {
+          items.push({ name: row.label, amount: val });
+        }
+      }
+      for (const label of customRows[SECTIONS[0].title] || []) {
+        const val = getCell(weekNum, `custom_${label}`).plan;
+        if (val > 0) {
+          items.push({ name: label, amount: val });
+        }
+      }
+      setCalcPopup({
+        weekNum,
+        weekLabel: getWeekLabel(weekNum),
+        items,
+        total: items.reduce((s, i) => s + i.amount, 0),
+      });
+    },
+    [year, incomeByWeek, getCell, customRows, getWeekLabel]
+  );
+
   const handlePlanBreakdownClick = useCallback(
     async (e, { sectionTitle, rowName, category, weekNum, planValue }) => {
       if (!planValue || planValue <= 0) return;
@@ -406,15 +590,35 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
     const planReadonly = isPlanReadonlySection(sectionTitle);
     const planValue = cell.plan || 0;
 
+    const isIncomeSection = sectionTitle === SECTIONS[0].title;
+    const weekIncomeKey = `${year}_${w.number}`;
+    const weekIncome = incomeByWeek[weekIncomeKey];
+    const rowPlanItems =
+      isIncomeSection && !customLabel && sub === ''
+        ? (weekIncome?.items || []).filter((i) => i.article === rowName)
+        : [];
+
     return (
       <Fragment key={`${w.number}_${cat}_${sub}`}>
-        <td style={{ ...CELL_STYLE, textAlign: 'right' }}>
+        <td
+          style={{ ...CELL_STYLE, textAlign: 'right' }}
+          onClick={
+            isIncomeSection
+              ? (e) => {
+                  if (e.target.closest('input')) return;
+                  openCalcPopup(w.number);
+                }
+              : undefined
+          }
+          title={isIncomeSection ? 'Калькулятор поступлений по неделе' : undefined}
+        >
           {canEdit && !planReadonly ? (
             <input
               type="number"
               min={0}
               value={cell.plan || ''}
               placeholder="0"
+              onClick={(e) => e.stopPropagation()}
               onChange={(e) =>
                 updateCell(
                   w.number,
@@ -493,6 +697,24 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
           ) : (
             money(cell.plan)
           )}
+          {rowPlanItems.length > 0 ? (
+            <div
+              title={rowPlanItems
+                .map(
+                  (i) =>
+                    `${i.client}: ${i.amount.toLocaleString('ru-RU')} сом`
+                )
+                .join('\n')}
+              style={{
+                fontSize: 9,
+                color: '#4ade80',
+                marginTop: 2,
+                cursor: 'help',
+              }}
+            >
+              📥 {rowPlanItems.length} план.
+            </div>
+          ) : null}
         </td>
         <td style={{ ...CELL_STYLE, textAlign: 'right' }}>
           {canEdit ? (
@@ -870,6 +1092,202 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
                       ))}
                     </tr>
                   )}
+                  {section.totalLabel === 'Итого поступления' && (
+                    <tr
+                      style={{
+                        background: '#0a1a0a',
+                        borderTop: '2px solid #16a34a',
+                      }}
+                    >
+                      <td
+                        style={{
+                          padding: '8px 12px',
+                          color: '#4ade80',
+                          fontWeight: 700,
+                          fontSize: 12,
+                          whiteSpace: 'nowrap',
+                          borderBottom: '1px solid #1e2a3a',
+                          borderRight: '1px solid #1e2a3a',
+                        }}
+                      >
+                        📊 Ожидаемый приход
+                      </td>
+                      {displayWeeks.map((w) => {
+                        const key = `${year}_${w.number}`;
+                        const weekData = incomeByWeek[key];
+                        const weekTotal = weekData?.total || 0;
+                        return (
+                          <Fragment key={`expected-${w.number}`}>
+                            <td
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => openCalcPopup(w.number)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  openCalcPopup(w.number);
+                                }
+                              }}
+                              style={{
+                                padding: '8px 6px',
+                                textAlign: 'right',
+                                color: weekTotal > 0 ? '#4ade80' : '#374151',
+                                fontWeight: 700,
+                                fontSize: 13,
+                                background: weekTotal > 0 ? '#0a2a0a' : 'transparent',
+                                cursor: 'pointer',
+                                borderBottom: '1px solid #1e2a3a',
+                                borderRight: '1px solid #1e2a3a',
+                              }}
+                              title="Калькулятор поступлений"
+                            >
+                              {weekTotal > 0 ? weekTotal.toLocaleString('ru-RU') : '—'}
+                            </td>
+                            <td
+                              style={{
+                                padding: '8px 6px',
+                                color: '#374151',
+                                textAlign: 'right',
+                                borderBottom: '1px solid #1e2a3a',
+                                borderRight: '1px solid #1e2a3a',
+                              }}
+                            >
+                              —
+                            </td>
+                          </Fragment>
+                        );
+                      })}
+                    </tr>
+                  )}
+                  {section.totalLabel === 'Итого поступления' && (
+                    <tr
+                      style={{
+                        background: '#1a0505',
+                        borderTop: '1px solid #f87171',
+                      }}
+                    >
+                      <td
+                        style={{
+                          padding: '8px 12px',
+                          color: '#f87171',
+                          fontWeight: 700,
+                          fontSize: 12,
+                          whiteSpace: 'nowrap',
+                          borderBottom: '1px solid #1e2a3a',
+                          borderRight: '1px solid #1e2a3a',
+                        }}
+                      >
+                        📤 Плановые расходы
+                      </td>
+                      {displayWeeks.map((w) => {
+                        const key = `${year}_${w.number}`;
+                        const data = expenseByWeek[key];
+                        const total = data?.total || 0;
+                        const title =
+                          data?.items
+                            ?.map(
+                              (i) =>
+                                `${i.article}: ${i.amount.toLocaleString('ru-RU')} сом`
+                            )
+                            .join('\n') || '';
+                        return (
+                          <Fragment key={`exp-plan-${w.number}`}>
+                            <td
+                              title={title}
+                              style={{
+                                padding: '6px 4px',
+                                textAlign: 'right',
+                                color: total > 0 ? '#f87171' : '#374151',
+                                fontWeight: total > 0 ? 700 : 400,
+                                fontSize: 12,
+                                background: total > 0 ? '#1a0505' : 'transparent',
+                                cursor: total > 0 ? 'help' : 'default',
+                                borderBottom: '1px solid #1e2a3a',
+                                borderRight: '1px solid #1e2a3a',
+                              }}
+                            >
+                              {total > 0
+                                ? `-${total.toLocaleString('ru-RU')}`
+                                : '—'}
+                            </td>
+                            <td
+                              style={{
+                                padding: '6px 4px',
+                                color: '#374151',
+                                textAlign: 'right',
+                                borderBottom: '1px solid #1e2a3a',
+                                borderRight: '1px solid #1e2a3a',
+                              }}
+                            >
+                              —
+                            </td>
+                          </Fragment>
+                        );
+                      })}
+                    </tr>
+                  )}
+                  {section.totalLabel === 'Итого поступления' && (
+                    <tr
+                      style={{
+                        background: '#050f05',
+                        borderTop: '2px solid #374151',
+                      }}
+                    >
+                      <td
+                        style={{
+                          padding: '8px 12px',
+                          color: '#a3e635',
+                          fontWeight: 700,
+                          fontSize: 12,
+                          whiteSpace: 'nowrap',
+                          borderBottom: '1px solid #1e2a3a',
+                          borderRight: '1px solid #1e2a3a',
+                        }}
+                      >
+                        💼 Баланс недели
+                      </td>
+                      {displayWeeks.map((w) => {
+                        const key = `${year}_${w.number}`;
+                        const income = incomeByWeek[key]?.total || 0;
+                        const expense = expenseByWeek[key]?.total || 0;
+                        const balance = income - expense;
+                        return (
+                          <Fragment key={`week-balance-${w.number}`}>
+                            <td
+                              style={{
+                                padding: '6px 4px',
+                                textAlign: 'right',
+                                color:
+                                  balance > 0
+                                    ? '#4ade80'
+                                    : balance < 0
+                                      ? '#f87171'
+                                      : '#374151',
+                                fontWeight: 700,
+                                fontSize: 12,
+                                borderBottom: '1px solid #1e2a3a',
+                                borderRight: '1px solid #1e2a3a',
+                              }}
+                            >
+                              {balance !== 0
+                                ? `${balance > 0 ? '+' : ''}${balance.toLocaleString('ru-RU')}`
+                                : '—'}
+                            </td>
+                            <td
+                              style={{
+                                padding: '6px 4px',
+                                color: '#374151',
+                                borderBottom: '1px solid #1e2a3a',
+                                borderRight: '1px solid #1e2a3a',
+                              }}
+                            >
+                              —
+                            </td>
+                          </Fragment>
+                        );
+                      })}
+                    </tr>
+                  )}
                   {section.canAdd && canEdit && (
                     <tr style={{ background: '#090f18' }}>
                       <td colSpan={displayWeeks.length * 2 + 1} style={{ ...CELL_STYLE, paddingLeft: 16 }}>
@@ -996,6 +1414,231 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
           </table>
         </div>
       )}
+
+      {calcPopup ? (
+        <>
+          <div
+            role="presentation"
+            onClick={() => setCalcPopup(null)}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0,0,0,0.6)',
+              zIndex: 1000,
+            }}
+          />
+          <div
+            style={{
+              position: 'fixed',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              zIndex: 1001,
+              background: '#0f172a',
+              border: '1px solid #16a34a',
+              borderRadius: 12,
+              padding: '20px 24px',
+              minWidth: 380,
+              maxWidth: 500,
+              boxShadow: '0 20px 60px rgba(0,0,0,0.8)',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                marginBottom: 16,
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    color: '#4ade80',
+                    fontSize: 15,
+                    fontWeight: 700,
+                  }}
+                >
+                  📊 Поступления — Нед {calcPopup.weekNum}
+                </div>
+                <div
+                  style={{
+                    color: '#64748b',
+                    fontSize: 11,
+                    marginTop: 2,
+                  }}
+                >
+                  {calcPopup.weekLabel}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCalcPopup(null)}
+                style={{
+                  background: 'none',
+                  color: '#64748b',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: 18,
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <table
+              style={{
+                width: '100%',
+                borderCollapse: 'collapse',
+                marginBottom: 12,
+              }}
+            >
+              <thead>
+                <tr style={{ background: '#1a237e' }}>
+                  <th
+                    style={{
+                      padding: '6px 10px',
+                      color: '#fff',
+                      fontSize: 12,
+                      textAlign: 'left',
+                    }}
+                  >
+                    Статья
+                  </th>
+                  <th
+                    style={{
+                      padding: '6px 10px',
+                      color: '#fff',
+                      fontSize: 12,
+                      textAlign: 'right',
+                    }}
+                  >
+                    Сумма (план)
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {calcPopup.items.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={2}
+                      style={{
+                        padding: '12px',
+                        color: '#64748b',
+                        textAlign: 'center',
+                        fontSize: 12,
+                      }}
+                    >
+                      Нет данных
+                    </td>
+                  </tr>
+                ) : (
+                  calcPopup.items.map((item, i) => (
+                    <tr
+                      key={`${item.name}-${i}`}
+                      style={{
+                        background: i % 2 === 0 ? '#0a1020' : '#0f172a',
+                      }}
+                    >
+                      <td
+                        style={{
+                          padding: '8px 10px',
+                          color: '#e2e8f0',
+                          fontSize: 13,
+                        }}
+                      >
+                        {item.name}
+                      </td>
+                      <td
+                        style={{
+                          padding: '8px 10px',
+                          textAlign: 'right',
+                          color: '#4ade80',
+                          fontWeight: 600,
+                          fontSize: 13,
+                        }}
+                      >
+                        {item.amount.toLocaleString('ru-RU')} сом
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+
+            <div
+              style={{
+                background: '#0a2a0a',
+                border: '1px solid #16a34a',
+                borderRadius: 8,
+                padding: '12px 16px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
+              <span
+                style={{
+                  color: '#4ade80',
+                  fontWeight: 700,
+                  fontSize: 14,
+                }}
+              >
+                ИТОГО поступит:
+              </span>
+              <span
+                style={{
+                  color: '#4ade80',
+                  fontWeight: 700,
+                  fontSize: 18,
+                }}
+              >
+                {calcPopup.total.toLocaleString('ru-RU')} сом
+              </span>
+            </div>
+
+            {(() => {
+              const expenses = getTotalPayments(calcPopup.weekNum);
+              const balance = calcPopup.total - expenses;
+              return expenses > 0 ? (
+                <div style={{ marginTop: 8 }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      padding: '6px 16px',
+                      color: '#f87171',
+                      fontSize: 13,
+                    }}
+                  >
+                    <span>Расходы план:</span>
+                    <span>
+                      -{expenses.toLocaleString('ru-RU')} сом
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      padding: '8px 16px',
+                      background: balance >= 0 ? '#0a2a0a' : '#2a0a0a',
+                      borderRadius: 6,
+                      color: balance >= 0 ? '#4ade80' : '#f87171',
+                      fontWeight: 700,
+                      fontSize: 14,
+                    }}
+                  >
+                    <span>Остаток:</span>
+                    <span>
+                      {balance >= 0 ? '+' : ''}
+                      {balance.toLocaleString('ru-RU')} сом
+                    </span>
+                  </div>
+                </div>
+              ) : null;
+            })()}
+          </div>
+        </>
+      ) : null}
 
       {popup ? (
         <>

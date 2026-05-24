@@ -207,11 +207,15 @@ function formatChainWeekRange(dateStr) {
   return `${fmt(start)} – ${fmt(end)}`;
 }
 
+function monthKeyFromDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/** Пошив в выбранном календарном месяце (без сдвига UTC). */
 function sewingWeekStartsInMonth(row, monthFirst) {
   const s = chainDateIso(row.sewing_week_start);
   if (!s) return false;
-  const d = new Date(`${s}T12:00:00`);
-  return d.getFullYear() === monthFirst.getFullYear() && d.getMonth() === monthFirst.getMonth();
+  return s.slice(0, 7) === monthKeyFromDate(monthFirst);
 }
 
 function chainBadgeClassName(mondayIso, status, todayMonday) {
@@ -239,6 +243,7 @@ export default function ProductionChain() {
   });
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [workshopFilter, setWorkshopFilter] = useState('all');
   const [clientFilter, setClientFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -273,7 +278,8 @@ export default function ProductionChain() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    if (import.meta.env.DEV) console.log('[ProductionChain] загрузка...');
+    setLoadError('');
+    if (import.meta.env.DEV) console.log('[DEBUG chain] загрузка /api/planning/chain...');
     try {
       const [list, sew] = await Promise.all([
         api.planning.chainList(),
@@ -281,6 +287,7 @@ export default function ProductionChain() {
       ]);
       const arr = Array.isArray(list) ? list : [];
       if (import.meta.env.DEV) {
+        console.log('[DEBUG chain] response count:', arr.length);
         console.log('[ProductionChain] данные:', list);
         console.log('[ProductionChain] всего записей:', arr.length);
         console.log('[ProductionChain] первая:', arr[0]);
@@ -294,7 +301,10 @@ export default function ProductionChain() {
       setRows(arr);
       setSewingFactsByOrderId(sew && typeof sew === 'object' ? sew : {});
     } catch (err) {
-      console.error('[ProductionChain] ошибка:', err?.status ?? '', err?.message ?? err);
+      const msg = err?.message || 'Ошибка загрузки плана цеха';
+      console.error('[DEBUG chain] error:', msg, err?.status ?? '');
+      console.error('[ProductionChain] ошибка:', err?.status ?? '', msg);
+      setLoadError(msg);
       setRows([]);
     } finally {
       setLoading(false);
@@ -305,11 +315,13 @@ export default function ProductionChain() {
     if (allowed) load();
   }, [allowed, load]);
 
-  const monthKey = useMemo(
-    () =>
-      `${navMonth.getFullYear()}-${String(navMonth.getMonth() + 1).padStart(2, '0')}`,
-    [navMonth]
-  );
+  const monthKey = useMemo(() => monthKeyFromDate(navMonth), [navMonth]);
+
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      console.log('[DEBUG] month/year:', monthKey, navMonth.getFullYear());
+    }
+  }, [monthKey, navMonth]);
 
   useEffect(() => {
     if (!allowed || rows.length === 0) {
@@ -797,11 +809,29 @@ export default function ProductionChain() {
               {filteredRows.length === 0 ? (
                 <tr>
                   <td colSpan={12} className="p-4" style={{ color: 'var(--muted)' }}>
-                    {rows.length === 0
-                      ? 'Нет записей в цепочке — сформируйте план в «Планирование месяц»'
-                      : rowsWithSewingInNavMonth.length === 0
-                        ? 'Нет записей с пошивом в выбранном месяце — переключите месяц стрелками'
-                        : 'Нет записей по выбранным фильтрам'}
+                    {loadError
+                      ? (
+                        <div className="flex flex-col items-center gap-3 py-4">
+                          <span style={{ color: '#f87171' }}>{loadError}</span>
+                          <button
+                            type="button"
+                            onClick={() => load()}
+                            className="rounded px-4 py-2 text-sm font-semibold"
+                            style={{
+                              background: '#1e3a5f',
+                              color: '#93c5fd',
+                              border: '1px solid #1e3a5f',
+                            }}
+                          >
+                            🔄 Повторить загрузку
+                          </button>
+                        </div>
+                      )
+                      : rows.length === 0
+                        ? 'Нет записей в цепочке — сформируйте план в «Планирование месяц»'
+                        : rowsWithSewingInNavMonth.length === 0
+                          ? `Нет записей с пошивом в ${monthNavLabel} — переключите месяц стрелками (в цепочке всего: ${rows.length})`
+                          : 'Нет записей по выбранным фильтрам'}
                   </td>
                 </tr>
               ) : (

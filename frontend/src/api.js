@@ -399,7 +399,8 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(body),
       }),
-    chainList: () => request('/api/planning/chain'),
+    chainList: () =>
+      request('/api/planning/chain', { timeout: 120000, maxRetries: 2 }),
     /** План/факт шт. для колонок Декатировка и Проверка (план из month facts, факт из facts-таблиц) */
     chainDekatProverka: (monthKey, orderIds) => {
       const q = new URLSearchParams();

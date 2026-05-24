@@ -2434,7 +2434,6 @@ const chainOrderInclude = {
     'tz_code',
     'model_name',
     'title',
-    'photos',
     'total_quantity',
     'quantity',
     'client_id',
@@ -2444,6 +2443,7 @@ const chainOrderInclude = {
     { model: db.Client, attributes: ['id', 'name'] },
     {
       model: db.OrderOperation,
+      as: 'OrderOperations',
       separate: true,
       attributes: ['id', 'actual_quantity', 'actual_qty', 'stage_key', 'operation_id'],
       include: [{ model: db.Operation, attributes: ['id', 'category', 'name'] }],
@@ -2465,14 +2465,19 @@ const chainRowIncludes = [
  * Список цепочек с заказами.
  */
 router.get('/chain', async (req, res, next) => {
+  const t0 = Date.now();
   try {
     const rows = await db.PlanningChain.findAll({
       order: [['id', 'ASC']],
       include: chainRowIncludes,
     });
-    res.json(rows.map((r) => r.toJSON()));
+    const payload = rows.map((r) => r.toJSON());
+    console.log(
+      `[planning/chain GET] found=${payload.length} ${Date.now() - t0}ms`
+    );
+    res.json(payload);
   } catch (err) {
-    console.error('[planning/chain GET]', err.message);
+    console.error('[planning/chain GET]', err.message, `${Date.now() - t0}ms`);
     next(err);
   }
 });

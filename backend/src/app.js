@@ -38,6 +38,9 @@ const financeRoutes = require("./routes/finance");
 const paymentCalendarRoutes = require("./routes/paymentCalendar");
 const incomePlansRoutes = require("./routes/income-plans");
 const expensePlansRoutes = require("./routes/expense-plans");
+const receptionsRoutes = require("./routes/receptions");
+const shipmentsNewRoutes = require("./routes/shipments-new");
+const stockRoutes = require("./routes/stock");
 const tasksRoutes = require("./routes/tasks");
 const aiRoutes = require("./routes/ai");
 const settingsRoutes = require("./routes/settings");
@@ -389,6 +392,24 @@ app.use(
   authenticate,
   requireRole("admin", "manager", "technologist", "operator"),
   expensePlansRoutes,
+);
+app.use(
+  "/api/receptions",
+  authenticate,
+  requireRole("admin", "manager", "technologist", "operator"),
+  receptionsRoutes,
+);
+app.use(
+  "/api/shipments",
+  authenticate,
+  requireRole("admin", "manager", "technologist", "operator"),
+  shipmentsNewRoutes,
+);
+app.use(
+  "/api/stock",
+  authenticate,
+  requireRole("admin", "manager", "technologist", "operator"),
+  stockRoutes,
 );
 app.use(
   "/api/tasks",

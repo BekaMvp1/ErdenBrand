@@ -47,6 +47,13 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         defaultValue: 'shipped',
       },
+      shipment_type: {
+        type: DataTypes.STRING,
+        defaultValue: 'goods',
+      },
+      defect_type: DataTypes.STRING,
+      defect_reason: DataTypes.TEXT,
+      defect_destination: DataTypes.STRING,
     },
     {
       tableName: 'shipments',

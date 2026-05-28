@@ -6,6 +6,7 @@ const express = require('express');
 const { Op } = require('sequelize');
 const db = require('../models');
 const { getWeekStart } = require('../utils/planningUtils');
+const { syncOtkFactToShipmentStock } = require('../utils/shipmentStock');
 
 const router = express.Router();
 
@@ -77,6 +78,10 @@ async function syncOtkFactToWarehouse(otkFactRow) {
     }
 
     console.log('[otk→warehouse] синхронизировано:', otkFactRow.color, otkFactRow.size, 'принято:', passed);
+
+    if (passed > 0) {
+      await syncOtkFactToShipmentStock(db, otkFactRow, otkDoc);
+    }
   } catch (err) {
     console.error('[otk→warehouse] ошибка:', err.message);
   }

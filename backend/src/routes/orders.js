@@ -11,6 +11,10 @@ const { trySyncOrderToCloud, queueOrderForSync } = require('../services/cloudSyn
 const { STAGES, DEFAULT_STAGE_DAYS } = require('../constants/boardStages');
 const { PIPELINE_STAGES, PIPELINE_DISPLAY } = require('../constants/pipelineStages');
 const { normalizeSizeCode, findSizeIdByCode } = require('../utils/sizeNormalize');
+const {
+  addOrderToShipmentStockOnComplete,
+  isOrderStatusReady,
+} = require('../utils/shipmentStock');
 
 const router = express.Router();
 
@@ -2033,6 +2037,11 @@ router.put('/:id', async (req, res, next) => {
       return res.status(400).json({ error: 'Нет данных для обновления' });
     }
 
+    const oldStatusName = order.OrderStatus?.name || '';
+    const statusChangingToReady =
+      updates.status_id != null &&
+      !isOrderStatusReady(oldStatusName);
+
     const t = await db.sequelize.transaction();
     try {
       await order.update(updates, { transaction: t });
@@ -2068,6 +2077,14 @@ router.put('/:id', async (req, res, next) => {
         { model: db.OrderVariant, as: 'OrderVariants', include: [{ model: db.Size, as: 'Size' }] },
       ],
     });
+
+    if (statusChangingToReady && isOrderStatusReady(updated?.OrderStatus?.name)) {
+      try {
+        await addOrderToShipmentStockOnComplete(db, updated);
+      } catch (stockErr) {
+        console.error('[stock] orders PUT:', stockErr.message);
+      }
+    }
 
     res.json(updated);
   } catch (err) {

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { flattenFabricLike } from '../../components/CreateOrderModelSections';
 import { api } from '../../api';
+import useStageBalance from '../../hooks/useStageBalance';
 
 const STAGES = [
   { value: 'warehouse', label: '🏭 Склад' },
@@ -140,6 +141,41 @@ const TOTALS_STYLE = {
 /** Сохранение строки Пошив→ОТК в item_name без изменений бэкенда */
 const SEW_OTK_PREFIX = 'SEW_OTK_JSON:';
 
+/** Сумма переданных кол-в по размерам из других документов перемещения */
+function aggregateUsedQtyFromMovementDocs(docs) {
+  const used = {};
+  const list = Array.isArray(docs) ? docs : [];
+  for (const doc of list) {
+    const items = doc.Items || [];
+    for (const item of items) {
+      const meta =
+        item?.item_meta && typeof item.item_meta === 'object' ? item.item_meta : null;
+      if (meta?.sizes && typeof meta.sizes === 'object') {
+        Object.entries(meta.sizes).forEach(([sz, qty]) => {
+          used[sz] = (used[sz] || 0) + toNum(qty);
+        });
+        continue;
+      }
+      const raw = String(item?.item_name || '').trim();
+      if (raw.startsWith(SEW_OTK_PREFIX)) {
+        try {
+          const parsed = JSON.parse(raw.slice(SEW_OTK_PREFIX.length));
+          if (parsed?.sizes && typeof parsed.sizes === 'object') {
+            Object.entries(parsed.sizes).forEach(([sz, qty]) => {
+              used[sz] = (used[sz] || 0) + toNum(qty);
+            });
+          }
+        } catch {
+          /* ignore */
+        }
+      } else if (item?.size) {
+        used[item.size] = (used[item.size] || 0) + toNum(item.quantity ?? item.qty);
+      }
+    }
+  }
+  return used;
+}
+
 function toNum(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -255,6 +291,32 @@ function extractActiveSizes(order) {
     }
   }
   return ERDEN_SIZES.filter((s) => (qtyByLabel[s] || 0) > 0);
+}
+
+/** Плановое кол-во по размеру из заказа (для остатка в таблице В) */
+function extractOrderSizeQuantities(order) {
+  const qtyByLabel = {};
+  for (const v of order?.variants || []) {
+    const label = matchErdenSize(v?.size);
+    if (!label) continue;
+    qtyByLabel[label] = (qtyByLabel[label] || 0) + toNum(v.quantity);
+  }
+  const sg = order?.size_grid?.quantities;
+  if (sg && typeof sg === 'object' && !Array.isArray(sg)) {
+    for (const key of Object.keys(sg)) {
+      const label = matchErdenSize(key);
+      if (!label) continue;
+      qtyByLabel[label] = (qtyByLabel[label] || 0) + toNum(sg[key]);
+    }
+  }
+  const sq = order?.size_quantities;
+  if (sq && typeof sq === 'object' && !Array.isArray(sq)) {
+    for (const key of Object.keys(sq)) {
+      const label = matchErdenSize(key) || key;
+      qtyByLabel[label] = (qtyByLabel[label] || 0) + toNum(sq[key]);
+    }
+  }
+  return qtyByLabel;
 }
 
 function normalizeColorsField(raw) {
@@ -1302,6 +1364,8 @@ export default function MovementForm(props) {
   /** Операции для строк таблицы Б (раскрой) или В (пошив/ОТК) */
   const [movementOps, setMovementOps] = useState([]);
   const [orderQuantity, setOrderQuantity] = useState(0);
+  const [orderSizeQuantities, setOrderSizeQuantities] = useState({});
+  const [usedQty, setUsedQty] = useState({});
   const [orderFabrics, setOrderFabrics] = useState([]);
   /** Название модели заказа — fallback для таблицы В (маршрут C) */
   const [orderModelName, setOrderModelName] = useState('');
@@ -1316,6 +1380,11 @@ export default function MovementForm(props) {
   const routeIsA = isRouteA(fromType, toType);
   const routeIsB = isRouteB(fromType, toType);
   const routeIsC = isRouteC(fromType, toType);
+
+  const { balance, reload: reloadBalance } = useStageBalance(orderId, {
+    enabled: routeIsC && !!orderId,
+    excludeDocId: docId || undefined,
+  });
 
   const fromLabel =
     STAGES.find((s) => s.value === fromType)?.label || fromType;
@@ -1412,6 +1481,8 @@ export default function MovementForm(props) {
       setProductRows([]);
       setMovementOps([]);
       setOrderQuantity(0);
+      setOrderSizeQuantities({});
+      setUsedQty({});
       setOrderModelName('');
       return;
     }
@@ -1460,6 +1531,7 @@ export default function MovementForm(props) {
         const colorsForC = colorList.length > 0 ? colorList : [''];
         setOrderColors(colorList.length > 0 ? colorList : []);
         setOrderQuantity(toNum(order.total_quantity ?? order.quantity ?? order.total_qty));
+        setOrderSizeQuantities(extractOrderSizeQuantities(order));
         const photo =
           order.photo || order.model_photo || order.image_url || order.image || '';
         const modelName =
@@ -1489,6 +1561,7 @@ export default function MovementForm(props) {
         setActiveSizes(ERDEN_SIZES);
         setOrderColors([]);
         setOrderQuantity(0);
+        setOrderSizeQuantities({});
         setMovementOps([]);
         setOrderFabrics([]);
         setOrderModelName('');
@@ -1586,6 +1659,38 @@ export default function MovementForm(props) {
     }
   }, [fromType, toType, routeIsB, routeIsC]);
 
+  const loadUsedQty = useCallback(
+    async (oid) => {
+      if (!oid || !routeIsC) {
+        setUsedQty({});
+        return;
+      }
+      try {
+        const params = {
+          order_id: oid,
+          from_stage: fromType,
+          to_stage: toType,
+        };
+        if (docId) params.exclude_id = docId;
+        const docs = await api.movements.list(params);
+        const used = aggregateUsedQtyFromMovementDocs(docs);
+        setUsedQty(used);
+      } catch (err) {
+        console.error('[loadUsedQty]:', err?.message || err);
+        setUsedQty({});
+      }
+    },
+    [fromType, toType, docId, routeIsC]
+  );
+
+  useEffect(() => {
+    if (!routeIsC || !orderId) {
+      setUsedQty({});
+      return;
+    }
+    void loadUsedQty(orderId);
+  }, [orderId, fromType, toType, docId, routeIsC, loadUsedQty]);
+
   useEffect(() => {
     if (docId) return;
     if (!isRouteC(fromType, toType)) return;
@@ -1676,6 +1781,9 @@ export default function MovementForm(props) {
         setOrderColors(colorsList);
         setOrderFabrics(docRouteB ? fabricsList : []);
         setOrderQuantity(orderJson ? toNum(orderJson.total_quantity ?? orderJson.quantity) : 0);
+        setOrderSizeQuantities(
+          orderJson ? extractOrderSizeQuantities(orderJson) : {}
+        );
 
         let stockListForMerge = [];
         if (docRouteA) {
@@ -2027,6 +2135,8 @@ export default function MovementForm(props) {
       setError('');
       try {
         await api.movements.approve(Number(docId));
+        await reloadBalance();
+        if (orderId) await loadUsedQty(orderId);
         navigate(-1);
       } catch (e) {
         setError(e?.message || 'Ошибка утверждения');
@@ -2062,6 +2172,8 @@ export default function MovementForm(props) {
     try {
       const created = await api.movements.create(payload);
       await api.movements.approve(created.id);
+      await reloadBalance();
+      await loadUsedQty(orderId);
       navigate(-1);
     } catch (e) {
       setError(e?.message || 'Ошибка утверждения');
@@ -2073,6 +2185,121 @@ export default function MovementForm(props) {
   const readOnly = docStatus === 'posted' || !!docId;
 
   const sizeCols = activeSizes.length ? activeSizes : ERDEN_SIZES;
+  const sizesCount = sizeCols.length || 1;
+
+  const getAvailable = useCallback(
+    (size) => {
+      if (!routeIsC || !balance || fromType === 'warehouse') return null;
+      const stageBalance = balance[fromType];
+      if (!stageBalance || typeof stageBalance !== 'object') return null;
+      return toNum(stageBalance[size]);
+    },
+    [routeIsC, balance, fromType]
+  );
+
+  const getSizeRemaining = useCallback(
+    (size, rowId) => {
+      const row = productRows.find((r) => r.id === rowId);
+      const val = toNum(row?.sizes?.[size]);
+      const available = getAvailable(size);
+      if (available !== null) {
+        const usedInOtherRows = productRows
+          .filter((r) => r.id !== rowId)
+          .reduce((s, r) => s + toNum(r.sizes?.[size]), 0);
+        return available - usedInOtherRows - val;
+      }
+      const planned =
+        toNum(orderSizeQuantities[size]) ||
+        Math.floor((orderQuantity || 0) / sizesCount) ||
+        0;
+      const alreadyUsed = toNum(usedQty[size]);
+      const currentAllRows = productRows.reduce(
+        (s, r) => s + toNum(r.sizes?.[size]),
+        0
+      );
+      return planned - alreadyUsed - currentAllRows;
+    },
+    [
+      productRows,
+      getAvailable,
+      orderSizeQuantities,
+      orderQuantity,
+      sizesCount,
+      usedQty,
+    ]
+  );
+
+  const getRemaining = useCallback(
+    (size) => {
+      const available = getAvailable(size);
+      if (available !== null) {
+        const totalEntered = productRows.reduce(
+          (s, r) => s + toNum(r.sizes?.[size]),
+          0
+        );
+        return available - totalEntered;
+      }
+      const planned =
+        toNum(orderSizeQuantities[size]) ||
+        Math.floor((orderQuantity || 0) / sizesCount) ||
+        0;
+      const alreadyUsed = toNum(usedQty[size]);
+      const currentAllRows = productRows.reduce(
+        (s, r) => s + toNum(r.sizes?.[size]),
+        0
+      );
+      return planned - alreadyUsed - currentAllRows;
+    },
+    [
+      getAvailable,
+      productRows,
+      orderSizeQuantities,
+      orderQuantity,
+      sizesCount,
+      usedQty,
+    ]
+  );
+
+  const productRowRemaining = (row) =>
+    sizeCols.reduce((s, sz) => s + getSizeRemaining(sz, row.id), 0);
+
+  const totalProductRemaining = useMemo(() => {
+    const totalEntered = productRows.reduce(
+      (s, row) =>
+        s + sizeCols.reduce((ss, sz) => ss + toNum(row.sizes?.[sz]), 0),
+      0
+    );
+    if (routeIsC && balance && fromType && fromType !== 'warehouse') {
+      const stageBalance = balance[fromType];
+      if (stageBalance && typeof stageBalance === 'object') {
+        const totalAvailable = Object.values(stageBalance).reduce(
+          (s, v) => s + toNum(v),
+          0
+        );
+        return totalAvailable - totalEntered;
+      }
+    }
+    const totalPlanned =
+      sizeCols.reduce(
+        (s, sz) =>
+          s +
+          (toNum(orderSizeQuantities[sz]) ||
+            Math.floor((orderQuantity || 0) / sizesCount)),
+        0
+      ) || toNum(orderQuantity);
+    const totalUsed = Object.values(usedQty).reduce((s, v) => s + toNum(v), 0);
+    return totalPlanned - totalUsed - totalEntered;
+  }, [
+    productRows,
+    sizeCols,
+    orderQuantity,
+    orderSizeQuantities,
+    usedQty,
+    sizesCount,
+    routeIsC,
+    balance,
+    fromType,
+  ]);
 
   if (loading) {
     return (
@@ -3063,6 +3290,80 @@ export default function MovementForm(props) {
         </>
       ) : routeIsC ? (
         <>
+          {balance && fromType && fromType !== 'warehouse' ? (
+            <div
+              style={{
+                display: 'flex',
+                gap: 8,
+                flexWrap: 'wrap',
+                marginBottom: 12,
+                padding: '10px 14px',
+                background: '#0a1628',
+                border: '1px solid #1e3a5f',
+                borderRadius: 8,
+                alignItems: 'center',
+              }}
+            >
+              <span style={{ color: '#64748b', fontSize: 12, marginRight: 4 }}>
+                📦 Доступно с {stageToggleLabel(fromType)}:
+              </span>
+              {(() => {
+                const stageBalance = balance[fromType];
+                if (!stageBalance || typeof stageBalance !== 'object') {
+                  return (
+                    <span style={{ color: '#f87171', fontSize: 12 }}>Нет данных</span>
+                  );
+                }
+                const total = Object.values(stageBalance).reduce(
+                  (s, v) => s + toNum(v),
+                  0
+                );
+                if (total <= 0) {
+                  return (
+                    <span style={{ color: '#f87171', fontSize: 12 }}>
+                      ⚠️ Нет остатков на этом этапе
+                    </span>
+                  );
+                }
+                return Object.entries(stageBalance)
+                  .filter(([, v]) => toNum(v) > 0)
+                  .map(([sz, qty]) => (
+                    <span
+                      key={sz}
+                      style={{
+                        background: '#1e3a5f',
+                        color: '#93c5fd',
+                        padding: '3px 8px',
+                        borderRadius: 6,
+                        fontSize: 11,
+                        fontWeight: 600,
+                      }}
+                    >
+                      {sz}: <b>{qty}</b>
+                    </span>
+                  ));
+              })()}
+            </div>
+          ) : null}
+          {Object.keys(usedQty).length > 0 ? (
+            <div
+              style={{
+                background: '#1a1200',
+                border: '1px solid #fbbf2444',
+                borderRadius: 8,
+                padding: '8px 14px',
+                marginBottom: 10,
+                fontSize: 11,
+                color: '#fbbf24',
+              }}
+            >
+              ⚠️ Уже передано по этому маршруту:{' '}
+              {Object.entries(usedQty)
+                .filter(([, v]) => toNum(v) > 0)
+                .map(([sz, qty]) => `${sz}: ${qty} шт`)
+                .join(' · ')}
+            </div>
+          ) : null}
           <div style={{ overflowX: 'auto' }} className="rounded border border-white/10">
             <style>{`
               .prod-table input[type=number]::-webkit-outer-spin-button,
@@ -3106,6 +3407,21 @@ export default function MovementForm(props) {
                   </th>
                   <th style={TH} rowSpan={2}>
                     Итого
+                  </th>
+                  <th
+                    style={{
+                      padding: '8px 10px',
+                      textAlign: 'center',
+                      color: '#fbbf24',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      border: '1px solid #1e3a5f',
+                      background: '#1a1200',
+                      whiteSpace: 'nowrap',
+                    }}
+                    rowSpan={2}
+                  >
+                    Остаток
                   </th>
                   <th style={TH} rowSpan={2}>
                     {fromType === 'sewing' ? 'Операция пошива' : fromType === 'otk' ? 'Операция ОТК' : 'Операция'}
@@ -3204,39 +3520,125 @@ export default function MovementForm(props) {
                       )}
                     </td>
 
-                    {sizeCols.map((size) => (
-                      <td key={size} style={{ ...TD, textAlign: 'center' }}>
-                        <input
-                          type="number"
-                          min="0"
-                          disabled={readOnly}
-                          value={row.sizes[size] || ''}
-                          placeholder="0"
-                          onChange={(e) => {
-                            const newSizes = {
-                              ...row.sizes,
-                              [size]: parseInt(e.target.value, 10) || 0,
-                            };
-                            const total = Object.values(newSizes).reduce((a, b) => a + b, 0);
-                            updateProductRow(row.id, {
-                              sizes: newSizes,
-                              total_qty: total,
-                              total_cost: total * toNum(row.operation_cost),
-                            });
-                          }}
-                          style={{
-                            width: 50,
-                            textAlign: 'center',
-                            background: '#1a1a2e',
-                            color: '#e2e8f0',
-                            border: '1px solid #374151',
-                            borderRadius: 4,
-                            padding: '4px',
-                            fontSize: 13,
-                          }}
-                        />
-                      </td>
-                    ))}
+                    {sizeCols.map((size) => {
+                      const val = toNum(row.sizes?.[size]);
+                      const available = getAvailable(size);
+                      const usedInOtherRows = productRows
+                        .filter((r) => r.id !== row.id)
+                        .reduce((s, r) => s + toNum(r.sizes?.[size]), 0);
+                      const remaining =
+                        available !== null
+                          ? available - usedInOtherRows - val
+                          : getSizeRemaining(size, row.id);
+                      const maxForInput =
+                        available !== null
+                          ? Math.max(0, available - usedInOtherRows)
+                          : undefined;
+
+                      return (
+                        <td key={size} style={{ ...TD, textAlign: 'center' }}>
+                          <div style={{ position: 'relative' }}>
+                            {available !== null ? (
+                              <div
+                                style={{
+                                  fontSize: 8,
+                                  color: '#64748b',
+                                  textAlign: 'center',
+                                  marginBottom: 1,
+                                }}
+                              >
+                                доступно: {available}
+                              </div>
+                            ) : null}
+                            <input
+                              type="number"
+                              min="0"
+                              max={maxForInput}
+                              disabled={readOnly}
+                              value={val || ''}
+                              placeholder="0"
+                              title={
+                                remaining !== null
+                                  ? `Остаток: ${remaining} шт`
+                                  : ''
+                              }
+                              onChange={(e) => {
+                                let newVal = parseInt(e.target.value, 10) || 0;
+                                if (
+                                  available !== null &&
+                                  newVal > Math.max(0, available - usedInOtherRows)
+                                ) {
+                                  newVal = Math.max(
+                                    0,
+                                    available - usedInOtherRows
+                                  );
+                                }
+                                const newSizes = {
+                                  ...row.sizes,
+                                  [size]: newVal,
+                                };
+                                const total = Object.values(newSizes).reduce(
+                                  (a, b) => a + b,
+                                  0
+                                );
+                                updateProductRow(row.id, {
+                                  sizes: newSizes,
+                                  total_qty: total,
+                                  total_cost: total * toNum(row.operation_cost),
+                                });
+                              }}
+                              style={{
+                                width: 56,
+                                textAlign: 'center',
+                                background:
+                                  remaining !== null && remaining < 0
+                                    ? '#1a0505'
+                                    : val > 0
+                                      ? '#0a2a0a'
+                                      : '#1e2a3a',
+                                color:
+                                  remaining !== null && remaining < 0
+                                    ? '#f87171'
+                                    : val > 0
+                                      ? '#4ade80'
+                                      : '#64748b',
+                                border: '1px solid',
+                                borderColor:
+                                  remaining !== null && remaining < 0
+                                    ? '#f87171'
+                                    : val > 0
+                                      ? '#16a34a'
+                                      : '#374151',
+                                borderRadius: 6,
+                                padding: '5px 4px',
+                                fontSize: 13,
+                                fontWeight: 700,
+                              }}
+                            />
+                            {remaining !== null ? (
+                              <div
+                                style={{
+                                  fontSize: 8,
+                                  textAlign: 'center',
+                                  marginTop: 1,
+                                  color:
+                                    remaining === 0
+                                      ? '#4ade80'
+                                      : remaining > 0
+                                        ? '#fbbf24'
+                                        : '#f87171',
+                                  fontWeight: remaining < 0 ? 700 : 400,
+                                }}
+                              >
+                                {remaining >= 0
+                                  ? `ост: ${remaining}`
+                                  : `❌ +${Math.abs(remaining)}`}
+                              </div>
+                            ) : null}
+                          </div>
+                        </td>
+                      );
+                    })}
 
                     <td
                       style={{
@@ -3248,6 +3650,40 @@ export default function MovementForm(props) {
                     >
                       {row.total_qty}
                     </td>
+
+                    {(() => {
+                      const remaining = productRowRemaining(row);
+                      return (
+                        <td
+                          style={{
+                            padding: '6px 10px',
+                            textAlign: 'center',
+                            border: '1px solid #111',
+                            fontWeight: 700,
+                            fontSize: 13,
+                            background:
+                              remaining > 0
+                                ? '#1a1200'
+                                : remaining === 0
+                                  ? '#0a2a0a'
+                                  : '#1a0505',
+                            color:
+                              remaining > 0
+                                ? '#fbbf24'
+                                : remaining === 0
+                                  ? '#4ade80'
+                                  : '#f87171',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {remaining > 0
+                            ? `${remaining} шт`
+                            : remaining === 0
+                              ? '✅ 0'
+                              : `❌ ${Math.abs(remaining)}`}
+                        </td>
+                      );
+                    })()}
 
                     <td style={TD}>
                       <select
@@ -3326,6 +3762,61 @@ export default function MovementForm(props) {
                   </tr>
                 ))}
               </tbody>
+              {productRows.length > 0 ? (
+                <tfoot>
+                  <tr style={{ background: '#050d0a' }}>
+                    <td
+                      colSpan={3 + sizeCols.length}
+                      style={{
+                        padding: '8px 10px',
+                        fontWeight: 700,
+                        fontSize: 12,
+                        color: '#94a3b8',
+                        border: '1px solid #111',
+                      }}
+                    >
+                      Итого
+                    </td>
+                    <td
+                      style={{
+                        ...TD,
+                        textAlign: 'center',
+                        fontWeight: 700,
+                        color: '#a3e635',
+                        background: '#050d0a',
+                      }}
+                    >
+                      {totC?.qty ?? 0}
+                    </td>
+                    <td
+                      style={{
+                        padding: '8px 10px',
+                        textAlign: 'center',
+                        fontWeight: 700,
+                        fontSize: 13,
+                        color:
+                          totalProductRemaining > 0
+                            ? '#fbbf24'
+                            : totalProductRemaining === 0
+                              ? '#4ade80'
+                              : '#f87171',
+                        background: '#050d0a',
+                        border: '1px solid #111',
+                      }}
+                    >
+                      {totalProductRemaining > 0
+                        ? `${totalProductRemaining} ост.`
+                        : totalProductRemaining === 0
+                          ? '✅ Готово'
+                          : `❌ +${Math.abs(totalProductRemaining)}`}
+                    </td>
+                    <td
+                      colSpan={3}
+                      style={{ border: '1px solid #111', background: '#050d0a' }}
+                    />
+                  </tr>
+                </tfoot>
+              ) : null}
             </table>
           </div>
 

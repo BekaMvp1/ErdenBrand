@@ -807,6 +807,11 @@ export const api = {
       const q = new URLSearchParams(params).toString();
       return request(`/api/movements${q ? `?${q}` : ''}`);
     },
+    stageBalance: (orderId, params = {}) => {
+      const merged = { order_id: orderId, ...params };
+      const q = new URLSearchParams(merged).toString();
+      return request(`/api/movements/stage-balance?${q}`);
+    },
     create: (body) =>
       request('/api/movements', {
         method: 'POST',

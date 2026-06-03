@@ -554,12 +554,167 @@ router.post('/', async (req, res, next) => {
   }
 });
 
+const STAGE_BALANCE_KEYS = new Set(['cutting', 'sewing', 'otk', 'shipment']);
+
+const STAGE_MAP = {
+  Раскрой: 'cutting',
+  Пошив: 'sewing',
+  ОТК: 'otk',
+  Отгрузка: 'shipment',
+  Склад: 'warehouse',
+  warehouse: 'warehouse',
+  cutting: 'cutting',
+  sewing: 'sewing',
+  otk: 'otk',
+  shipment: 'shipment',
+};
+
+function mapStageKey(stage) {
+  if (stage == null || stage === '') return null;
+  return STAGE_MAP[String(stage)] || null;
+}
+
+function getSizesFromMovementDoc(items) {
+  const sizes = {};
+  for (const it of items || []) {
+    const line = parseMovementItemToProductLine(it);
+    if (line.sizes && typeof line.sizes === 'object') {
+      Object.entries(line.sizes).forEach(([sz, qty]) => {
+        const q = parseInt(qty, 10) || 0;
+        if (!q) return;
+        sizes[sz] = (sizes[sz] || 0) + q;
+      });
+    } else if (line.qty > 0 && line.modelName) {
+      const key = String(line.modelName).trim();
+      if (key) sizes[key] = (sizes[key] || 0) + Math.round(line.qty);
+    }
+  }
+  return sizes;
+}
+
+async function seedCuttingBalanceFromOrder(orderId) {
+  const sizes = {};
+  const oid = toIntOrNaN(orderId);
+  if (Number.isNaN(oid)) return sizes;
+
+  const variants = await db.OrderVariant.findAll({
+    where: { order_id: oid },
+    include: [{ model: db.Size, attributes: ['id', 'name', 'code'] }],
+  });
+  for (const v of variants) {
+    const label = v.Size?.name || v.Size?.code || null;
+    if (!label) continue;
+    const key = String(label).trim();
+    sizes[key] = (sizes[key] || 0) + Math.round(Number(v.quantity) || 0);
+  }
+
+  const order = await db.Order.findByPk(oid, {
+    attributes: ['id', 'size_grid', 'total_quantity', 'quantity'],
+  });
+  if (order?.size_grid?.quantities && typeof order.size_grid.quantities === 'object') {
+    for (const [key, qty] of Object.entries(order.size_grid.quantities)) {
+      const k = String(key).trim();
+      if (!k) continue;
+      sizes[k] = (sizes[k] || 0) + Math.round(Number(qty) || 0);
+    }
+  }
+
+  if (!Object.keys(sizes).length) {
+    const total = Math.round(Number(order?.total_quantity ?? order?.quantity) || 0);
+    if (total > 0) sizes['—'] = total;
+  }
+
+  return sizes;
+}
+
+/**
+ * GET /stage-balance — остатки по размерам на этапах цепочки (раскрой → пошив → ОТК → отгрузка)
+ */
+router.get('/stage-balance', async (req, res, next) => {
+  try {
+    const orderIdRaw = req.query.order_id;
+    if (orderIdRaw == null || String(orderIdRaw).trim() === '') {
+      return res.status(400).json({ error: 'order_id required' });
+    }
+    const orderId = toIntOrNaN(orderIdRaw);
+    if (Number.isNaN(orderId)) {
+      return res.status(400).json({ error: 'order_id invalid' });
+    }
+
+    const excludeIdRaw = req.query.exclude_id;
+    let excludeId = null;
+    if (excludeIdRaw != null && String(excludeIdRaw).trim() !== '') {
+      const ex = toIntOrNaN(excludeIdRaw);
+      if (!Number.isNaN(ex)) excludeId = ex;
+    }
+
+    const rows = await db.MovementDocument.findAll({
+      where: { move_type: 'materials' },
+      include: [{ model: db.MovementDocumentItem, as: 'Items', required: false }],
+      order: [['doc_date', 'ASC'], ['id', 'ASC']],
+      limit: 2000,
+    });
+
+    let docs = rows
+      .map((d) => d.get({ plain: true }))
+      .filter((d) => {
+        const sm = parseStageMeta(d.comment);
+        return sm && Number(sm.order_id) === orderId;
+      })
+      .filter((d) => d.status === 'posted');
+
+    if (excludeId != null) {
+      docs = docs.filter((d) => Number(d.id) !== excludeId);
+    }
+
+    const balance = {
+      cutting: {},
+      sewing: {},
+      otk: {},
+      shipment: {},
+    };
+
+    const seed = await seedCuttingBalanceFromOrder(orderId);
+    Object.entries(seed).forEach(([sz, qty]) => {
+      balance.cutting[sz] = (balance.cutting[sz] || 0) + qty;
+    });
+
+    docs.forEach((doc) => {
+      const sm = parseStageMeta(doc.comment);
+      const fromStage = mapStageKey(sm?.from_stage);
+      const toStage = mapStageKey(sm?.to_stage);
+      const sizeQty = getSizesFromMovementDoc(doc.Items || []);
+
+      Object.entries(sizeQty).forEach(([sz, qty]) => {
+        const q = parseInt(qty, 10) || 0;
+        if (!q) return;
+
+        if (fromStage && STAGE_BALANCE_KEYS.has(fromStage)) {
+          balance[fromStage][sz] = (balance[fromStage][sz] || 0) - q;
+        }
+        if (toStage && STAGE_BALANCE_KEYS.has(toStage)) {
+          balance[toStage][sz] = (balance[toStage][sz] || 0) + q;
+        }
+      });
+    });
+
+    res.json({
+      order_id: orderId,
+      balance,
+      docs_count: docs.length,
+    });
+  } catch (err) {
+    console.error('[stage-balance]:', err);
+    next(err);
+  }
+});
+
 /**
  * GET /
  */
 router.get('/', async (req, res, next) => {
   try {
-    const { order_id, from_stage, to_stage, status: statusQ } = req.query;
+    const { order_id, from_stage, to_stage, status: statusQ, exclude_id } = req.query;
 
     const where = { move_type: 'materials' };
     if (statusQ != null && String(statusQ).trim() !== '') {
@@ -613,6 +768,12 @@ router.get('/', async (req, res, next) => {
     }
     if (to_stage) {
       list = list.filter((d) => d.stage_meta?.to_stage === String(to_stage));
+    }
+    if (exclude_id != null && String(exclude_id).trim() !== '') {
+      const ex = toIntOrNaN(exclude_id);
+      if (!Number.isNaN(ex)) {
+        list = list.filter((d) => Number(d.id) !== ex);
+      }
     }
 
     const orderIds = [...new Set(list.map((d) => d.stage_meta?.order_id).filter(Boolean))];

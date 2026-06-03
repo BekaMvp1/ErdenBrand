@@ -414,6 +414,349 @@ function parseCutBatchItemToBatch(it, activeSizes, idx) {
   };
 }
 
+function extractRaznotonFromItems(items) {
+  const out = {};
+  (items || []).forEach((it, idx) => {
+    const meta = it?.item_meta && typeof it.item_meta === 'object' ? it.item_meta : null;
+    const list = Array.isArray(meta?.raznoton) ? meta.raznoton : [];
+    if (list.length) out[idx] = list;
+  });
+  return out;
+}
+
+function RaznotonForm({ onAdd, sizes = [] }) {
+  const [sizeQtys, setSizeQtys] = useState(() => {
+    const init = {};
+    sizes.forEach((s) => {
+      init[s] = '';
+    });
+    return init;
+  });
+  const [note, setNote] = useState('');
+  const [photo, setPhoto] = useState(null);
+  const totalQty = Object.values(sizeQtys).reduce((s, v) => s + parseInt(v || 0, 10), 0);
+
+  useEffect(() => {
+    const reset = {};
+    sizes.forEach((s) => {
+      reset[s] = '';
+    });
+    setSizeQtys(reset);
+  }, [sizes]);
+
+  const compressImage = (file) =>
+    new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX = 800;
+          let w = img.width;
+          let h = img.height;
+          if (w > h && w > MAX) {
+            h = Math.round((h * MAX) / w);
+            w = MAX;
+          } else if (h > MAX) {
+            w = Math.round((w * MAX) / h);
+            h = MAX;
+          }
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          if (ctx) ctx.drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL('image/jpeg', 0.7));
+        };
+        img.src = e.target?.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+  const handlePhoto = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const compressed = await compressImage(file);
+    setPhoto(compressed);
+    e.target.value = '';
+  };
+
+  const handleAdd = () => {
+    if (totalQty === 0) {
+      alert('Укажите количество по размерам');
+      return;
+    }
+    onAdd({
+      sizeQtys,
+      qty: totalQty,
+      note,
+      photo,
+    });
+    const reset = {};
+    sizes.forEach((s) => {
+      reset[s] = '';
+    });
+    setSizeQtys(reset);
+    setNote('');
+    setPhoto(null);
+  };
+
+  return (
+    <div
+      style={{
+        background: '#0a1628',
+        border: '1px solid #1e3a5f',
+        borderRadius: 10,
+        padding: '14px',
+        marginBottom: 12,
+      }}
+    >
+      <div
+        style={{
+          color: '#fbbf24',
+          fontSize: 12,
+          fontWeight: 700,
+          marginBottom: 12,
+        }}
+      >
+        + Добавить разнотон по размерам
+      </div>
+
+      <div
+        style={{
+          overflowX: 'auto',
+          marginBottom: 10,
+        }}
+      >
+        <table
+          style={{
+            borderCollapse: 'collapse',
+            width: '100%',
+            fontSize: 12,
+          }}
+        >
+          <thead>
+            <tr style={{ background: '#1a1200' }}>
+              {sizes.map((sz) => (
+                <th
+                  key={sz}
+                  style={{
+                    padding: '6px 8px',
+                    color: '#fbbf24',
+                    fontWeight: 700,
+                    textAlign: 'center',
+                    border: '1px solid #fbbf2433',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {sz}
+                </th>
+              ))}
+              <th
+                style={{
+                  padding: '6px 8px',
+                  color: '#a3e635',
+                  fontWeight: 700,
+                  textAlign: 'center',
+                  border: '1px solid #fbbf2433',
+                  background: '#0a2a0a',
+                }}
+              >
+                Итого
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              {sizes.map((sz) => (
+                <td
+                  key={sz}
+                  style={{
+                    padding: '4px',
+                    border: '1px solid #1e2a3a',
+                    textAlign: 'center',
+                  }}
+                >
+                  <input
+                    type="number"
+                    value={sizeQtys[sz] || ''}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setSizeQtys((prev) => ({ ...prev, [sz]: val }));
+                    }}
+                    min="0"
+                    placeholder="0"
+                    style={{
+                      width: 52,
+                      background: parseInt(sizeQtys[sz] || 0, 10) > 0 ? '#2a1a00' : '#1e2a3a',
+                      color: parseInt(sizeQtys[sz] || 0, 10) > 0 ? '#fbbf24' : '#64748b',
+                      border: '1px solid',
+                      borderColor:
+                        parseInt(sizeQtys[sz] || 0, 10) > 0 ? '#fbbf24' : '#374151',
+                      borderRadius: 6,
+                      padding: '5px 4px',
+                      fontSize: 13,
+                      textAlign: 'center',
+                      fontWeight: 700,
+                    }}
+                  />
+                </td>
+              ))}
+              <td
+                style={{
+                  padding: '4px 8px',
+                  border: '1px solid #1e2a3a',
+                  textAlign: 'center',
+                  fontWeight: 700,
+                  fontSize: 15,
+                  color: totalQty > 0 ? '#a3e635' : '#374151',
+                  background: '#050d0a',
+                }}
+              >
+                {totalQty || '—'}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {totalQty > 0 ? (
+        <div
+          style={{
+            background: '#2a1a00',
+            border: '1px solid #fbbf24',
+            borderRadius: 6,
+            padding: '6px 12px',
+            marginBottom: 10,
+            display: 'flex',
+            justifyContent: 'space-between',
+            fontSize: 12,
+          }}
+        >
+          <span style={{ color: '#94a3b8' }}>Всего с разнотоном:</span>
+          <span
+            style={{
+              color: '#fbbf24',
+              fontWeight: 700,
+            }}
+          >
+            {totalQty} шт
+          </span>
+        </div>
+      ) : null}
+
+      <input
+        type="text"
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder="Описание разнотона (рулон, оттенок)..."
+        style={{
+          width: '100%',
+          background: '#1e2a3a',
+          color: '#e2e8f0',
+          border: '1px solid #374151',
+          borderRadius: 8,
+          padding: '8px 12px',
+          fontSize: 13,
+          boxSizing: 'border-box',
+          marginBottom: 8,
+        }}
+      />
+
+      <div
+        style={{
+          display: 'flex',
+          gap: 8,
+          marginBottom: 8,
+          alignItems: 'center',
+        }}
+      >
+        <input
+          type="file"
+          accept="image/*"
+          capture="environment"
+          id="raznoton-photo"
+          onChange={handlePhoto}
+          style={{ display: 'none' }}
+        />
+        <label
+          htmlFor="raznoton-photo"
+          style={{
+            background: photo ? '#0a2a0a' : '#1e3a5f',
+            color: photo ? '#4ade80' : '#93c5fd',
+            border: '1px dashed',
+            borderColor: photo ? '#16a34a' : '#1e3a5f',
+            borderRadius: 6,
+            padding: '7px 12px',
+            cursor: 'pointer',
+            fontSize: 12,
+            fontWeight: 600,
+          }}
+        >
+          📷 {photo ? '✓ Фото добавлено' : 'Сфотографировать'}
+        </label>
+        {photo ? (
+          <div style={{ position: 'relative' }}>
+            <img
+              src={photo}
+              alt=""
+              style={{
+                width: 50,
+                height: 50,
+                objectFit: 'cover',
+                borderRadius: 6,
+                border: '1px solid #16a34a',
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => setPhoto(null)}
+              style={{
+                position: 'absolute',
+                top: -4,
+                right: -4,
+                background: '#dc2626',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '50%',
+                width: 16,
+                height: 16,
+                cursor: 'pointer',
+                fontSize: 10,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        ) : null}
+      </div>
+
+      <button
+        type="button"
+        onClick={handleAdd}
+        disabled={totalQty === 0}
+        style={{
+          width: '100%',
+          background: totalQty > 0 ? '#2a1a00' : '#1e2a3a',
+          color: totalQty > 0 ? '#fbbf24' : '#475569',
+          border: '1px solid',
+          borderColor: totalQty > 0 ? '#fbbf24' : '#374151',
+          borderRadius: 8,
+          padding: '10px',
+          cursor: totalQty > 0 ? 'pointer' : 'not-allowed',
+          fontSize: 13,
+          fontWeight: 700,
+        }}
+      >
+        🎨 Зафиксировать разнотон
+        {totalQty > 0 ? ` (${totalQty} шт)` : ''}
+      </button>
+    </div>
+  );
+}
+
 function loadMovementOps(order, fromT, toT) {
   if (!order) return [];
   if (isRouteB(fromT, toT)) {
@@ -932,10 +1275,6 @@ export default function MovementForm(props) {
     () => urlFrom || searchParams.get('from') || 'warehouse'
   );
   const [toType, setToType] = useState(() => urlTo || searchParams.get('to') || 'cutting');
-  const [fromWarehouseId, setFromWarehouseId] = useState('');
-  const [toWarehouseId, setToWarehouseId] = useState('');
-  const [warehouses, setWarehouses] = useState([]);
-
   const docId = routeId && routeId !== 'new' ? routeId : null;
 
   const [loading, setLoading] = useState(!!docId);
@@ -956,6 +1295,9 @@ export default function MovementForm(props) {
   const [stockItems, setStockItems] = useState([]);
   const [rowsA, setRowsA] = useState([createEmptyRowA()]);
   const [batches, setBatches] = useState([]);
+  const [raznotonRow, setRaznotonRow] = useState(null);
+  const [raznotonData, setRaznotonData] = useState({});
+  const [fullPhoto, setFullPhoto] = useState(null);
   const [productRows, setProductRows] = useState([]);
   /** Операции для строк таблицы Б (раскрой) или В (пошив/ОТК) */
   const [movementOps, setMovementOps] = useState([]);
@@ -975,35 +1317,11 @@ export default function MovementForm(props) {
   const routeIsB = isRouteB(fromType, toType);
   const routeIsC = isRouteC(fromType, toType);
 
-  const fromLabel = useMemo(() => {
-    if (fromType === 'warehouse') {
-      const w = warehouses.find((x) => String(x.id) === String(fromWarehouseId));
-      return w?.name || 'Склад';
-    }
-    return STAGES.find((s) => s.value === fromType)?.label || fromType;
-  }, [fromType, fromWarehouseId, warehouses]);
-
-  const toLabel = useMemo(() => {
-    if (toType === 'warehouse') {
-      const w = warehouses.find((x) => String(x.id) === String(toWarehouseId));
-      return w?.name || 'Склад';
-    }
-    return STAGES.find((s) => s.value === toType)?.label || toType;
-  }, [toType, toWarehouseId, warehouses]);
+  const fromLabel =
+    STAGES.find((s) => s.value === fromType)?.label || fromType;
+  const toLabel = STAGES.find((s) => s.value === toType)?.label || toType;
 
   const title = titleProp || `Перемещение: ${fromLabel} → ${toLabel}`;
-
-  useEffect(() => {
-    const loadWarehouses = async () => {
-      try {
-        const data = await api.warehouse.refs();
-        setWarehouses(Array.isArray(data) ? data : []);
-      } catch {
-        setWarehouses([]);
-      }
-    };
-    loadWarehouses();
-  }, []);
 
   useEffect(() => {
     api.orders
@@ -1047,10 +1365,10 @@ export default function MovementForm(props) {
 
   const loadRouteBFabricStock = useCallback(async () => {
     if (!routeIsB) return;
-    const { allArr, specArr } = await fetchRouteBStockArrays(fromWarehouseId);
+    const { allArr, specArr } = await fetchRouteBStockArrays(null);
     setRouteBStockAll(allArr);
     setRouteBStockSpecific(specArr);
-  }, [routeIsB, fromWarehouseId]);
+  }, [routeIsB]);
 
   useEffect(() => {
     if (!routeIsB) {
@@ -1059,7 +1377,7 @@ export default function MovementForm(props) {
       return;
     }
     void loadRouteBFabricStock();
-  }, [routeIsB, fromWarehouseId, loadRouteBFabricStock]);
+  }, [routeIsB, loadRouteBFabricStock]);
 
   const removeBatch = useCallback((id) => {
     setBatches((prev) => {
@@ -1080,10 +1398,7 @@ export default function MovementForm(props) {
 
   const loadOrderAndStock = useCallback(async (oid, opts = {}) => {
     const { reinitBatches = true } = opts;
-    const wid =
-      fromWarehouseId && String(fromWarehouseId).trim() && !Number.isNaN(Number(fromWarehouseId))
-        ? Number(fromWarehouseId)
-        : null;
+    const wid = null;
     if (!oid) {
       setActiveSizes([]);
       setOrderColors([]);
@@ -1093,6 +1408,7 @@ export default function MovementForm(props) {
       setStockItems([]);
       setRowsA([createEmptyRowA()]);
       setBatches([]);
+      setRaznotonData({});
       setProductRows([]);
       setMovementOps([]);
       setOrderQuantity(0);
@@ -1113,7 +1429,7 @@ export default function MovementForm(props) {
     }
 
     if (routeIsB && reinitBatches === false) {
-      const { allArr, specArr } = await fetchRouteBStockArrays(fromWarehouseId);
+      const { allArr, specArr } = await fetchRouteBStockArrays(null);
       setRouteBStockAll(allArr);
       setRouteBStockSpecific(specArr);
       setBatches((prev) => {
@@ -1167,6 +1483,7 @@ export default function MovementForm(props) {
         );
         setRowsA([createEmptyRowA()]);
         setBatches([]);
+        setRaznotonData({});
         setStockItems([]);
       } catch {
         setActiveSizes(ERDEN_SIZES);
@@ -1178,6 +1495,7 @@ export default function MovementForm(props) {
         setProductRows([]);
         setRowsA([createEmptyRowA()]);
         setBatches([]);
+        setRaznotonData({});
         setStockItems([]);
       }
       return;
@@ -1202,13 +1520,14 @@ export default function MovementForm(props) {
         setOrderQuantity(toNum(order.total_quantity ?? order.quantity ?? order.total_qty));
         setMovementOps(loadMovementOps(order, fromType, toType));
 
-        const { allArr, specArr } = await fetchRouteBStockArrays(fromWarehouseId);
+        const { allArr, specArr } = await fetchRouteBStockArrays(null);
         setRouteBStockAll(allArr);
         setRouteBStockSpecific(specArr);
 
         const items = await fetchStockItemsForWarehouseCutting(oid, wid);
         setStockItems(items);
         setBatches(buildAutoBatchesRouteB(order, sz, specArr, allArr));
+        setRaznotonData({});
         setProductRows([]);
         setRowsA([createEmptyRowA()]);
       } catch {
@@ -1221,6 +1540,7 @@ export default function MovementForm(props) {
         setMovementOps([]);
         setStockItems([]);
         setBatches(buildAutoBatchesRouteB({}, ERDEN_SIZES, [], []));
+        setRaznotonData({});
         setProductRows([]);
         setRowsA([createEmptyRowA()]);
       }
@@ -1237,6 +1557,7 @@ export default function MovementForm(props) {
       setActiveSizes([]);
       setProductRows([]);
       setBatches([]);
+      setRaznotonData({});
       setMovementOps([]);
       setRowsA([createEmptyRowA()]);
       tryApplyKanbanPrefillAfterStockLoad({
@@ -1253,6 +1574,7 @@ export default function MovementForm(props) {
       setOrderFabrics([]);
       setProductRows([]);
       setBatches([]);
+      setRaznotonData({});
       setMovementOps([]);
       setRowsA([createEmptyRowA()]);
       try {
@@ -1262,7 +1584,7 @@ export default function MovementForm(props) {
       }
       stripMovementPrefillSearchParam();
     }
-  }, [fromType, toType, fromWarehouseId, routeIsB, routeIsC]);
+  }, [fromType, toType, routeIsB, routeIsC]);
 
   useEffect(() => {
     if (docId) return;
@@ -1292,13 +1614,9 @@ export default function MovementForm(props) {
       orderId && String(orderId).trim() && !Number.isNaN(Number(orderId))
         ? Number(orderId)
         : null;
-    const wid =
-      fromWarehouseId && String(fromWarehouseId).trim() && !Number.isNaN(Number(fromWarehouseId))
-        ? Number(fromWarehouseId)
-        : null;
-    const items = await fetchStockItemsForWarehouseCutting(oid, wid);
+    const items = await fetchStockItemsForWarehouseCutting(oid, null);
     setStockItems(items);
-  }, [docId, orderId, fromWarehouseId]);
+  }, [docId, orderId]);
 
   useEffect(() => {
     if (fromType === 'warehouse' && isRouteA(fromType, toType) && !docId) {
@@ -1329,10 +1647,11 @@ export default function MovementForm(props) {
             : toType;
         setFromType(resolvedFrom);
         setToType(resolvedTo);
-        const fw = doc.from_warehouse_id != null ? String(doc.from_warehouse_id) : '';
-        const tw = doc.to_warehouse_id != null ? String(doc.to_warehouse_id) : '';
-        setFromWarehouseId(fw);
-        setToWarehouseId(tw);
+        const fw =
+          doc.from_warehouse_id != null &&
+          !Number.isNaN(Number(doc.from_warehouse_id))
+            ? Number(doc.from_warehouse_id)
+            : null;
         if (sm.order_id) setOrderId(String(sm.order_id));
         setNote(doc.user_note || '');
         const items = doc.Items || [];
@@ -1363,9 +1682,10 @@ export default function MovementForm(props) {
           setProductRows([]);
           setBatches([]);
           setMovementOps([]);
+          setRaznotonData({});
           stockListForMerge = await fetchStockItemsForWarehouseCutting(
             sm.order_id ? Number(sm.order_id) : null,
-            fw ? Number(fw) : null
+            fw
           );
           setStockItems(stockListForMerge);
           if (items.length) {
@@ -1381,7 +1701,7 @@ export default function MovementForm(props) {
           setMovementOps(loadMovementOps(orderJson, resolvedFrom, resolvedTo));
           stockListForMerge = await fetchStockItemsForWarehouseCutting(
             sm.order_id ? Number(sm.order_id) : null,
-            fw ? Number(fw) : null
+            fw
           );
           setStockItems(stockListForMerge);
           setActiveSizes(effSizes);
@@ -1391,13 +1711,16 @@ export default function MovementForm(props) {
                 items.map((it, i) => parseCutBatchItemToBatch(it, effSizes, i))
               )
             );
+            setRaznotonData(extractRaznotonFromItems(items));
           } else {
             setBatches([createEmptyBatchRow(effSizes)]);
+            setRaznotonData({});
           }
         } else if (docRouteC) {
           setStockItems([]);
           setRowsA([createEmptyRowA()]);
           setBatches([]);
+          setRaznotonData({});
           setActiveSizes(effSizes);
           setMovementOps(loadMovementOps(orderJson, resolvedFrom, resolvedTo));
           const photo =
@@ -1475,7 +1798,7 @@ export default function MovementForm(props) {
     }
 
     void loadOrderAndStock(oid, { reinitBatches: true });
-  }, [orderId, docId, fromType, toType, fromWarehouseId, routeIsB]);
+  }, [orderId, docId, fromType, toType, routeIsB]);
 
   const totA = useMemo(() => {
     if (!routeIsA) return null;
@@ -1530,17 +1853,9 @@ export default function MovementForm(props) {
   const buildPayload = () => {
     const oid = parseInt(String(orderId).trim(), 10);
     const items = [];
-    const fw =
-      fromWarehouseId && String(fromWarehouseId).trim() && !Number.isNaN(Number(fromWarehouseId))
-        ? Number(fromWarehouseId)
-        : null;
-    const tw =
-      toWarehouseId && String(toWarehouseId).trim() && !Number.isNaN(Number(toWarehouseId))
-        ? Number(toWarehouseId)
-        : null;
     const whIds = {
-      from_warehouse_id: fw,
-      to_warehouse_id: tw,
+      from_warehouse_id: null,
+      to_warehouse_id: null,
     };
 
     if (routeIsA) {
@@ -1572,7 +1887,7 @@ export default function MovementForm(props) {
     }
 
     if (routeIsB) {
-      for (const b of batches) {
+      for (const [idx, b] of batches.entries()) {
         const total_qty = Object.values(b.sizes || {}).reduce((a, x) => a + toNum(x), 0);
         const pm = toNum(b.plan_meters);
         const fm = toNum(b.fact_meters);
@@ -1594,6 +1909,7 @@ export default function MovementForm(props) {
           operation: String(b.operation || ''),
           operation_cost: toNum(b.operation_cost),
           norm_per_unit: toNum(b.norm_per_unit),
+          raznoton: Array.isArray(raznotonData[idx]) ? raznotonData[idx] : [],
         };
         items.push({
           item_id: null,
@@ -1666,23 +1982,7 @@ export default function MovementForm(props) {
     };
   };
 
-  const validateMovementRoute = () => {
-    if (fromType === 'warehouse' && toType === 'warehouse') {
-      if (!fromWarehouseId || !toWarehouseId) {
-        return 'Укажите склад отправителя и склад получателя';
-      }
-      if (String(fromWarehouseId) === String(toWarehouseId)) {
-        return 'Склады отправителя и получателя должны различаться';
-      }
-    } else if (
-      fromWarehouseId &&
-      toWarehouseId &&
-      String(fromWarehouseId) === String(toWarehouseId)
-    ) {
-      return 'Склады отправителя и получателя должны различаться';
-    }
-    return '';
-  };
+  const validateMovementRoute = () => '';
 
   const handleSaveDraft = async () => {
     if (docId) return;
@@ -1892,37 +2192,6 @@ export default function MovementForm(props) {
               </button>
             ))}
           </div>
-          <select
-            value={fromWarehouseId || ''}
-            onChange={(e) => setFromWarehouseId(e.target.value || '')}
-            disabled={readOnly}
-            style={{
-              background: '#1a1a2e',
-              color: '#e2e8f0',
-              border: '1px solid #374151',
-              borderRadius: 6,
-              padding: '8px 12px',
-              fontSize: 13,
-              width: '100%',
-              cursor: readOnly ? 'default' : 'pointer',
-              opacity: readOnly ? 0.65 : 1,
-              outline: 'none',
-              boxSizing: 'border-box',
-            }}
-          >
-            <option value="">— Склад (опционально) —</option>
-            {warehouses.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.name}
-                {w.address ? ` · ${w.address}` : ''}
-              </option>
-            ))}
-          </select>
-          {fromWarehouseId ? (
-            <div style={{ marginTop: 4, fontSize: 11, color: '#64748b' }}>
-              {warehouses.find((w) => String(w.id) === String(fromWarehouseId))?.name || ''}
-            </div>
-          ) : null}
         </div>
         <div>
           <label
@@ -1969,32 +2238,6 @@ export default function MovementForm(props) {
               </button>
             ))}
           </div>
-          <select
-            value={toWarehouseId || ''}
-            onChange={(e) => setToWarehouseId(e.target.value || '')}
-            disabled={readOnly}
-            style={{
-              background: '#1a1a2e',
-              color: '#e2e8f0',
-              border: '1px solid #374151',
-              borderRadius: 6,
-              padding: '8px 12px',
-              fontSize: 13,
-              width: '100%',
-              cursor: readOnly ? 'default' : 'pointer',
-              opacity: readOnly ? 0.65 : 1,
-              outline: 'none',
-              boxSizing: 'border-box',
-            }}
-          >
-            <option value="">— Склад (опционально) —</option>
-            {warehouses.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.name}
-                {w.address ? ` · ${w.address}` : ''}
-              </option>
-            ))}
-          </select>
         </div>
         <label className="text-sm text-slate-400 md:col-span-2">
           Примечание
@@ -2366,6 +2609,21 @@ export default function MovementForm(props) {
                   <th style={{ ...TH_BASE, textAlign: 'left', minWidth: 130 }} rowSpan={2}>
                     Операция раскроя
                   </th>
+                  <th
+                    style={{
+                      padding: '8px 10px',
+                      textAlign: 'center',
+                      color: '#fbbf24',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      whiteSpace: 'nowrap',
+                      border: '1px solid #1e3a5f',
+                      background: '#1a1200',
+                    }}
+                    rowSpan={2}
+                  >
+                    🎨 Разнотон
+                  </th>
                   <th style={{ ...TH_BASE, textAlign: 'center', width: 96 }} rowSpan={2}>
                     Стоимость оп.
                   </th>
@@ -2506,17 +2764,15 @@ export default function MovementForm(props) {
                             <div>
                               {Number(batch.effective_stock ?? batch.stock_qty).toFixed(1)} м
                             </div>
-                            {!fromWarehouseId ? (
-                              <div
-                                style={{
-                                  fontSize: 10,
-                                  color: '#64748b',
-                                  fontWeight: 400,
-                                }}
-                              >
-                                (все склады)
-                              </div>
-                            ) : null}
+                            <div
+                              style={{
+                                fontSize: 10,
+                                color: '#64748b',
+                                fontWeight: 400,
+                              }}
+                            >
+                              (все склады)
+                            </div>
                           </div>
                         ) : (
                           '⚠️ нет'
@@ -2654,6 +2910,52 @@ export default function MovementForm(props) {
                             </option>
                           ))}
                         </select>
+                      </td>
+                      <td
+                        style={{
+                          padding: '6px 8px',
+                          textAlign: 'center',
+                          border: '1px solid #111',
+                          background: rowBg,
+                        }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setRaznotonRow({
+                              rowIndex: idx,
+                              color: displayBatchColor(batch),
+                              fabric: batch.fabric_name,
+                              sizes: Object.keys(batch.sizes || {}).filter(Boolean),
+                            })
+                          }
+                          style={{
+                            background: raznotonData[idx]?.length > 0 ? '#2a1a00' : '#1e2a3a',
+                            color: raznotonData[idx]?.length > 0 ? '#fbbf24' : '#64748b',
+                            border: '1px solid',
+                            borderColor: raznotonData[idx]?.length > 0 ? '#fbbf24' : '#374151',
+                            borderRadius: 6,
+                            padding: '4px 8px',
+                            cursor: 'pointer',
+                            fontSize: 11,
+                            fontWeight: 600,
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          🎨 {raznotonData[idx]?.length > 0 ? `${raznotonData[idx].length} шт` : '+ Разнотон'}
+                        </button>
+                        {raznotonData[idx]?.length > 0 ? (
+                          <div
+                            style={{
+                              fontSize: 9,
+                              color: '#fbbf24',
+                              marginTop: 2,
+                              textAlign: 'center',
+                            }}
+                          >
+                            {raznotonData[idx].reduce((s, r) => s + parseInt(r.qty || 0, 10), 0)} шт
+                          </div>
+                        ) : null}
                       </td>
                       <td style={{ ...CELL, background: rowBg }}>
                         <input
@@ -3065,6 +3367,267 @@ export default function MovementForm(props) {
             </button>
           ) : null}
         </>
+      ) : null}
+
+      {raznotonRow ? (
+        <>
+          <div
+            onClick={() => setRaznotonRow(null)}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0,0,0,0.8)',
+              zIndex: 2000,
+            }}
+          />
+          <div
+            style={{
+              position: 'fixed',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%,-50%)',
+              zIndex: 2001,
+              background: '#0f172a',
+              border: '2px solid #fbbf24',
+              borderRadius: 14,
+              padding: '24px',
+              width: 500,
+              maxWidth: '95vw',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              boxShadow: '0 24px 80px rgba(0,0,0,0.9)',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                marginBottom: 20,
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    color: '#fbbf24',
+                    fontSize: 16,
+                    fontWeight: 700,
+                  }}
+                >
+                  🎨 Разнотон
+                </div>
+                <div
+                  style={{
+                    color: '#64748b',
+                    fontSize: 12,
+                    marginTop: 2,
+                  }}
+                >
+                  {raznotonRow.color || '—'} — {raznotonRow.fabric || '—'}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRaznotonRow(null)}
+                style={{
+                  background: 'none',
+                  color: '#64748b',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: 20,
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div
+              style={{
+                background: '#1a1200',
+                border: '1px solid #fbbf2444',
+                borderRadius: 8,
+                padding: '10px 14px',
+                marginBottom: 16,
+                fontSize: 12,
+                color: '#94a3b8',
+                lineHeight: 1.5,
+              }}
+            >
+              ⚠️ <b style={{ color: '#fbbf24' }}>Разнотон</b> — расхождение оттенка ткани между
+              рулонами одного цвета. Зафиксируйте количество и сделайте фото.
+            </div>
+
+            {(raznotonData[raznotonRow.rowIndex] || []).map((item, i) => (
+              <div
+                key={i}
+                style={{
+                  background: '#0a1628',
+                  border: '1px solid #fbbf2444',
+                  borderRadius: 8,
+                  padding: '12px',
+                  marginBottom: 10,
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    marginBottom: 8,
+                  }}
+                >
+                  <div
+                    style={{
+                      color: '#fbbf24',
+                      fontWeight: 700,
+                      fontSize: 13,
+                    }}
+                  >
+                    🎨 Разнотон #{i + 1} — {item.qty} шт
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRaznotonData((prev) => ({
+                        ...prev,
+                        [raznotonRow.rowIndex]: (prev[raznotonRow.rowIndex] || []).filter(
+                          (_, j) => j !== i
+                        ),
+                      }));
+                    }}
+                    style={{
+                      background: '#2a0a0a',
+                      color: '#f87171',
+                      border: '1px solid #f87171',
+                      borderRadius: 6,
+                      padding: '3px 8px',
+                      cursor: 'pointer',
+                      fontSize: 11,
+                    }}
+                  >
+                    🗑 Удалить
+                  </button>
+                </div>
+
+                {item.sizeQtys ? (
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: 6,
+                      flexWrap: 'wrap',
+                      marginBottom: 8,
+                    }}
+                  >
+                    {Object.entries(item.sizeQtys)
+                      .filter(([, v]) => parseInt(v || 0, 10) > 0)
+                      .map(([size, qty]) => (
+                        <div
+                          key={size}
+                          style={{
+                            background: '#2a1a00',
+                            border: '1px solid #fbbf2444',
+                            borderRadius: 6,
+                            padding: '4px 10px',
+                            fontSize: 12,
+                          }}
+                        >
+                          <span style={{ color: '#94a3b8' }}>{size}:</span>{' '}
+                          <span
+                            style={{
+                              color: '#fbbf24',
+                              fontWeight: 700,
+                            }}
+                          >
+                            {qty} шт
+                          </span>
+                        </div>
+                      ))}
+                  </div>
+                ) : null}
+
+                {item.note ? (
+                  <div
+                    style={{
+                      color: '#64748b',
+                      fontSize: 11,
+                      marginBottom: 6,
+                    }}
+                  >
+                    💬 {item.note}
+                  </div>
+                ) : null}
+
+                {item.photo ? (
+                  <img
+                    src={item.photo}
+                    onClick={() => setFullPhoto(item.photo)}
+                    alt=""
+                    style={{
+                      width: '100%',
+                      maxHeight: 120,
+                      objectFit: 'cover',
+                      borderRadius: 6,
+                      cursor: 'zoom-in',
+                    }}
+                  />
+                ) : null}
+              </div>
+            ))}
+
+            <RaznotonForm
+              sizes={Array.isArray(raznotonRow.sizes) ? raznotonRow.sizes : []}
+              onAdd={(item) => {
+                setRaznotonData((prev) => ({
+                  ...prev,
+                  [raznotonRow.rowIndex]: [...(prev[raznotonRow.rowIndex] || []), item],
+                }));
+              }}
+            />
+
+            <button
+              type="button"
+              onClick={() => setRaznotonRow(null)}
+              style={{
+                width: '100%',
+                background: '#fbbf24',
+                color: '#000',
+                border: 'none',
+                borderRadius: 8,
+                padding: '12px',
+                cursor: 'pointer',
+                fontSize: 14,
+                fontWeight: 700,
+                marginTop: 16,
+              }}
+            >
+              ✅ Сохранить разнотон
+            </button>
+          </div>
+        </>
+      ) : null}
+
+      {fullPhoto ? (
+        <div
+          onClick={() => setFullPhoto(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.95)',
+            zIndex: 2100,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <img
+            src={fullPhoto}
+            alt=""
+            style={{
+              maxWidth: '95vw',
+              maxHeight: '95vh',
+              objectFit: 'contain',
+              borderRadius: 8,
+            }}
+          />
+        </div>
       ) : null}
 
       <div className="flex flex-wrap gap-2">

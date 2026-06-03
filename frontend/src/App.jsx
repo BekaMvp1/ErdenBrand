@@ -54,6 +54,7 @@ import PurchaseReportForm from "./pages/stage/PurchaseReportForm";
 import MovementForm from "./pages/movements/MovementForm";
 import Production from "./pages/Production";
 import TasksPage from "./pages/TasksPage";
+import BarcodesPage from "./pages/BarcodesPage";
 
 export default function App() {
   // Один ping при старте приложения (без setInterval)
@@ -151,6 +152,7 @@ export default function App() {
                   <Route path="report" element={<StageReportsPage stage="shipment" />} />
                   <Route path="expenses" element={<StageExpensesPlaceholder />} />
                 </Route>
+                <Route path="barcodes" element={<BarcodesPage />} />
                 <Route path="finance" element={<Finance2026 />} />
                 <Route path="references" element={<References />} />
                 <Route path="models-base" element={<ModelsBase />} />

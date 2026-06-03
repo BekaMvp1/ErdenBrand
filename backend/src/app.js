@@ -42,6 +42,7 @@ const receptionsRoutes = require("./routes/receptions");
 const shipmentsNewRoutes = require("./routes/shipments-new");
 const stockRoutes = require("./routes/stock");
 const tasksRoutes = require("./routes/tasks");
+const barcodesRoutes = require("./routes/barcodes");
 const aiRoutes = require("./routes/ai");
 const settingsRoutes = require("./routes/settings");
 const sizesRoutes = require("./routes/sizes");
@@ -416,6 +417,12 @@ app.use(
   authenticate,
   requireRole("admin", "manager", "technologist", "operator"),
   tasksRoutes,
+);
+app.use(
+  "/api/barcodes",
+  authenticate,
+  requireRole("admin", "manager", "technologist", "operator"),
+  barcodesRoutes,
 );
 app.use(
   "/api/ai",

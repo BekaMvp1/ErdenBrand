@@ -117,6 +117,11 @@ const NAV_ICONS = {
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l-1 12H6L5 9zm4 5h.01M15 14h.01" />
     </svg>
   ),
+  barcodes: (
+    <span className="w-5 h-5 flex-shrink-0 text-center text-base leading-5" aria-hidden>
+      ▦
+    </span>
+  ),
 };
 
 const SIDEBAR_LOCK_KEY = 'sidebar_locked';
@@ -210,6 +215,7 @@ export default function Layout() {
     '/warehouse/movements': 'Перемещение',
     '/otk': 'ОТК',
     '/shipping-plan': 'План отгрузки',
+    '/barcodes': 'Штрихкоды',
     '/qc': 'ОТК (партии)',
     '/shipments': 'Отгрузка',
     '/tasks': 'Задачи и Решения',
@@ -355,6 +361,7 @@ export default function Layout() {
           ],
         },
         { type: 'item', to: '/shipping-plan', label: 'План отгрузки', icon: 'shipments' },
+        { type: 'item', to: '/barcodes', label: 'Штрихкоды', icon: 'barcodes' },
         { type: 'item', to: '/warehouse', label: 'Склад', icon: 'warehouse' },
         { type: 'item', to: '/warehouse/movements', label: '🔄 Перемещение', icon: 'warehouse' },
         { type: 'item', to: '/shipments', label: 'Отгрузка', icon: 'shipments' },

@@ -141,6 +141,7 @@ const db = {
   ShippingDocument: require('./ShippingDocument')(sequelize, Sequelize.DataTypes),
   Supplier: require('./Supplier')(sequelize, Sequelize.DataTypes),
   BarcodeDoc: require('./BarcodeDoc')(sequelize, Sequelize.DataTypes),
+  CuttingReport: require('./CuttingReport')(sequelize, Sequelize.DataTypes),
 };
 
 // Связи

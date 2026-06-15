@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import api from '../api';
+import { api } from '../api';
 import * as XLSX from 'xlsx';
+import BarcodePrintHistory from '../components/barcodes/BarcodePrintHistory';
+import BarcodePrintJournal from '../components/barcodes/BarcodePrintJournal';
 
 const LABEL_SIZES = [
   {
@@ -48,6 +50,9 @@ const LABEL_SIZES = [
 ];
 
 export default function BarcodesPage() {
+  const [pageTab, setPageTab] = useState('docs');
+  const [printModalTab, setPrintModalTab] = useState('print');
+  const [printHistoryKey, setPrintHistoryKey] = useState(0);
   const [documents, setDocuments] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [selectedDoc, setSelectedDoc] = useState(null);
@@ -174,7 +179,26 @@ export default function BarcodesPage() {
       }))
     );
     setSelectedDoc(doc);
+    setPrintModalTab('print');
     setShowPrint(true);
+  };
+
+  const logPrintEntries = async (docId, items) => {
+    for (const item of items) {
+      const notes = JSON.stringify({
+        article: item.article || '',
+        color: item.color || '',
+        size: item.size || '',
+        barcode: item.barcode || '',
+      });
+      await api.post('/api/barcodes/print-log', {
+        barcode_id: docId,
+        document_id: docId,
+        quantity: parseInt(item.printQty || 1, 10) || 1,
+        notes,
+      });
+    }
+    setPrintHistoryKey((k) => k + 1);
   };
 
   const docDate = (doc) => {
@@ -226,6 +250,52 @@ export default function BarcodesPage() {
         </button>
       </div>
 
+      <div
+        style={{
+          display: 'flex',
+          gap: 8,
+          marginBottom: 20,
+          borderBottom: '1px solid #1e3a5f',
+          paddingBottom: 8,
+        }}
+      >
+        {[
+          { key: 'docs', label: '▦ Документы' },
+          { key: 'journal', label: '📋 Журнал печати ШК' },
+        ].map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setPageTab(tab.key)}
+            style={{
+              background: pageTab === tab.key ? '#1e3a5f' : 'transparent',
+              color: pageTab === tab.key ? '#93c5fd' : '#64748b',
+              border: '1px solid',
+              borderColor: pageTab === tab.key ? '#3b82f6' : '#1e2a3a',
+              borderRadius: 8,
+              padding: '8px 16px',
+              cursor: 'pointer',
+              fontSize: 13,
+              fontWeight: pageTab === tab.key ? 700 : 500,
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {pageTab === 'journal' ? (
+        <div
+          style={{
+            background: '#0a1628',
+            border: '1px solid #1e3a5f',
+            borderRadius: 12,
+            padding: '16px 20px',
+          }}
+        >
+          <BarcodePrintJournal />
+        </div>
+      ) : (
       <div
         style={{
           display: 'flex',
@@ -381,6 +451,7 @@ export default function BarcodesPage() {
           })
         )}
       </div>
+      )}
 
       {showForm && (
         <>
@@ -841,6 +912,50 @@ export default function BarcodesPage() {
 
             <div
               style={{
+                display: 'flex',
+                gap: 8,
+                marginBottom: 16,
+                borderBottom: '1px solid #1e2a3a',
+                paddingBottom: 8,
+              }}
+            >
+              {[
+                { key: 'print', label: '🖨️ Печать' },
+                { key: 'history', label: '📋 История печати' },
+              ].map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setPrintModalTab(tab.key)}
+                  style={{
+                    background:
+                      printModalTab === tab.key ? '#1e3a5f' : 'transparent',
+                    color: printModalTab === tab.key ? '#93c5fd' : '#64748b',
+                    border: 'none',
+                    borderBottom:
+                      printModalTab === tab.key
+                        ? '2px solid #3b82f6'
+                        : '2px solid transparent',
+                    padding: '6px 12px',
+                    cursor: 'pointer',
+                    fontSize: 12,
+                    fontWeight: printModalTab === tab.key ? 700 : 500,
+                  }}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {printModalTab === 'history' ? (
+              <BarcodePrintHistory
+                documentId={selectedDoc?.id}
+                refreshKey={printHistoryKey}
+              />
+            ) : (
+              <>
+            <div
+              style={{
                 background: '#0a1628',
                 border: '1px solid #1e3a5f',
                 borderRadius: 8,
@@ -1185,13 +1300,19 @@ export default function BarcodesPage() {
 
             <button
               type="button"
-              onClick={() => {
+              onClick={async () => {
                 const selected = printItems.filter(
                   (r) => r.selected !== false
                 );
                 if (selected.length === 0) {
                   alert('Выберите позиции');
                   return;
+                }
+
+                try {
+                  await logPrintEntries(selectedDoc.id, selected);
+                } catch (err) {
+                  console.error('[print-log]', err);
                 }
 
                 const printWin = window.open(
@@ -1393,6 +1514,8 @@ export default function BarcodesPage() {
                 )}{' '}
               шт)
             </button>
+              </>
+            )}
           </div>
         </>
       )}

@@ -574,19 +574,92 @@ function mapStageKey(stage) {
   return STAGE_MAP[String(stage)] || null;
 }
 
+const ERDEN_SIZE_BY_NUM = {
+  38: '38/XXS',
+  40: '40/XS',
+  42: '42/S',
+  44: '44/M',
+  46: '46/L',
+  48: '48/XL',
+  50: '50/2XL',
+  52: '52/3XL',
+  54: '54/4XL',
+  56: '56/5XL',
+};
+
+/** Единый ключ размера как в таблице перемещений (44/M, 46/L, …) */
+function normalizeSizeKey(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return null;
+  if (Object.values(ERDEN_SIZE_BY_NUM).includes(s)) return s;
+  const m = s.match(/\b(38|40|42|44|46|48|50|52|54|56)\b/);
+  if (m) return ERDEN_SIZE_BY_NUM[parseInt(m[1], 10)] || s;
+  return s;
+}
+
+function addSizeQty(sizes, rawKey, qty) {
+  const key = normalizeSizeKey(rawKey);
+  if (!key) return;
+  const q = parseInt(qty, 10) || 0;
+  if (!q) return;
+  sizes[key] = (sizes[key] || 0) + q;
+}
+
+function parseJsonField(val, fallback) {
+  if (val == null) return fallback;
+  if (Array.isArray(val) || (typeof val === 'object' && !Array.isArray(val))) return val;
+  try {
+    return JSON.parse(String(val));
+  } catch {
+    return fallback;
+  }
+}
+
+function mergeSizesFromObject(sizes, obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return;
+  Object.entries(obj).forEach(([sz, qty]) => addSizeQty(sizes, sz, qty));
+}
+
+function mergeSizesFromRows(sizes, rows) {
+  const list = parseJsonField(rows, []);
+  if (!Array.isArray(list)) return;
+  for (const row of list) {
+    if (!row || typeof row !== 'object') continue;
+    mergeSizesFromObject(sizes, row.sizes);
+    if (row.size) addSizeQty(sizes, row.size, row.quantity ?? row.qty);
+  }
+}
+
+/** Кол-во по размерам из строк документа (item_meta, legacy JSON, партии) */
 function getSizesFromMovementDoc(items) {
   const sizes = {};
   for (const it of items || []) {
     const line = parseMovementItemToProductLine(it);
-    if (line.sizes && typeof line.sizes === 'object') {
-      Object.entries(line.sizes).forEach(([sz, qty]) => {
-        const q = parseInt(qty, 10) || 0;
-        if (!q) return;
-        sizes[sz] = (sizes[sz] || 0) + q;
-      });
-    } else if (line.qty > 0 && line.modelName) {
-      const key = String(line.modelName).trim();
-      if (key) sizes[key] = (sizes[key] || 0) + Math.round(line.qty);
+    mergeSizesFromObject(sizes, line.sizes);
+
+    const plain = typeof it.get === 'function' ? it.get({ plain: true }) : it;
+    let meta = plain.item_meta;
+    if (typeof meta === 'string') meta = parseJsonField(meta, null);
+    if (meta && typeof meta === 'object') {
+      mergeSizesFromObject(sizes, meta.sizes);
+      mergeSizesFromRows(sizes, meta.tableB);
+      mergeSizesFromRows(sizes, meta.table_b);
+      mergeSizesFromRows(sizes, meta.batches);
+      if (Array.isArray(meta.raznoton)) {
+        for (const rz of meta.raznoton) {
+          if (!rz || typeof rz !== 'object') continue;
+          mergeSizesFromObject(sizes, rz.sizes);
+          if (rz.size) addSizeQty(sizes, rz.size, rz.qty ?? rz.quantity);
+        }
+      }
+      if (meta.size) addSizeQty(sizes, meta.size, meta.quantity ?? meta.qty ?? meta.total_qty);
+    }
+
+    if (!Object.keys(line.sizes || {}).length && line.qty > 0) {
+      const total = Math.round(Number(line.qty) || 0);
+      if (total > 0 && meta?.size) {
+        addSizeQty(sizes, meta.size, total);
+      }
     }
   }
   return sizes;
@@ -697,6 +770,14 @@ router.get('/stage-balance', async (req, res, next) => {
         }
       });
     });
+
+    for (const stage of STAGE_BALANCE_KEYS) {
+      const bucket = balance[stage];
+      if (!bucket || typeof bucket !== 'object') continue;
+      for (const sz of Object.keys(bucket)) {
+        if (bucket[sz] < 0) bucket[sz] = 0;
+      }
+    }
 
     res.json({
       order_id: orderId,

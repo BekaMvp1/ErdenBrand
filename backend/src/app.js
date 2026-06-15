@@ -43,6 +43,7 @@ const shipmentsNewRoutes = require("./routes/shipments-new");
 const stockRoutes = require("./routes/stock");
 const tasksRoutes = require("./routes/tasks");
 const barcodesRoutes = require("./routes/barcodes");
+const cuttingReportsRoutes = require("./routes/cutting-reports");
 const aiRoutes = require("./routes/ai");
 const settingsRoutes = require("./routes/settings");
 const sizesRoutes = require("./routes/sizes");
@@ -289,6 +290,17 @@ app.use(
   operatorRestricted,
   warehouseRoutes,
 );
+/** Алиас для старых ссылок / диагностики (тот же роутер, только stage-balance) */
+app.get(
+  "/api/movement-documents/stage-balance",
+  authenticate,
+  requireRole("admin", "manager", "technologist", "operator"),
+  (req, res, next) => {
+    req.url = `/stage-balance${req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : ""}`;
+    movementsRoutes(req, res, next);
+  },
+);
+
 app.use(
   "/api/movements",
   authenticate,
@@ -423,6 +435,12 @@ app.use(
   authenticate,
   requireRole("admin", "manager", "technologist", "operator"),
   barcodesRoutes,
+);
+app.use(
+  "/api/cutting-reports",
+  authenticate,
+  requireRole("admin", "manager", "technologist", "operator"),
+  cuttingReportsRoutes,
 );
 app.use(
   "/api/ai",

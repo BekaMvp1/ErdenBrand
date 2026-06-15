@@ -906,6 +906,42 @@ function getFabricName(f) {
   );
 }
 
+function getFabricColor(f) {
+  if (!f || typeof f !== 'object') return '';
+  return String(f.color || f.fabric_color || f.цвет || '').trim();
+}
+
+/** Уникальность строки ткани в таблице раскроя */
+function deduplicateFabrics(fabrics) {
+  const seen = new Set();
+  const out = [];
+  for (const f of fabrics || []) {
+    const name = getFabricName(f).trim().toLowerCase();
+    const color = getFabricColor(f).trim().toLowerCase();
+    if (!name && !color) {
+      if (!out.some((x) => !getFabricName(x).trim())) out.push(f);
+      continue;
+    }
+    const key = `${color}_${name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(f);
+  }
+  return out;
+}
+
+function deduplicateRouteBBatches(batches) {
+  const seen = new Set();
+  return (batches || []).filter((row) => {
+    const color = (displayBatchColor(row) || String(row.color || '')).trim().toLowerCase();
+    const fabric = String(row.fabric_name || '').trim().toLowerCase();
+    const key = `${color}_${fabric}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /** Норма м/ед из разных полей */
 function getFabricQtyPerUnit(f) {
   if (!f || typeof f !== 'object') return '';
@@ -919,6 +955,49 @@ function getFabricQtyPerUnit(f) {
   return v !== '' && v != null ? String(v) : '';
 }
 
+/** fabric_data с группами — сохраняем цвет группы для партий раскроя */
+function flattenOrderFabrics(modelJson) {
+  const data = modelJson && typeof modelJson === 'object' ? modelJson : {};
+  const groups = Array.isArray(data.groups) ? data.groups : [];
+  const rows = [];
+  for (const g of groups) {
+    const groupColor = String(g.title || g.color || g.name || '').trim();
+    for (const r of g.rows || []) {
+      const price =
+        r.price_per_unit != null && r.price_per_unit !== ''
+          ? String(r.price_per_unit)
+          : r.price != null && r.price !== ''
+            ? String(r.price)
+            : r.cost != null && r.cost !== ''
+              ? String(r.cost)
+              : '';
+      rows.push({
+        name: r.name != null ? String(r.name) : '',
+        material_name: r.name != null ? String(r.name) : '',
+        color: String(r.color || groupColor || '').trim(),
+        qty_per_unit: r.qty != null ? String(r.qty) : '',
+        quantity_per: r.qty != null ? String(r.qty) : '',
+        unit: r.unit != null ? String(r.unit) : 'м',
+        rateSom: price,
+      });
+    }
+  }
+  return rows;
+}
+
+function mapFlatFabricRows(flat) {
+  return deduplicateFabrics(
+    (flat || []).map((r) => ({
+      name: r.name || '',
+      material_name: r.name || '',
+      color: getFabricColor(r),
+      qty_per_unit: r.qtyPerUnit || r.qty_per_unit || '',
+      quantity_per: r.qtyPerUnit || r.quantity_per || '',
+      unit: r.unit || 'м',
+    }))
+  );
+}
+
 /**
  * Ткани заказа из всех известных мест хранения (массив объектов для select).
  */
@@ -928,37 +1007,27 @@ function getFabrics(order) {
   const fd = order.fabric_data;
 
   if (Array.isArray(fd) && fd.length > 0) {
-    return fd;
+    return deduplicateFabrics(fd);
   }
 
   if (fd && typeof fd === 'object' && !Array.isArray(fd)) {
+    const fromGroups = flattenOrderFabrics(fd);
+    if (fromGroups.length > 0) return fromGroups;
     const flat = flattenFabricLike(fd);
-    if (flat.length > 0) {
-      return flat.map((r) => ({
-        name: r.name || '',
-        material_name: r.name || '',
-        qty_per_unit: r.qtyPerUnit || '',
-        quantity_per: r.qtyPerUnit || '',
-        unit: r.unit || 'м',
-      }));
-    }
+    if (flat.length > 0) return mapFlatFabricRows(flat);
   }
 
   if (typeof fd === 'string') {
     try {
       const parsed = JSON.parse(fd);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return deduplicateFabrics(parsed);
+      }
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const fromGroups = flattenOrderFabrics(parsed);
+        if (fromGroups.length > 0) return fromGroups;
         const flat = flattenFabricLike(parsed);
-        if (flat.length > 0) {
-          return flat.map((r) => ({
-            name: r.name || '',
-            material_name: r.name || '',
-            qty_per_unit: r.qtyPerUnit || '',
-            quantity_per: r.qtyPerUnit || '',
-            unit: r.unit || 'м',
-          }));
-        }
+        if (flat.length > 0) return mapFlatFabricRows(flat);
       }
     } catch {
       /* ignore */
@@ -966,12 +1035,12 @@ function getFabrics(order) {
   }
 
   if (Array.isArray(order.fabrics) && order.fabrics.length > 0) {
-    return order.fabrics;
+    return deduplicateFabrics(order.fabrics);
   }
 
   if (Array.isArray(order.materials) && order.materials.length > 0) {
-    return order.materials.filter(
-      (m) => m && (m.type === 'fabric' || m.тип === 'Ткань')
+    return deduplicateFabrics(
+      order.materials.filter((m) => m && (m.type === 'fabric' || m.тип === 'Ткань'))
     );
   }
 
@@ -979,27 +1048,23 @@ function getFabrics(order) {
   if (mb && mb.fabric != null) {
     try {
       const f = typeof mb.fabric === 'string' ? JSON.parse(mb.fabric) : mb.fabric;
-      if (Array.isArray(f) && f.length > 0) return f;
+      if (Array.isArray(f) && f.length > 0) return deduplicateFabrics(f);
     } catch {
       /* ignore */
     }
-    if (Array.isArray(mb.fabric) && mb.fabric.length > 0) return mb.fabric;
+    if (Array.isArray(mb.fabric) && mb.fabric.length > 0) {
+      return deduplicateFabrics(mb.fabric);
+    }
     if (mb.fabric_data && typeof mb.fabric_data === 'object') {
+      const fromGroups = flattenOrderFabrics(mb.fabric_data);
+      if (fromGroups.length > 0) return fromGroups;
       const flat = flattenFabricLike(mb.fabric_data);
-      if (flat.length > 0) {
-        return flat.map((r) => ({
-          name: r.name || '',
-          material_name: r.name || '',
-          qty_per_unit: r.qtyPerUnit || '',
-          quantity_per: r.qtyPerUnit || '',
-          unit: r.unit || 'м',
-        }));
-      }
+      if (flat.length > 0) return mapFlatFabricRows(flat);
     }
   }
 
   if (Array.isArray(order.fabric) && order.fabric.length > 0) {
-    return order.fabric;
+    return deduplicateFabrics(order.fabric);
   }
 
   return [];
@@ -1008,16 +1073,22 @@ function getFabrics(order) {
 /** Партии Цвет × Ткань при выборе заказа (Раскрой→Пошив) */
 function buildAutoBatchesRouteB(order, sz, specificStock, allStock) {
   const parsedColors = parseOrderColorsRouteB(order);
-  const fabrics = getFabrics(order);
-  const colorList = parsedColors.length > 0 ? parsedColors : [''];
+  const colorList = [...new Set(parsedColors.map((c) => String(c).trim()).filter(Boolean))];
+  const fabrics = deduplicateFabrics(getFabrics(order));
   const fabricList = fabrics.length > 0 ? fabrics : [{}];
   const orderQty = toNum(order?.quantity ?? order?.total_quantity ?? order?.total_qty);
   const sizeKeys = sz?.length ? sz : ERDEN_SIZES;
   const spec = specificStock || [];
   const all = allStock || [];
   const autoBatches = [];
-  for (const color of colorList) {
-    for (const fabric of fabricList) {
+  for (const fabric of fabricList) {
+    const fabricColor = getFabricColor(fabric);
+    const colorsForBatch = fabricColor
+      ? [fabricColor]
+      : colorList.length > 0
+        ? colorList
+        : [''];
+    for (const color of colorsForBatch) {
       const qpuRaw =
         fabric?.qty_per_unit ??
         fabric?.quantity_per ??
@@ -1069,7 +1140,9 @@ function buildAutoBatchesRouteB(order, sz, specificStock, allStock) {
     operation_cost: 0,
     norm_per_unit: 0,
   };
-  return applyRunningRouteBMetrics(autoBatches.length > 0 ? autoBatches : [fallback]);
+  return applyRunningRouteBMetrics(
+    deduplicateRouteBBatches(autoBatches.length > 0 ? autoBatches : [fallback])
+  );
 }
 
 function displaySimpleRowColor(row) {
@@ -1381,10 +1454,27 @@ export default function MovementForm(props) {
   const routeIsB = isRouteB(fromType, toType);
   const routeIsC = isRouteC(fromType, toType);
 
-  const { balance, reload: reloadBalance } = useStageBalance(orderId, {
+  const {
+    balance,
+    loading: balanceLoading,
+    reload: reloadBalance,
+    getAvailable: getStageAvailable,
+    getTotalAvailable,
+  } = useStageBalance(orderId, {
     enabled: routeIsC && !!orderId,
     excludeDocId: docId || undefined,
   });
+
+  const stageBalanceReady =
+    routeIsC && !!orderId && !balanceLoading && balance != null;
+
+  useEffect(() => {
+    if (!routeIsC) return;
+    console.log('[balance]', balance);
+    console.log('[fromStage]', fromType);
+    console.log('[orderId]', orderId);
+    console.log('[stageBalanceReady]', stageBalanceReady);
+  }, [balance, fromType, orderId, routeIsC, stageBalanceReady]);
 
   const fromLabel =
     STAGES.find((s) => s.value === fromType)?.label || fromType;
@@ -1816,7 +1906,9 @@ export default function MovementForm(props) {
           if (items.length) {
             setBatches(
               applyRunningRouteBMetrics(
-                items.map((it, i) => parseCutBatchItemToBatch(it, effSizes, i))
+                deduplicateRouteBBatches(
+                  items.map((it, i) => parseCutBatchItemToBatch(it, effSizes, i))
+                )
               )
             );
             setRaznotonData(extractRaznotonFromItems(items));
@@ -2189,12 +2281,11 @@ export default function MovementForm(props) {
 
   const getAvailable = useCallback(
     (size) => {
-      if (!routeIsC || !balance || fromType === 'warehouse') return null;
-      const stageBalance = balance[fromType];
-      if (!stageBalance || typeof stageBalance !== 'object') return null;
-      return toNum(stageBalance[size]);
+      if (!routeIsC || fromType === 'warehouse') return null;
+      if (!stageBalanceReady) return null;
+      return getStageAvailable(fromType, size);
     },
-    [routeIsC, balance, fromType]
+    [routeIsC, fromType, stageBalanceReady, getStageAvailable]
   );
 
   const getSizeRemaining = useCallback(
@@ -2202,7 +2293,8 @@ export default function MovementForm(props) {
       const row = productRows.find((r) => r.id === rowId);
       const val = toNum(row?.sizes?.[size]);
       const available = getAvailable(size);
-      if (available !== null) {
+      if (routeIsC) {
+        if (!stageBalanceReady || available === null) return null;
         const usedInOtherRows = productRows
           .filter((r) => r.id !== rowId)
           .reduce((s, r) => s + toNum(r.sizes?.[size]), 0);
@@ -2222,6 +2314,8 @@ export default function MovementForm(props) {
     [
       productRows,
       getAvailable,
+      routeIsC,
+      stageBalanceReady,
       orderSizeQuantities,
       orderQuantity,
       sizesCount,
@@ -2232,7 +2326,8 @@ export default function MovementForm(props) {
   const getRemaining = useCallback(
     (size) => {
       const available = getAvailable(size);
-      if (available !== null) {
+      if (routeIsC) {
+        if (!stageBalanceReady || available === null) return null;
         const totalEntered = productRows.reduce(
           (s, r) => s + toNum(r.sizes?.[size]),
           0
@@ -2252,6 +2347,8 @@ export default function MovementForm(props) {
     },
     [
       getAvailable,
+      routeIsC,
+      stageBalanceReady,
       productRows,
       orderSizeQuantities,
       orderQuantity,
@@ -2269,15 +2366,9 @@ export default function MovementForm(props) {
         s + sizeCols.reduce((ss, sz) => ss + toNum(row.sizes?.[sz]), 0),
       0
     );
-    if (routeIsC && balance && fromType && fromType !== 'warehouse') {
-      const stageBalance = balance[fromType];
-      if (stageBalance && typeof stageBalance === 'object') {
-        const totalAvailable = Object.values(stageBalance).reduce(
-          (s, v) => s + toNum(v),
-          0
-        );
-        return totalAvailable - totalEntered;
-      }
+    if (stageBalanceReady && fromType && fromType !== 'warehouse') {
+      const totalAvailable = getTotalAvailable(fromType);
+      return totalAvailable - totalEntered;
     }
     const totalPlanned =
       sizeCols.reduce(
@@ -2296,9 +2387,9 @@ export default function MovementForm(props) {
     orderSizeQuantities,
     usedQty,
     sizesCount,
-    routeIsC,
-    balance,
+    stageBalanceReady,
     fromType,
+    getTotalAvailable,
   ]);
 
   if (loading) {
@@ -3290,7 +3381,7 @@ export default function MovementForm(props) {
         </>
       ) : routeIsC ? (
         <>
-          {balance && fromType && fromType !== 'warehouse' ? (
+          {routeIsC && fromType && fromType !== 'warehouse' ? (
             <div
               style={{
                 display: 'flex',
@@ -3307,7 +3398,15 @@ export default function MovementForm(props) {
               <span style={{ color: '#64748b', fontSize: 12, marginRight: 4 }}>
                 📦 Доступно с {stageToggleLabel(fromType)}:
               </span>
-              {(() => {
+              {balanceLoading ? (
+                <span style={{ color: '#64748b', fontSize: 12 }}>загрузка…</span>
+              ) : null}
+              {!balanceLoading && !stageBalanceReady ? (
+                <span style={{ color: '#f87171', fontSize: 12 }}>
+                  ⚠️ Не удалось загрузить остатки (проверьте заказ и API /api/movements/stage-balance)
+                </span>
+              ) : null}
+              {stageBalanceReady ? (() => {
                 const stageBalance = balance[fromType];
                 if (!stageBalance || typeof stageBalance !== 'object') {
                   return (
@@ -3321,7 +3420,7 @@ export default function MovementForm(props) {
                 if (total <= 0) {
                   return (
                     <span style={{ color: '#f87171', fontSize: 12 }}>
-                      ⚠️ Нет остатков на этом этапе
+                      ⚠️ Нет остатков — сначала создайте документ на предыдущем этапе
                     </span>
                   );
                 }
@@ -3342,7 +3441,7 @@ export default function MovementForm(props) {
                       {sz}: <b>{qty}</b>
                     </span>
                   ));
-              })()}
+              })() : null}
             </div>
           ) : null}
           {Object.keys(usedQty).length > 0 ? (
@@ -3542,19 +3641,25 @@ export default function MovementForm(props) {
                               <div
                                 style={{
                                   fontSize: 8,
-                                  color: '#64748b',
+                                  color:
+                                    maxForInput > 0 ? '#64748b' : '#f87171',
                                   textAlign: 'center',
                                   marginBottom: 1,
                                 }}
                               >
-                                доступно: {available}
+                                {maxForInput > 0
+                                  ? `доступно: ${maxForInput}`
+                                  : '⚠️ нет'}
                               </div>
                             ) : null}
                             <input
                               type="number"
                               min="0"
                               max={maxForInput}
-                              disabled={readOnly}
+                              disabled={
+                                readOnly ||
+                                (available !== null && maxForInput === 0)
+                              }
                               value={val || ''}
                               placeholder="0"
                               title={
@@ -3615,7 +3720,33 @@ export default function MovementForm(props) {
                                 fontWeight: 700,
                               }}
                             />
-                            {remaining !== null ? (
+                            {routeIsC ? (
+                              <div
+                                style={{
+                                  fontSize: 8,
+                                  textAlign: 'center',
+                                  marginTop: 1,
+                                  color:
+                                    remaining == null
+                                      ? '#64748b'
+                                      : remaining === 0
+                                        ? '#4ade80'
+                                        : remaining > 0
+                                          ? '#fbbf24'
+                                          : '#f87171',
+                                  fontWeight:
+                                    remaining != null && remaining < 0 ? 700 : 400,
+                                }}
+                              >
+                                {balanceLoading
+                                  ? '…'
+                                  : remaining == null
+                                    ? '—'
+                                    : remaining >= 0
+                                      ? `ост: ${remaining}`
+                                      : `❌ +${Math.abs(remaining)}`}
+                              </div>
+                            ) : remaining !== null ? (
                               <div
                                 style={{
                                   fontSize: 8,

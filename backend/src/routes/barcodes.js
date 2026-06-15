@@ -31,7 +31,7 @@ function parseRowMeta(notes) {
   }
 }
 
-function parseRowMeta(notes) {
+function formatPrintLogRow(log) {
   const plain = typeof log.get === 'function' ? log.get({ plain: true }) : log;
   const meta = parseRowMeta(plain.notes);
   const doc = plain.BarcodeDoc || {};
@@ -51,6 +51,16 @@ function parseRowMeta(notes) {
     doc_tz: doc.tz || null,
     doc_name: doc.name || null,
   };
+}
+
+function parseDocRowsField(doc) {
+  if (!doc) return [];
+  if (Array.isArray(doc.rows)) return doc.rows;
+  try {
+    return JSON.parse(doc.rows || '[]');
+  } catch {
+    return [];
+  }
 }
 
 function buildDateRangeWhere(dateFrom, dateTo) {
@@ -158,7 +168,6 @@ router.get('/print-log', async (req, res) => {
   }
 });
 
-/** POST /print-log — записать факт печати */
 router.post('/print-log', async (req, res) => {
   try {
     const { barcode_id, quantity, document_id, notes } = req.body || {};
@@ -202,6 +211,85 @@ router.post('/print-log', async (req, res) => {
     });
 
     res.status(201).json(formatPrintLogRow(full));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** GET /catalog — справочник строк штрихкодов для выбора в документе печати */
+router.get('/catalog', async (req, res) => {
+  try {
+    const { q } = req.query;
+    const search = q != null ? String(q).trim().toLowerCase() : '';
+    const docs = await db.BarcodeDoc.findAll({
+      order: [['created_at', 'DESC']],
+      limit: 500,
+    });
+    const catalog = [];
+    for (const doc of docs) {
+      const plain = doc.get({ plain: true });
+      const rows = parseDocRowsField(plain);
+      rows.forEach((row, rowIndex) => {
+        const entry = {
+          key: `${plain.id}:${rowIndex}`,
+          barcode_id: plain.id,
+          row_index: rowIndex,
+          tz: plain.tz || '',
+          article: String(row.article || '').trim(),
+          color: String(row.color || '').trim(),
+          size: String(row.size || '').trim(),
+          barcode: String(row.barcode || '').trim(),
+        };
+        if (!search) {
+          catalog.push(entry);
+          return;
+        }
+        const hay = [
+          entry.tz,
+          entry.article,
+          entry.color,
+          entry.size,
+          entry.barcode,
+          plain.name,
+        ]
+          .join(' ')
+          .toLowerCase();
+        if (hay.includes(search)) catalog.push(entry);
+      });
+    }
+    res.json(catalog);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+const printDocsRouter = require('./barcode-print-docs');
+router.use('/barcode-print-docs', printDocsRouter);
+
+/** GET /documents/:id — документ штрихкодов с позициями для заполнения печати */
+router.get('/documents/:id', async (req, res) => {
+  try {
+    const doc = await db.BarcodeDoc.findByPk(req.params.id);
+    if (!doc) return res.status(404).json({ error: 'Документ не найден' });
+
+    const plain = doc.get({ plain: true });
+    const rows = parseDocRowsField(plain);
+    const items = rows.map((row, rowIndex) => ({
+      row_index: rowIndex,
+      article: String(row.article || '').trim(),
+      color: String(row.color || '').trim(),
+      size: String(row.size || '').trim(),
+      barcode: String(row.barcode || '').trim(),
+      quantity: parseInt(row.qty ?? row.quantity ?? 1, 10) || 1,
+    }));
+
+    res.json({
+      id: plain.id,
+      tz: plain.tz || '',
+      name: plain.name || '',
+      note: plain.note || '',
+      items,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

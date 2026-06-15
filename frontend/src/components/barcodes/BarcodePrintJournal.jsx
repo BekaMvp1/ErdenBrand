@@ -1,260 +1,209 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../api';
-
-const TH = {
-  padding: '8px 10px',
-  textAlign: 'left',
-  color: '#fff',
-  fontSize: 12,
-  fontWeight: 600,
-  border: '1px solid #1e3a5f',
-  whiteSpace: 'nowrap',
-};
-
-const TD = {
-  padding: '8px 10px',
-  border: '1px solid #111',
-  color: '#e2e8f0',
-  fontSize: 12,
-  verticalAlign: 'middle',
-};
-
-const FILTER_INPUT = {
-  background: '#1e2a3a',
-  color: '#e2e8f0',
-  border: '1px solid #374151',
-  borderRadius: 8,
-  padding: '7px 12px',
-  fontSize: 12,
-};
-
-function formatDateTime(value) {
-  if (!value) return '—';
-  return new Date(value).toLocaleString('ru-RU', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-function formatDay(value) {
-  if (!value) return '—';
-  return new Date(value).toLocaleDateString('ru-RU');
-}
+import {
+  BARCODE_PRINT_DOCS_API,
+  formatPrintDate,
+  formatStatus,
+} from './barcodeApi';
+import BarcodePrintDocForm from './BarcodePrintDocForm';
+import BarcodePrintDocView from './BarcodePrintDocView';
 
 export default function BarcodePrintJournal() {
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
-  const [article, setArticle] = useState('');
-  const [rows, setRows] = useState([]);
-  const [summary, setSummary] = useState([]);
+  const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const [viewId, setViewId] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = {};
-      if (dateFrom) params.date_from = dateFrom;
-      if (dateTo) params.date_to = dateTo;
-      if (article.trim()) params.article = article.trim();
-
-      const q = new URLSearchParams(params).toString();
-      const [logs, sum] = await Promise.all([
-        api.get(`/api/barcodes/print-log${q ? `?${q}` : ''}`),
-        api.get(`/api/barcodes/print-log/summary${q ? `?${q}` : ''}`),
-      ]);
-      setRows(Array.isArray(logs) ? logs : []);
-      setSummary(Array.isArray(sum) ? sum : []);
+      const data = await api.get(BARCODE_PRINT_DOCS_API);
+      setDocs(Array.isArray(data) ? data : []);
     } catch {
-      setRows([]);
-      setSummary([]);
+      setDocs([]);
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo, article]);
+  }, []);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  const totalQty = rows.reduce((s, r) => s + (parseInt(r.quantity, 10) || 0), 0);
+  const totalLabels = docs.reduce(
+    (s, d) => s + (parseInt(d.total_quantity, 10) || 0),
+    0
+  );
 
   return (
     <div>
       <div
         style={{
           display: 'flex',
-          gap: 10,
-          flexWrap: 'wrap',
-          marginBottom: 16,
+          justifyContent: 'space-between',
           alignItems: 'center',
+          marginBottom: 16,
+          flexWrap: 'wrap',
+          gap: 10,
         }}
       >
-        <input
-          type="date"
-          value={dateFrom}
-          onChange={(e) => setDateFrom(e.target.value)}
-          style={FILTER_INPUT}
-          title="Дата с"
-        />
-        <input
-          type="date"
-          value={dateTo}
-          onChange={(e) => setDateTo(e.target.value)}
-          style={FILTER_INPUT}
-          title="Дата по"
-        />
-        <input
-          type="text"
-          value={article}
-          onChange={(e) => setArticle(e.target.value)}
-          placeholder="Артикул…"
-          style={{ ...FILTER_INPUT, minWidth: 140 }}
-        />
+        <div style={{ color: '#64748b', fontSize: 12 }}>
+          Документов: <b style={{ color: '#e2e8f0' }}>{docs.length}</b>
+          {' · '}
+          Этикеток всего: <b style={{ color: '#4ade80' }}>{totalLabels}</b>
+        </div>
         <button
           type="button"
-          onClick={load}
+          onClick={() => setShowCreate(true)}
           style={{
-            background: '#1e3a5f',
-            color: '#93c5fd',
-            border: '1px solid #1e3a5f',
+            background: '#a3e635',
+            color: '#000',
+            border: 'none',
             borderRadius: 8,
-            padding: '8px 16px',
+            padding: '10px 20px',
             cursor: 'pointer',
-            fontSize: 12,
-            fontWeight: 600,
+            fontSize: 14,
+            fontWeight: 700,
           }}
         >
-          Обновить
+          + Создать документ
         </button>
       </div>
 
-      {summary.length > 0 ? (
-        <div
-          style={{
-            display: 'flex',
-            gap: 8,
-            flexWrap: 'wrap',
-            marginBottom: 16,
-            padding: '10px 14px',
-            background: '#0a1628',
-            border: '1px solid #1e3a5f',
-            borderRadius: 8,
-          }}
-        >
-          <span style={{ color: '#64748b', fontSize: 12, fontWeight: 600 }}>
-            Итого по дням:
-          </span>
-          {summary.map((s) => (
-            <span
-              key={String(s.date)}
-              style={{
-                background: '#1e3a5f',
-                color: '#93c5fd',
-                padding: '4px 10px',
-                borderRadius: 6,
-                fontSize: 11,
-                fontWeight: 700,
-              }}
-            >
-              {formatDay(s.date)} — {s.total_quantity} шт
-              {s.total_documents > 0 ? ` · ${s.total_documents} док.` : ''}
-            </span>
-          ))}
-        </div>
-      ) : null}
-
       {loading ? (
         <div style={{ color: '#64748b', textAlign: 'center', padding: 40 }}>
-          Загрузка журнала…
+          Загрузка…
+        </div>
+      ) : docs.length === 0 ? (
+        <div
+          style={{
+            padding: '40px 20px',
+            textAlign: 'center',
+            color: '#64748b',
+            border: '1px dashed #1e3a5f',
+            borderRadius: 12,
+          }}
+        >
+          <div style={{ fontSize: 36 }}>📋</div>
+          <div style={{ marginTop: 8 }}>Документов печати пока нет</div>
+          <button
+            type="button"
+            onClick={() => setShowCreate(true)}
+            style={{
+              marginTop: 16,
+              background: '#1e3a5f',
+              color: '#93c5fd',
+              border: 'none',
+              borderRadius: 8,
+              padding: '8px 16px',
+              cursor: 'pointer',
+              fontSize: 13,
+            }}
+          >
+            + Создать первый документ
+          </button>
         </div>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ background: '#1a237e' }}>
-                {[
-                  'Дата',
-                  'Артикул',
-                  'Цвет',
-                  'Размер',
-                  'Кол-во',
-                  'Кто напечатал',
-                ].map((h) => (
-                  <th key={h} style={TH}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={6}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {docs.map((doc) => (
+            <div
+              key={doc.id}
+              style={{
+                background: '#0a1628',
+                border: '1px solid #1e3a5f',
+                borderRadius: 12,
+                padding: '16px 20px',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'flex-start',
+                  gap: 12,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <div>
+                  <div
                     style={{
-                      padding: 40,
-                      textAlign: 'center',
-                      color: '#64748b',
-                    }}
-                  >
-                    Записей не найдено
-                  </td>
-                </tr>
-              ) : (
-                rows.map((r, i) => (
-                  <tr
-                    key={r.id}
-                    style={{
-                      background: i % 2 === 0 ? '#0a1020' : '#0f172a',
-                    }}
-                  >
-                    <td style={TD}>{formatDateTime(r.printed_at)}</td>
-                    <td style={{ ...TD, color: '#a3e635', fontWeight: 600 }}>
-                      {r.article || r.barcode || '—'}
-                    </td>
-                    <td style={TD}>{r.color || '—'}</td>
-                    <td style={TD}>{r.size || '—'}</td>
-                    <td
-                      style={{
-                        ...TD,
-                        textAlign: 'center',
-                        fontWeight: 700,
-                        color: '#4ade80',
-                      }}
-                    >
-                      {r.quantity}
-                    </td>
-                    <td style={TD}>{r.printed_by_name || '—'}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-            {rows.length > 0 ? (
-              <tfoot>
-                <tr style={{ background: '#1e3a5f' }}>
-                  <td colSpan={4} style={{ ...TD, fontWeight: 700, color: '#cbd5e1' }}>
-                    Итого по фильтру
-                  </td>
-                  <td
-                    style={{
-                      ...TD,
-                      textAlign: 'center',
-                      fontWeight: 700,
                       color: '#a3e635',
+                      fontWeight: 700,
+                      fontSize: 15,
                     }}
                   >
-                    {totalQty}
-                  </td>
-                  <td style={TD} />
-                </tr>
-              </tfoot>
-            ) : null}
-          </table>
+                    {doc.name}
+                  </div>
+                  <div
+                    style={{
+                      color: '#64748b',
+                      fontSize: 11,
+                      marginTop: 4,
+                    }}
+                  >
+                    📅 {formatPrintDate(doc.printed_at)}
+                    {' · '}
+                    📋 {doc.items_count || 0} поз.
+                    {' · '}
+                    🏷 {doc.total_quantity || 0} этик.
+                    {doc.created_by_name ? ` · ${doc.created_by_name}` : ''}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <span
+                    style={{
+                      background:
+                        doc.status === 'printed' ? '#0a2a0a' : '#1a1200',
+                      color: doc.status === 'printed' ? '#4ade80' : '#fbbf24',
+                      border: '1px solid',
+                      borderColor:
+                        doc.status === 'printed' ? '#16a34a44' : '#fbbf2444',
+                      padding: '4px 10px',
+                      borderRadius: 6,
+                      fontSize: 11,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {formatStatus(doc.status)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setViewId(doc.id)}
+                    style={{
+                      background: '#1e3a5f',
+                      color: '#93c5fd',
+                      border: '1px solid #1e3a5f',
+                      borderRadius: 8,
+                      padding: '8px 14px',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                      fontWeight: 600,
+                    }}
+                  >
+                    Открыть
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
+
+      <BarcodePrintDocForm
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        onSaved={() => {
+          setShowCreate(false);
+          load();
+        }}
+      />
+
+      <BarcodePrintDocView
+        docId={viewId}
+        open={viewId != null}
+        onClose={() => setViewId(null)}
+        onUpdated={() => load()}
+      />
     </div>
   );
 }

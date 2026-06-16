@@ -29,43 +29,12 @@ const SECTIONS = [
     totalLabel: 'Итого поступления',
   },
   {
-    title: 'ПОСТАВЩИКИ МАТЕРИАЛА',
-    color: '#dc2626',
-    bg: '#2a0d0d',
-    rows: [
-      { key: 'supplier_madina', label: 'Мадина фурнитура' },
-      { key: 'supplier_fabric', label: 'Ткань дордой' },
-    ],
-    canAdd: true,
-    isSubSection: true,
-    planReadonly: true,
-  },
-  {
     title: 'ОТДЕЛ РАСКРОЯ',
     color: '#dc2626',
     bg: '#2a0d0d',
     rows: [{ key: 'dept_cutting', label: 'ЗП раскройного отдела' }],
     canAdd: true,
     isSubSection: true,
-    planReadonly: true,
-  },
-  {
-    title: 'ОТДЕЛ ПОШИВА',
-    color: '#dc2626',
-    bg: '#2a0d0d',
-    rows: [{ key: 'dept_sewing', label: 'ЗП пошивного отдела' }],
-    canAdd: true,
-    isSubSection: true,
-    planReadonly: true,
-  },
-  {
-    title: 'ОТК',
-    color: '#dc2626',
-    bg: '#2a0d0d',
-    rows: [{ key: 'dept_otk', label: 'ЗП отдела ОТК' }],
-    canAdd: true,
-    isSubSection: true,
-    planReadonly: true,
   },
   {
     title: 'КРЕДИТЫ',
@@ -106,41 +75,6 @@ const SECTIONS = [
 
 const WEEKS_2026 = generateWeeks2026();
 
-/** Разделы: столбец «План» только из «Планирование расходов» */
-const READONLY_PLAN_SECTIONS = [
-  'ПОСТАВЩИКИ МАТЕРИАЛА',
-  'ОТДЕЛ РАСКРОЯ',
-  'ОТДЕЛ ПОШИВА',
-  'ОТК',
-];
-
-const READONLY_PLAN_CATEGORIES = new Set([
-  'supplier_madina',
-  'supplier_fabric',
-  'dept_cutting',
-  'dept_sewing',
-  'dept_otk',
-]);
-
-function isPlanReadonlySection(sectionTitle) {
-  const t = String(sectionTitle || '').toUpperCase();
-  return READONLY_PLAN_SECTIONS.some((s) => t.includes(s.toUpperCase()));
-}
-
-function isPlanReadonlyCategory(category) {
-  return READONLY_PLAN_CATEGORIES.has(category);
-}
-
-const PLAN_READONLY_TITLE =
-  'Автоматически из Планирования расходов. Нажмите для расшифровки по заказам.';
-
-const SECTION_STAGE_MAP = {
-  'ПОСТАВЩИКИ МАТЕРИАЛА': 'purchase',
-  'ОТДЕЛ РАСКРОЯ': 'cutting',
-  'ОТДЕЛ ПОШИВА': 'sewing',
-  ОТК: 'otk',
-};
-
 const CELL_STYLE = {
   padding: '2px 4px',
   fontSize: 11,
@@ -177,7 +111,6 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
     getInitialPaymentCalendarStartWeek(initialWeek)
   );
   const [loading, setLoading] = useState(true);
-  const [popup, setPopup] = useState(null);
   const [calcPopup, setCalcPopup] = useState(null);
   const [incomeByWeek, setIncomeByWeek] = useState({});
   const [expenseByWeek, setExpenseByWeek] = useState({});
@@ -220,36 +153,12 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
           const fact = parseFloat(row.fact || 0);
           const key = cellKey(row.week_number, row.category, sub);
 
-          if (!sub.startsWith('order_')) {
-            if (sub === '') {
-              mainRowKeys.add(cellKey(row.week_number, row.category, ''));
-            }
-            map[key] = { plan, fact, id: row.id };
+          if (sub.startsWith('order_')) return;
+
+          if (sub === '') {
+            mainRowKeys.add(cellKey(row.week_number, row.category, ''));
           }
-        });
-
-        (rows || []).forEach((row) => {
-          const sub = row.subcategory != null ? String(row.subcategory) : '';
-          if (!sub.startsWith('order_')) return;
-
-          const plan = parseFloat(row.plan || 0);
-          const fact = parseFloat(row.fact || 0);
-          const baseKey = cellKey(row.week_number, row.category, '');
-
-          map[cellKey(row.week_number, row.category, sub)] = {
-            plan,
-            fact,
-            id: row.id,
-          };
-
-          if (!mainRowKeys.has(baseKey)) {
-            const cur = map[baseKey] || { plan: 0, fact: 0 };
-            map[baseKey] = {
-              plan: cur.plan + plan,
-              fact: cur.fact + fact,
-              id: row.id,
-            };
-          }
+          map[key] = { plan, fact, id: row.id };
         });
 
         (rows || []).forEach((row) => {
@@ -279,6 +188,14 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
         (rows || []).forEach((row) => {
           const sub = row.subcategory != null ? String(row.subcategory) : '';
           if (!sub.startsWith('expense_plan_')) return;
+          if (row.category === 'expense_plan_unmatched') {
+            map[cellKey(row.week_number, row.category, sub)] = {
+              plan: parseFloat(row.plan || 0),
+              fact: parseFloat(row.fact || 0),
+              id: row.id,
+            };
+            return;
+          }
 
           const plan = parseFloat(row.plan || 0);
           const fact = parseFloat(row.fact || 0);
@@ -302,7 +219,7 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
 
         setData(map);
       })
-      .catch((e) => console.warn('[PaymentCalendar load]:', e))
+      .catch(() => {})
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
@@ -356,7 +273,6 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
           });
         });
 
-        console.log('[incomeByWeek]', byWeek);
         setIncomeByWeek(byWeek);
       })
       .catch(() => {});
@@ -364,33 +280,11 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
 
   useEffect(() => {
     api
-      .get('/api/expense-plans')
+      .get(`/api/payment-calendar/planned-expenses-by-week?year=${year}`)
       .then((r) => {
-        const plans = Array.isArray(r) ? r : r?.data || [];
-        const byWeek = {};
-
-        plans.forEach((plan) => {
-          if (!plan.week_number || !plan.amount) return;
-
-          const key = `${plan.year || year}_${plan.week_number}`;
-          if (!byWeek[key]) {
-            byWeek[key] = { total: 0, items: [] };
-          }
-
-          const amount = parseFloat(plan.amount || 0);
-          byWeek[key].total += amount;
-          byWeek[key].items.push({
-            article: plan.article,
-            supplier: plan.supplier,
-            employee: plan.employee,
-            amount,
-            tz: plan.tz,
-          });
-        });
-
-        setExpenseByWeek(byWeek);
+        setExpenseByWeek(r && typeof r === 'object' && !Array.isArray(r) ? r : {});
       })
-      .catch(() => {});
+      .catch(() => setExpenseByWeek({}));
   }, [year]);
 
   useEffect(() => {
@@ -406,9 +300,8 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
   );
 
   const updateCell = useCallback(
-    (weekNum, weekStart, weekEnd, category, sub, field, value, planReadonly = false) => {
+    (weekNum, weekStart, weekEnd, category, sub, field, value) => {
       if (!canEdit) return;
-      if (field === 'plan' && (planReadonly || isPlanReadonlyCategory(category))) return;
       const key = cellKey(weekNum, category, sub);
       const current = dataRef.current[key] || { plan: 0, fact: 0 };
       const num = parseFloat(String(value).replace(/\s/g, '').replace(',', '.')) || 0;
@@ -433,8 +326,8 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
             plan: latest.plan,
             fact: latest.fact,
           });
-        } catch (e) {
-          console.error('[PaymentCalendar save]:', e?.message || e);
+        } catch {
+          /* ignore save errors */
         }
       }, 800);
     },
@@ -533,50 +426,6 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
     [year, incomeByWeek, getCell, customRows, getWeekLabel]
   );
 
-  const handlePlanBreakdownClick = useCallback(
-    async (e, { sectionTitle, rowName, category, weekNum, planValue }) => {
-      if (!planValue || planValue <= 0) return;
-      e.stopPropagation();
-
-      const stage = SECTION_STAGE_MAP[sectionTitle] || 'unknown';
-
-      setPopup({
-        stage,
-        category,
-        weekNumber: weekNum,
-        year,
-        amount: planValue,
-        rowName: rowName || sectionTitle,
-        orders: [],
-        loading: true,
-      });
-
-      try {
-        const orders = await api.paymentCalendar.byWeek({
-          stage,
-          category,
-          week_number: weekNum,
-          year,
-        });
-        setPopup((prev) =>
-          prev
-            ? {
-                ...prev,
-                orders: Array.isArray(orders) ? orders : [],
-                loading: false,
-              }
-            : null
-        );
-      } catch (err) {
-        console.error('[PaymentCalendar by-week]:', err?.message || err);
-        setPopup((prev) =>
-          prev ? { ...prev, orders: [], loading: false } : null
-        );
-      }
-    },
-    [year]
-  );
-
   const renderWeekInputs = (
     w,
     category,
@@ -587,8 +436,6 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
   ) => {
     const cat = customLabel ? `custom_${customLabel}` : category;
     const cell = getCell(w.number, cat, sub);
-    const planReadonly = isPlanReadonlySection(sectionTitle);
-    const planValue = cell.plan || 0;
 
     const isIncomeSection = sectionTitle === SECTIONS[0].title;
     const weekIncomeKey = `${year}_${w.number}`;
@@ -612,7 +459,7 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
           }
           title={isIncomeSection ? 'Калькулятор поступлений по неделе' : undefined}
         >
-          {canEdit && !planReadonly ? (
+          {canEdit ? (
             <input
               type="number"
               min={0}
@@ -627,73 +474,11 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
                   cat,
                   sub,
                   'plan',
-                  e.target.value,
-                  planReadonly
+                  e.target.value
                 )
               }
               style={INPUT_STYLE}
             />
-          ) : planReadonly ? (
-            <div
-              role="button"
-              tabIndex={planValue > 0 ? 0 : -1}
-              title={PLAN_READONLY_TITLE}
-              onClick={(e) =>
-                handlePlanBreakdownClick(e, {
-                  sectionTitle,
-                  rowName: rowName || sectionTitle,
-                  category: cat,
-                  weekNum: w.number,
-                  planValue,
-                })
-              }
-              onKeyDown={(e) => {
-                if (planValue > 0 && (e.key === 'Enter' || e.key === ' ')) {
-                  e.preventDefault();
-                  handlePlanBreakdownClick(e, {
-                    sectionTitle,
-                    rowName: rowName || sectionTitle,
-                    category: cat,
-                    weekNum: w.number,
-                    planValue,
-                  });
-                }
-              }}
-              style={{
-                padding: '4px 6px',
-                textAlign: 'right',
-                color: planValue > 0 ? '#a3e635' : '#374151',
-                fontWeight: planValue > 0 ? 700 : 400,
-                fontSize: 13,
-                cursor: planValue > 0 ? 'pointer' : 'default',
-                userSelect: 'none',
-                background: '#050d1a',
-                borderRadius: 4,
-                minWidth: 60,
-                border: '1px solid #1a1a2e',
-                position: 'relative',
-                transition: 'opacity 0.15s',
-              }}
-              onMouseEnter={(e) => {
-                if (planValue > 0) e.currentTarget.style.opacity = '0.8';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.opacity = '1';
-              }}
-            >
-              {planValue > 0 ? money(planValue) : '—'}
-              <span
-                style={{
-                  position: 'absolute',
-                  top: 2,
-                  right: 2,
-                  fontSize: 8,
-                  color: '#374151',
-                }}
-              >
-                🔒
-              </span>
-            </div>
           ) : (
             money(cell.plan)
           )}
@@ -731,8 +516,7 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
                   cat,
                   sub,
                   'fact',
-                  e.target.value,
-                  planReadonly
+                  e.target.value
                 )
               }
               style={{ ...INPUT_STYLE, color: '#fbbf24' }}
@@ -1017,18 +801,6 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
                       }}
                     >
                       {section.title}
-                      {section.planReadonly ? (
-                        <span
-                          style={{
-                            marginLeft: 6,
-                            fontSize: 10,
-                            color: '#475569',
-                            fontWeight: 400,
-                          }}
-                        >
-                          🔒 авто
-                        </span>
-                      ) : null}
                     </td>
                   </tr>
                   {section.rows.map((row) => (
@@ -1636,229 +1408,6 @@ export default function PaymentCalendar({ initialWeek, initialYear }) {
                 </div>
               ) : null;
             })()}
-          </div>
-        </>
-      ) : null}
-
-      {popup ? (
-        <>
-          <div
-            role="presentation"
-            onClick={() => setPopup(null)}
-            style={{
-              position: 'fixed',
-              inset: 0,
-              zIndex: 1000,
-              background: 'rgba(0,0,0,0.5)',
-            }}
-          />
-          <div
-            style={{
-              position: 'fixed',
-              top: '50%',
-              left: '50%',
-              transform: 'translate(-50%, -50%)',
-              zIndex: 1001,
-              background: '#0f172a',
-              border: '1px solid #1e3a5f',
-              borderRadius: 12,
-              padding: '20px 24px',
-              minWidth: 480,
-              maxWidth: 680,
-              maxHeight: '80vh',
-              overflowY: 'auto',
-              boxShadow: '0 20px 60px rgba(0,0,0,0.8)',
-            }}
-          >
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: 16,
-              }}
-            >
-              <div>
-                <div style={{ fontSize: 15, fontWeight: 700, color: '#a3e635' }}>
-                  📋 {popup.rowName}
-                </div>
-                <div style={{ fontSize: 12, color: '#64748b', marginTop: 3 }}>
-                  Неделя {popup.weekNumber} • Итого: {money(popup.amount || 0)} сом
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setPopup(null)}
-                style={{
-                  background: '#1e2a3a',
-                  color: '#94a3b8',
-                  border: '1px solid #374151',
-                  borderRadius: 6,
-                  padding: '4px 10px',
-                  cursor: 'pointer',
-                  fontSize: 16,
-                }}
-              >
-                ✕
-              </button>
-            </div>
-
-            {popup.loading ? (
-              <div
-                style={{
-                  color: '#64748b',
-                  textAlign: 'center',
-                  padding: 24,
-                  fontSize: 14,
-                }}
-              >
-                ⏳ Загрузка...
-              </div>
-            ) : popup.orders.length === 0 ? (
-              <div
-                style={{
-                  color: '#64748b',
-                  textAlign: 'center',
-                  padding: 24,
-                  fontSize: 13,
-                }}
-              >
-                Нет данных по заказам
-              </div>
-            ) : (
-              <table
-                style={{
-                  width: '100%',
-                  borderCollapse: 'collapse',
-                  fontSize: 13,
-                }}
-              >
-                <thead>
-                  <tr style={{ background: '#1a237e' }}>
-                    <th
-                      style={{
-                        padding: '8px 10px',
-                        textAlign: 'left',
-                        color: '#fff',
-                        fontSize: 12,
-                      }}
-                    >
-                      Заказ
-                    </th>
-                    <th
-                      style={{
-                        padding: '8px 10px',
-                        textAlign: 'center',
-                        color: '#fff',
-                        fontSize: 12,
-                      }}
-                    >
-                      Кол-во
-                    </th>
-                    <th
-                      style={{
-                        padding: '8px 10px',
-                        textAlign: 'left',
-                        color: '#fff',
-                        fontSize: 12,
-                      }}
-                    >
-                      Клиент
-                    </th>
-                    <th
-                      style={{
-                        padding: '8px 10px',
-                        textAlign: 'right',
-                        color: '#fff',
-                        fontSize: 12,
-                      }}
-                    >
-                      Сумма
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {popup.orders.map((item, i) => (
-                    <tr
-                      key={item.order_id ?? i}
-                      style={{
-                        background: i % 2 === 0 ? '#0a1020' : '#0f172a',
-                        borderBottom: '1px solid #111',
-                      }}
-                    >
-                      <td style={{ padding: '8px 10px' }}>
-                        <div style={{ fontWeight: 700, color: '#a3e635', fontSize: 13 }}>
-                          {item.order_number || item.order_id}
-                        </div>
-                        {item.order_name ? (
-                          <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }}>
-                            {item.order_name}
-                          </div>
-                        ) : null}
-                      </td>
-                      <td
-                        style={{
-                          padding: '8px 10px',
-                          textAlign: 'center',
-                          color: '#e2e8f0',
-                        }}
-                      >
-                        {item.quantity ?? '—'}
-                      </td>
-                      <td
-                        style={{
-                          padding: '8px 10px',
-                          color: item.client === 'WB' ? '#3b82f6' : '#94a3b8',
-                          fontWeight: item.client === 'WB' ? 700 : 400,
-                        }}
-                      >
-                        {item.client || '—'}
-                      </td>
-                      <td
-                        style={{
-                          padding: '8px 10px',
-                          textAlign: 'right',
-                          fontWeight: 700,
-                          color: '#4ade80',
-                          fontSize: 13,
-                        }}
-                      >
-                        {money(item.amount || 0)} сом
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr style={{ background: '#0f2040', borderTop: '2px solid #1e3a5f' }}>
-                    <td
-                      colSpan={3}
-                      style={{
-                        padding: '10px',
-                        fontWeight: 700,
-                        color: '#a3e635',
-                        fontSize: 13,
-                      }}
-                    >
-                      ИТОГО ({popup.orders.length} заказов)
-                    </td>
-                    <td
-                      style={{
-                        padding: '10px',
-                        textAlign: 'right',
-                        fontWeight: 700,
-                        color: '#a3e635',
-                        fontSize: 15,
-                      }}
-                    >
-                      {money(
-                        popup.orders.reduce((s, o) => s + (Number(o.amount) || 0), 0)
-                      )}{' '}
-                      сом
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
-            )}
           </div>
         </>
       ) : null}

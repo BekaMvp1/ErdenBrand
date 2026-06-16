@@ -7,19 +7,6 @@ import { weekNumberForDate, weekMetaForNumber } from '../utils/paymentCalendarWe
 
 registerLocale('ru', ru);
 
-const EXPENSE_ARTICLES = [
-  'Поставщики материала',
-  'Аренда',
-  'Зарплата сотрудников',
-  'Транспортные расходы',
-  'Коммунальные услуги',
-  'Маркетинг и реклама',
-  'Оборудование и ремонт',
-  'Налоги и взносы',
-  'Кредитные выплаты',
-  'Прочие расходы',
-];
-
 const PAYMENT_CALENDAR_YEAR = 2026;
 
 const LABEL = {
@@ -89,8 +76,35 @@ export default function ExpensePlanForm({
   });
   const [suppliers, setSuppliers] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [articleGroups, setArticleGroups] = useState([]);
+  const [articlesLoading, setArticlesLoading] = useState(true);
   const [showCustomSupplier, setShowCustomSupplier] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setArticlesLoading(true);
+    api
+      .get('/api/finance/payment-calendar-articles')
+      .then((data) => {
+        if (cancelled) return;
+        const groups = Array.isArray(data) ? data : [];
+        setArticleGroups(
+          groups.filter(
+            (g) => g?.category && Array.isArray(g.articles) && g.articles.length > 0
+          )
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setArticleGroups([]);
+      })
+      .finally(() => {
+        if (!cancelled) setArticlesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     Promise.all([
@@ -236,12 +250,23 @@ export default function ExpensePlanForm({
         value={form.article}
         onChange={(e) => setForm((f) => ({ ...f, article: e.target.value }))}
         style={INPUT}
+        disabled={articlesLoading}
       >
-        <option value="">— Выберите статью —</option>
-        {EXPENSE_ARTICLES.map((a) => (
-          <option key={a} value={a}>
-            {a}
-          </option>
+        <option value="">
+          {articlesLoading ? 'Загрузка статей…' : '— Выберите статью —'}
+        </option>
+        {form.article &&
+        !articleGroups.some((g) => g.articles.includes(form.article)) ? (
+          <option value={form.article}>{form.article}</option>
+        ) : null}
+        {articleGroups.map((group) => (
+          <optgroup key={group.category} label={group.category}>
+            {group.articles.map((article) => (
+              <option key={`${group.category}-${article}`} value={article}>
+                {article}
+              </option>
+            ))}
+          </optgroup>
         ))}
       </select>
 

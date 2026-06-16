@@ -3,7 +3,6 @@
  * subcategory: expense_plan_{id} — не пересекается с order_* (отделы).
  */
 
-const { Op } = require('sequelize');
 const {
   PAYMENT_CALENDAR_YEAR,
   weekNumberForDate,
@@ -11,20 +10,11 @@ const {
   addToMainPlanCell,
   upsertPaymentCalendarCell,
 } = require('./paymentCalendarCell');
-
-/** Статья расхода → ключ строки в PaymentCalendar.jsx */
-const ARTICLE_TO_CATEGORY = {
-  'Поставщики материала': 'supplier_fabric',
-  Аренда: 'ops_rent',
-  'Зарплата сотрудников': 'fot_rop',
-  'Транспортные расходы': 'ops_rent',
-  'Коммунальные услуги': 'ops_rent',
-  'Маркетинг и реклама': 'marketing_telegram',
-  'Оборудование и ремонт': 'ops_rent',
-  'Налоги и взносы': 'ops_rent',
-  'Кредитные выплаты': 'credit_ayil',
-  'Прочие расходы': 'ops_rent',
-};
+const {
+  categoryKeyFromArticleLabel,
+  customCategoryKeyFromLabel,
+  UNMATCHED_EXPENSE_CATEGORY,
+} = require('./paymentCalendarExpenseArticles');
 
 /** Основная ячейка = сумма order_* — не трогаем при синхронизации из финансов */
 const DEPARTMENT_CATEGORIES = new Set([
@@ -35,11 +25,36 @@ const DEPARTMENT_CATEGORIES = new Set([
   'dept_otk',
 ]);
 
+/**
+ * Статья расхода → ключ строки календаря.
+ * 1) точное совпадение названия с каталогом календаря
+ * 2) пользовательская строка custom_{название}
+ * 3) null → только сводка «Плановые расходы»
+ */
+async function resolveExpensePlanCategory(PaymentCalendar, article) {
+  const fromCatalog = categoryKeyFromArticleLabel(article);
+  if (fromCatalog) return fromCatalog;
+
+  const customKey = customCategoryKeyFromLabel(article);
+  if (customKey) {
+    const customRow = await PaymentCalendar.findOne({
+      where: { category: customKey },
+      attributes: ['id'],
+    });
+    if (customRow) return customKey;
+  }
+
+  return null;
+}
+
+/** @deprecated используйте resolveExpensePlanCategory */
 function articleToCategory(article) {
-  return ARTICLE_TO_CATEGORY[String(article || '').trim()] || 'ops_rent';
+  return categoryKeyFromArticleLabel(article);
 }
 
 function resolveWeekNumber(plan) {
+  const fromDate = weekNumberForDate(plan.plan_date);
+  if (fromDate) return fromDate;
   const fromField = parseInt(plan.week_number, 10);
   if (fromField >= 1 && fromField <= 52) return fromField;
   const iso = String(plan.plan_date || '').slice(0, 10);
@@ -92,20 +107,12 @@ async function syncExpensePlanToPaymentCalendar(PaymentCalendar, plan) {
   const planId = plan.id;
   if (!planId) return;
 
-  const category = articleToCategory(plan.article);
+  const matchedCategory = await resolveExpensePlanCategory(PaymentCalendar, plan.article);
+  const category = matchedCategory || UNMATCHED_EXPENSE_CATEGORY;
   const week_number = resolveWeekNumber(plan);
   const amountForThisWeek = toNum(plan.amount);
 
   if (!week_number || amountForThisWeek <= 0) return;
-
-  console.log(
-    '[expense-plans] week:',
-    week_number,
-    'amount:',
-    amountForThisWeek,
-    'category:',
-    category
-  );
 
   await clearExpensePlanDetailRows(PaymentCalendar, planId);
 
@@ -122,24 +129,14 @@ async function syncExpensePlanToPaymentCalendar(PaymentCalendar, plan) {
     note,
   });
 
-  if (!DEPARTMENT_CATEGORIES.has(category)) {
+  if (matchedCategory && !DEPARTMENT_CATEGORIES.has(matchedCategory)) {
     await addToMainPlanCell(PaymentCalendar, {
-      category,
+      category: matchedCategory,
       week_number,
       addPlan: amountForThisWeek,
       note,
     });
   }
-
-  console.log(
-    '[expense-plans] записано в payment_calendar',
-    'plan:',
-    planId,
-    'week:',
-    week_number,
-    'amount:',
-    amountForThisWeek
-  );
 }
 
 async function removeExpensePlanFromPaymentCalendar(PaymentCalendar, plan) {
@@ -159,9 +156,10 @@ async function recalculateAllExpensePlans(PaymentCalendar, ExpensePlan) {
 }
 
 module.exports = {
-  ARTICLE_TO_CATEGORY,
   DEPARTMENT_CATEGORIES,
+  UNMATCHED_EXPENSE_CATEGORY,
   articleToCategory,
+  resolveExpensePlanCategory,
   normalizeExpensePlanPayload,
   syncExpensePlanToPaymentCalendar,
   removeExpensePlanFromPaymentCalendar,

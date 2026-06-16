@@ -199,4 +199,8 @@ router.post('/fact', async (req, res, next) => {
   }
 });
 
+router.use('/finplan', require('./finplan'));
+router.use('/expenses-panel', require('./expenses-panel'));
+router.use('/payment-calendar-articles', require('./paymentCalendarArticles'));
+
 module.exports = router;

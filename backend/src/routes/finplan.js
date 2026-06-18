@@ -21,11 +21,35 @@ FinPlanEntry.belongsTo(FinPlanArticle, { foreignKey: 'article_id', as: 'Article'
 const router = express.Router();
 
 const DEFAULT_ARTICLES = [
-  { name: 'Продажи Wildberries', category: 'revenue', source: 'planned_income', sort_order: 1 },
-  { name: 'Заказы от заказчиков', category: 'revenue', source: 'manual', sort_order: 2 },
+  {
+    name: 'Продажи Wildberries',
+    category: 'revenue',
+    source: 'planned_income',
+    linked_article_name: 'План к перечислению ВБ',
+    sort_order: 1,
+  },
+  {
+    name: 'Заказы от заказчиков',
+    category: 'revenue',
+    source: 'planned_income',
+    linked_article_name: 'План поступление заказчики',
+    sort_order: 2,
+  },
   { name: 'Оптовые продажи', category: 'revenue', source: 'manual', sort_order: 3 },
-  { name: 'Ткань и фурнитура', category: 'expense', source: 'planned_expense', sort_order: 10 },
-  { name: 'Зарплата швей', category: 'expense', source: 'planned_expense', sort_order: 11 },
+  {
+    name: 'Ткань и фурнитура',
+    category: 'expense',
+    source: 'planned_expense',
+    linked_article_name: 'Поставщики материала',
+    sort_order: 10,
+  },
+  {
+    name: 'Зарплата швей',
+    category: 'expense',
+    source: 'planned_expense',
+    linked_article_name: 'Зарплата сотрудников',
+    sort_order: 11,
+  },
   { name: 'Аренда', category: 'expense', source: 'manual', sort_order: 12 },
   { name: 'Электричество', category: 'expense', source: 'manual', sort_order: 13 },
   { name: 'Налоги', category: 'expense', source: 'manual', sort_order: 14 },
@@ -45,7 +69,7 @@ async function ensureDefaultArticles() {
 }
 
 function matchesLinkedArticle(planArticle, linkedArticleName) {
-  if (!linkedArticleName) return true;
+  if (!linkedArticleName) return false;
   if (!planArticle) return false;
   return String(planArticle).trim() === String(linkedArticleName).trim();
 }
@@ -241,16 +265,20 @@ router.post('/articles', async (req, res) => {
     if (!['manual', 'planned_income', 'planned_expense'].includes(src)) {
       return res.status(400).json({ error: 'Некорректный источник' });
     }
+    const linkedName = parseLinkedArticleName(req.body);
+    if ((src === 'planned_income' || src === 'planned_expense') && !linkedName) {
+      return res.status(400).json({
+        error: 'Для автоматического источника укажите linked_article_name (статью из планирования)',
+      });
+    }
     const maxOrder = await FinPlanArticle.max('sort_order', {
       where: { category, is_active: true },
     });
-    const linkedName = parseLinkedArticleName(req.body);
     const row = await FinPlanArticle.create({
       name: String(name).trim(),
       category,
       source: src,
-      linked_article_name:
-        src === 'manual' ? null : linkedName !== undefined ? linkedName : null,
+      linked_article_name: src === 'manual' ? null : linkedName,
       sort_order: Number.isFinite(Number(sort_order))
         ? Number(sort_order)
         : (parseInt(maxOrder, 10) || 0) + 1,
@@ -279,7 +307,22 @@ router.put('/articles/:id', async (req, res) => {
     const linkedName = parseLinkedArticleName(req.body);
     if (linkedName !== undefined) {
       const effectiveSource = updates.source || row.source;
+      if (
+        (effectiveSource === 'planned_income' || effectiveSource === 'planned_expense') &&
+        !linkedName
+      ) {
+        return res.status(400).json({
+          error: 'Для автоматического источника укажите linked_article_name (статью из планирования)',
+        });
+      }
       updates.linked_article_name = effectiveSource === 'manual' ? null : linkedName;
+    } else if (updates.source === 'planned_income' || updates.source === 'planned_expense') {
+      const currentLinked = normalizeLinkedName(row.linked_article_name);
+      if (!currentLinked) {
+        return res.status(400).json({
+          error: 'Для автоматического источника укажите linked_article_name (статью из планирования)',
+        });
+      }
     }
     if (sort_order != null && Number.isFinite(Number(sort_order))) {
       updates.sort_order = Number(sort_order);

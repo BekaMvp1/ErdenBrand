@@ -5,8 +5,23 @@
 
 const EXPENSE_SECTIONS = [
   {
+    category: 'ОТДЕЛ ЗАКУПА',
+    articles: [
+      { key: 'supplier_madina', label: 'Мадина фурнитура' },
+      { key: 'supplier_fabric', label: 'Ткань дордой' },
+    ],
+  },
+  {
     category: 'ОТДЕЛ РАСКРОЯ',
     articles: [{ key: 'dept_cutting', label: 'ЗП раскройного отдела' }],
+  },
+  {
+    category: 'ОТДЕЛ ПОШИВА',
+    articles: [{ key: 'dept_sewing', label: 'ЗП пошивного отдела' }],
+  },
+  {
+    category: 'ОТК',
+    articles: [{ key: 'dept_otk', label: 'ЗП отдела ОТК' }],
   },
   {
     category: 'КРЕДИТЫ',

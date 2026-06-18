@@ -7,6 +7,113 @@ const SOURCE_OPTIONS = [
   { value: 'planned_expense', label: SOURCE_LABELS.planned_expense },
 ];
 
+const selectStyle = {
+  width: '100%',
+  background: '#0f172a',
+  border: '1px solid #334155',
+  borderRadius: 6,
+  padding: '6px 10px',
+  color: '#94a3b8',
+  fontSize: 12,
+  boxSizing: 'border-box',
+};
+
+const inputStyle = {
+  width: '100%',
+  background: '#0f172a',
+  border: '1px solid #334155',
+  borderRadius: 6,
+  padding: '6px 10px',
+  color: '#e2e8f0',
+  fontSize: 13,
+  boxSizing: 'border-box',
+};
+
+function LinkedArticleField({ source, value, options, onChange, disabled }) {
+  const [customMode, setCustomMode] = useState(false);
+  const listId = `linked-${source}`;
+
+  useEffect(() => {
+    if (!value) {
+      setCustomMode(false);
+      return;
+    }
+    setCustomMode(!options.includes(value));
+  }, [value, options]);
+
+  if (source !== 'planned_income' && source !== 'planned_expense') {
+    return null;
+  }
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ color: '#64748b', fontSize: 10, marginBottom: 4 }}>
+        Привязка к статье планирования *
+      </div>
+      {!customMode ? (
+        <select
+          value={value || ''}
+          disabled={disabled}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === '__custom__') {
+              setCustomMode(true);
+              onChange('');
+              return;
+            }
+            onChange(v || null);
+          }}
+          style={selectStyle}
+        >
+          <option value="" disabled>
+            — выберите статью —
+          </option>
+          {options.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+          <option value="__custom__">+ Ввести новое значение…</option>
+        </select>
+      ) : (
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input
+            type="text"
+            list={listId}
+            value={value || ''}
+            disabled={disabled}
+            placeholder="Название статьи в планировании"
+            onChange={(e) => onChange(e.target.value.trim() || null)}
+            style={inputStyle}
+          />
+          <datalist id={listId}>
+            {options.map((name) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => setCustomMode(false)}
+            style={{
+              background: '#1e2a3a',
+              color: '#94a3b8',
+              border: '1px solid #374151',
+              borderRadius: 6,
+              padding: '0 8px',
+              cursor: 'pointer',
+              fontSize: 11,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            Список
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ArticleRow({
   article,
   category,
@@ -17,14 +124,13 @@ function ArticleRow({
   onDragOver,
   onDrop,
   isDragOver,
+  saving,
 }) {
   const allowedSources =
     category === 'revenue'
       ? SOURCE_OPTIONS.filter((s) => s.value !== 'planned_expense')
       : SOURCE_OPTIONS.filter((s) => s.value !== 'planned_income');
 
-  const showLinkedSelect =
-    article.source === 'planned_income' || article.source === 'planned_expense';
   const linkedOptions =
     article.source === 'planned_income'
       ? sourceArticles.planned_income
@@ -32,14 +138,24 @@ function ArticleRow({
         ? sourceArticles.planned_expense
         : [];
 
-  const selectStyle = {
-    width: '100%',
-    background: '#0f172a',
-    border: '1px solid #334155',
-    borderRadius: 6,
-    padding: '6px 10px',
-    color: '#94a3b8',
-    fontSize: 12,
+  const handleSourceChange = (nextSource) => {
+    const patch = { source: nextSource };
+    if (nextSource === 'manual') {
+      patch.linked_article_name = null;
+      onUpdate(article.id, patch);
+      return;
+    }
+    const opts =
+      nextSource === 'planned_income'
+        ? sourceArticles.planned_income
+        : sourceArticles.planned_expense;
+    patch.linked_article_name = article.linked_article_name || opts[0] || null;
+    onUpdate(article.id, patch);
+  };
+
+  const handleLinkedChange = (linkedName) => {
+    if (!linkedName) return;
+    onUpdate(article.id, { linked_article_name: linkedName });
   };
 
   return (
@@ -63,32 +179,18 @@ function ArticleRow({
           <input
             type="text"
             defaultValue={article.name}
+            disabled={saving}
             onBlur={(e) => {
               const name = e.target.value.trim();
               if (name && name !== article.name) onUpdate(article.id, { name });
             }}
-            style={{
-              width: '100%',
-              background: '#0f172a',
-              border: '1px solid #334155',
-              borderRadius: 6,
-              padding: '6px 10px',
-              color: '#e2e8f0',
-              fontSize: 13,
-              marginBottom: 8,
-            }}
+            style={{ ...inputStyle, marginBottom: 8 }}
           />
           <select
             value={article.source}
-            onChange={(e) => {
-              const nextSource = e.target.value;
-              const patch = { source: nextSource };
-              if (nextSource === 'manual') {
-                patch.linked_article_name = null;
-              }
-              onUpdate(article.id, patch);
-            }}
-            style={{ ...selectStyle, marginBottom: showLinkedSelect ? 8 : 0 }}
+            disabled={saving}
+            onChange={(e) => handleSourceChange(e.target.value)}
+            style={selectStyle}
           >
             {allowedSources.map((s) => (
               <option key={s.value} value={s.value}>
@@ -96,39 +198,23 @@ function ArticleRow({
               </option>
             ))}
           </select>
-          {showLinkedSelect ? (
-            <div>
-              <div
-                style={{
-                  color: '#64748b',
-                  fontSize: 10,
-                  marginBottom: 4,
-                }}
-              >
-                Привязать к конкретной статье (необязательно):
-              </div>
-              <select
-                value={article.linked_article_name || ''}
-                onChange={(e) =>
-                  onUpdate(article.id, {
-                    linked_article_name: e.target.value || null,
-                  })
-                }
-                style={selectStyle}
-              >
-                <option value="">Все статьи источника (по умолчанию)</option>
-                {linkedOptions.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
+          <LinkedArticleField
+            source={article.source}
+            value={article.linked_article_name}
+            options={linkedOptions}
+            disabled={saving}
+            onChange={handleLinkedChange}
+          />
+          {article.source !== 'manual' && !article.linked_article_name ? (
+            <div style={{ color: '#fbbf24', fontSize: 10, marginTop: 4 }}>
+              Укажите привязку — без неё суммы из планирования не попадут в строку
             </div>
           ) : null}
         </div>
         <button
           type="button"
           onClick={() => onDelete(article.id)}
+          disabled={saving}
           title="Удалить"
           style={{
             background: '#2a0a0a',
@@ -147,6 +233,128 @@ function ArticleRow({
   );
 }
 
+function AddArticleForm({ category, sourceArticles, saving, onSave, onCancel }) {
+  const [name, setName] = useState(category === 'revenue' ? 'Новая выручка' : 'Новый расход');
+  const [source, setSource] = useState('manual');
+  const [linkedName, setLinkedName] = useState('');
+
+  const linkedOptions =
+    source === 'planned_income'
+      ? sourceArticles.planned_income
+      : source === 'planned_expense'
+        ? sourceArticles.planned_expense
+        : [];
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) {
+      alert('Укажите название статьи');
+      return;
+    }
+    if (source !== 'manual' && !linkedName.trim()) {
+      alert('Для автоматического источника выберите или введите привязку');
+      return;
+    }
+    onSave({
+      name: trimmed,
+      category,
+      source,
+      linked_article_name: source === 'manual' ? null : linkedName.trim(),
+    });
+  };
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      style={{
+        background: '#0d1f35',
+        border: '1px solid #2563eb',
+        borderRadius: 8,
+        padding: '12px',
+        marginBottom: 8,
+      }}
+    >
+      <input
+        type="text"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="Название статьи"
+        style={{ ...inputStyle, marginBottom: 8 }}
+      />
+      <select
+        value={source}
+        onChange={(e) => {
+          const next = e.target.value;
+          setSource(next);
+          if (next === 'manual') {
+            setLinkedName('');
+          } else {
+            const opts =
+              next === 'planned_income'
+                ? sourceArticles.planned_income
+                : sourceArticles.planned_expense;
+            setLinkedName(opts[0] || '');
+          }
+        }}
+        style={{ ...selectStyle, marginBottom: 8 }}
+      >
+        {(category === 'revenue'
+          ? SOURCE_OPTIONS.filter((s) => s.value !== 'planned_expense')
+          : SOURCE_OPTIONS.filter((s) => s.value !== 'planned_income')
+        ).map((s) => (
+          <option key={s.value} value={s.value}>
+            {s.label}
+          </option>
+        ))}
+      </select>
+      <LinkedArticleField
+        source={source}
+        value={linkedName}
+        options={linkedOptions}
+        disabled={false}
+        onChange={setLinkedName}
+      />
+      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+        <button
+          type="submit"
+          disabled={saving}
+          style={{
+            flex: 1,
+            background: '#1d4ed8',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 6,
+            padding: '8px',
+            cursor: 'pointer',
+            fontSize: 12,
+            fontWeight: 600,
+          }}
+        >
+          Сохранить
+        </button>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={onCancel}
+          style={{
+            flex: 1,
+            background: '#1e2a3a',
+            color: '#94a3b8',
+            border: '1px solid #374151',
+            borderRadius: 6,
+            padding: '8px',
+            cursor: 'pointer',
+            fontSize: 12,
+          }}
+        >
+          Отмена
+        </button>
+      </div>
+    </form>
+  );
+}
+
 function ArticleColumn({
   title,
   color,
@@ -157,9 +365,14 @@ function ArticleColumn({
   onDelete,
   onAdd,
   onReorder,
+  saving,
+  addDraftCategory,
+  onStartAdd,
+  onCancelAdd,
 }) {
   const [dragId, setDragId] = useState(null);
   const [dragOverId, setDragOverId] = useState(null);
+  const showAddForm = addDraftCategory === category;
 
   const handleDragStart = (e, id) => {
     setDragId(id);
@@ -215,25 +428,37 @@ function ArticleColumn({
           onDragOver={handleDragOver}
           onDrop={handleDrop}
           isDragOver={dragOverId === a.id}
+          saving={saving}
         />
       ))}
-      <button
-        type="button"
-        onClick={() => onAdd(category)}
-        style={{
-          width: '100%',
-          background: '#1e2a3a',
-          color: '#94a3b8',
-          border: '1px dashed #475569',
-          borderRadius: 8,
-          padding: '10px',
-          cursor: 'pointer',
-          fontSize: 12,
-          fontWeight: 600,
-        }}
-      >
-        {category === 'revenue' ? '+ Добавить статью выручки' : '+ Добавить статью расхода'}
-      </button>
+      {showAddForm ? (
+        <AddArticleForm
+          category={category}
+          sourceArticles={sourceArticles}
+          saving={saving}
+          onSave={onAdd}
+          onCancel={onCancelAdd}
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => onStartAdd(category)}
+          disabled={saving}
+          style={{
+            width: '100%',
+            background: '#1e2a3a',
+            color: '#94a3b8',
+            border: '1px dashed #475569',
+            borderRadius: 8,
+            padding: '10px',
+            cursor: 'pointer',
+            fontSize: 12,
+            fontWeight: 600,
+          }}
+        >
+          {category === 'revenue' ? '+ Добавить статью выручки' : '+ Добавить статью расхода'}
+        </button>
+      )}
     </div>
   );
 }
@@ -246,6 +471,7 @@ export default function FinPlanArticlesModal({ onClose, onChanged }) {
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [addDraftCategory, setAddDraftCategory] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -304,17 +530,12 @@ export default function FinPlanArticlesModal({ onClose, onChanged }) {
     }
   };
 
-  const handleAdd = async (category) => {
-    const name = category === 'revenue' ? 'Новая выручка' : 'Новый расход';
-    const defaultSource = category === 'revenue' ? 'manual' : 'manual';
+  const handleAdd = async (payload) => {
     setSaving(true);
     try {
-      const row = await finplanApi.createArticle({
-        name,
-        category,
-        source: defaultSource,
-      });
+      const row = await finplanApi.createArticle(payload);
       setArticles((prev) => [...prev, row]);
+      setAddDraftCategory(null);
       onChanged?.();
     } catch (err) {
       alert(err.message || 'Ошибка создания');
@@ -335,9 +556,7 @@ export default function FinPlanArticlesModal({ onClose, onChanged }) {
     setSaving(true);
     try {
       await Promise.all(
-        orderedIds.map((id, idx) =>
-          finplanApi.updateArticle(id, { sort_order: idx + 1 })
-        )
+        orderedIds.map((id, idx) => finplanApi.updateArticle(id, { sort_order: idx + 1 }))
       );
       onChanged?.();
     } catch (err) {
@@ -418,6 +637,10 @@ export default function FinPlanArticlesModal({ onClose, onChanged }) {
               onDelete={handleDelete}
               onAdd={handleAdd}
               onReorder={handleReorder}
+              saving={saving}
+              addDraftCategory={addDraftCategory}
+              onStartAdd={setAddDraftCategory}
+              onCancelAdd={() => setAddDraftCategory(null)}
             />
             <ArticleColumn
               title="Расходы"
@@ -429,6 +652,10 @@ export default function FinPlanArticlesModal({ onClose, onChanged }) {
               onDelete={handleDelete}
               onAdd={handleAdd}
               onReorder={handleReorder}
+              saving={saving}
+              addDraftCategory={addDraftCategory}
+              onStartAdd={setAddDraftCategory}
+              onCancelAdd={() => setAddDraftCategory(null)}
             />
           </div>
         )}

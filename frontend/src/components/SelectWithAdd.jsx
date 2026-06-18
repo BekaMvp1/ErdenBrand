@@ -1,8 +1,27 @@
-import { useMemo, useState } from 'react';
-import { Select, Input, Space, message } from 'antd';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { Select, Input, message } from 'antd';
+
+function normalizeName(name) {
+  return String(name || '').trim().toLowerCase();
+}
+
+function dedupeByName(items) {
+  const source = Array.isArray(items) ? items : [];
+  const seen = new Set();
+  const out = [];
+  for (const item of source) {
+    const raw = item?.name;
+    if (raw == null || String(raw).trim() === '') continue;
+    const key = normalizeName(raw);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
 
 /**
- * Выпадающий список по справочнику с добавлением новой строки внизу.
+ * Справочный Select с добавлением нового значения внизу дропдауна.
  */
 function SelectWithAdd({
   value,
@@ -16,19 +35,23 @@ function SelectWithAdd({
   placeholder = '—',
 }) {
   const [newVal, setNewVal] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [showAdd, setShowAdd] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [open, setOpen] = useState(false);
+  const selectRef = useRef(null);
 
   const canAdd =
     !readOnly &&
     (typeof onAdd === 'function' ||
       (typeof addRef === 'function' && endpoint != null && refKey != null));
 
+  const trimmedNew = newVal.trim();
+  const addDisabled = !trimmedNew || isSubmitting;
+
   const mergedOptions = useMemo(() => {
-    const list = [...options];
-    const names = new Set(list.map((o) => o?.name).filter(Boolean));
+    const list = dedupeByName(options);
+    const names = new Set(list.map((o) => normalizeName(o.name)));
     const v = value != null ? String(value).trim() : '';
-    if (v && !names.has(v)) {
+    if (v && !names.has(normalizeName(v))) {
       list.push({ id: `__custom__${v}`, name: v });
     }
     return list.sort((a, b) =>
@@ -41,47 +64,108 @@ function SelectWithAdd({
     label: o.name,
   }));
 
-  const handleAdd = async (e) => {
-    if (e) {
-      e.preventDefault();
-      e.stopPropagation();
+  const handleOpenChange = useCallback((nextOpen) => {
+    setOpen(nextOpen);
+    if (nextOpen) {
+      setNewVal('');
     }
-    console.log('[handleAdd] newVal:', newVal);
-    console.log('[handleAdd] onAdd:', typeof onAdd);
+  }, []);
 
-    if (!newVal.trim()) {
-      console.log('[handleAdd] пустое значение');
-      return;
-    }
+  const handleAdd = useCallback(async () => {
+    const trimmed = newVal.trim();
+    if (!trimmed || isSubmitting) return;
 
-    setBusy(true);
+    setIsSubmitting(true);
     try {
       let result;
       if (typeof onAdd === 'function') {
-        console.log('[handleAdd] вызываем onAdd...');
-        result = await onAdd(newVal.trim());
+        result = await onAdd(trimmed);
       } else if (typeof addRef === 'function' && endpoint != null && refKey != null) {
-        console.log('[handleAdd] вызываем addRef...', endpoint, refKey);
-        result = await addRef(endpoint, refKey, newVal.trim());
+        result = await addRef(endpoint, refKey, trimmed);
       } else {
-        console.log('[handleAdd] нет колбэка onAdd/addRef');
+        message.error('Добавление недоступно');
         return;
       }
-      console.log('[handleAdd] результат:', result);
       const picked =
         result != null && typeof result === 'object' && result.name != null
           ? String(result.name)
-          : newVal.trim();
+          : trimmed;
       onChange(picked);
       setNewVal('');
-      setShowAdd(false);
+      setOpen(false);
+      selectRef.current?.blur?.();
     } catch (err) {
-      console.error('[handleAdd] ошибка:', err);
       message.error(err?.message || 'Не удалось добавить');
     } finally {
-      setBusy(false);
+      setIsSubmitting(false);
     }
-  };
+  }, [addRef, endpoint, isSubmitting, newVal, onAdd, onChange, refKey]);
+
+  /** Не закрывать дропдаун при клике по кнопке «Добавить». */
+  const onAddButtonMouseDown = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const renderDropdown = useCallback(
+    (menu) => (
+      <>
+        <div style={{ maxHeight: 200, overflowY: 'auto' }}>{menu}</div>
+        {canAdd ? (
+          <div
+            style={{
+              padding: 8,
+              borderTop: '1px solid #333',
+              background: '#1a1a1a',
+            }}
+            onMouseDown={(e) => {
+              const tag = e.target?.tagName;
+              if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+              e.preventDefault();
+            }}
+          >
+            <div style={{ display: 'flex', width: '100%' }}>
+              <Input
+                size="small"
+                value={newVal}
+                onChange={(e) => setNewVal(e.target.value)}
+                placeholder="Новое значение"
+                disabled={isSubmitting}
+                onKeyDown={(e) => e.stopPropagation()}
+                onPressEnter={() => void handleAdd()}
+                style={{ flex: 1, borderRadius: '6px 0 0 6px' }}
+              />
+              <button
+                type="button"
+                disabled={addDisabled}
+                onMouseDown={onAddButtonMouseDown}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void handleAdd();
+                }}
+                style={{
+                  background: addDisabled ? '#666' : '#1677ff',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '0 6px 6px 0',
+                  padding: '4px 12px',
+                  cursor: addDisabled ? 'not-allowed' : 'pointer',
+                  fontWeight: 600,
+                  whiteSpace: 'nowrap',
+                  fontSize: 13,
+                  opacity: addDisabled ? 0.65 : 1,
+                }}
+              >
+                {isSubmitting ? '…' : 'Добавить'}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </>
+    ),
+    [addDisabled, canAdd, handleAdd, isSubmitting, newVal],
+  );
 
   if (readOnly) {
     return (
@@ -91,8 +175,11 @@ function SelectWithAdd({
 
   return (
     <Select
-      showSearch
+      ref={selectRef}
+      open={open}
+      showSearch={false}
       allowClear
+      virtual={false}
       variant="borderless"
       placeholder={placeholder}
       style={{ width: '100%', color: '#fff' }}
@@ -100,60 +187,13 @@ function SelectWithAdd({
       value={value != null && String(value).trim() !== '' ? String(value) : undefined}
       onClear={() => onChange('')}
       onChange={(v) => onChange(v ?? '')}
-      optionFilterProp="label"
       popupMatchSelectWidth={false}
-      dropdownStyle={{ minWidth: 220 }}
-      onOpenChange={(open) => {
-        if (open) {
-          setShowAdd(true);
-          setNewVal('');
-        }
-      }}
-      dropdownRender={(menu) => (
-        <>
-          {menu}
-          {canAdd && showAdd ? (
-            <div
-              style={{
-                padding: 8,
-                borderTop: '1px solid #333',
-                background: '#1a1a1a',
-              }}
-              onMouseDown={(e) => e.preventDefault()}
-            >
-              <Space.Compact style={{ width: '100%' }}>
-                <Input
-                  value={newVal}
-                  onChange={(e) => setNewVal(e.target.value)}
-                  placeholder="Новое значение"
-                  onPressEnter={(ev) => {
-                    ev.preventDefault();
-                    void handleAdd(ev);
-                  }}
-                  disabled={busy}
-                />
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={(ev) => void handleAdd(ev)}
-                  style={{
-                    background: busy ? '#666' : '#1677ff',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: '0 6px 6px 0',
-                    padding: '4px 15px',
-                    cursor: busy ? 'not-allowed' : 'pointer',
-                    fontWeight: 600,
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {busy ? '…' : 'Добавить'}
-                </button>
-              </Space.Compact>
-            </div>
-          ) : null}
-        </>
-      )}
+      listHeight={200}
+      placement="bottomLeft"
+      dropdownStyle={{ minWidth: 240 }}
+      getPopupContainer={(trigger) => trigger.parentElement || document.body}
+      onOpenChange={handleOpenChange}
+      dropdownRender={renderDropdown}
     />
   );
 }

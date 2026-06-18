@@ -1211,23 +1211,43 @@ export default function ModelsBase() {
   };
 
   /** Добавление строки справочника: POST на /api/model-refs/… (не PUT /api/models-base). */
-  const addRef = useCallback(async (endpoint, refKey, name) => {
-    try {
-      const trimmed = String(name || '').trim();
-      if (!trimmed) return;
-      console.log('[addRef] endpoint:', endpoint);
-      const r = await api.post(endpoint, { name: trimmed }, { timeout: 12000 });
-      const row = r?.data != null ? r.data : r;
-      setRefs((prev) => ({
-        ...prev,
-        [refKey]: [...prev[refKey], row],
-      }));
-      return row;
-    } catch (e) {
-      console.error('[addRef]:', e?.message);
-      throw e;
-    }
+  const dedupeRefList = useCallback((list) => {
+    const seen = new Set();
+    return (list || []).filter((item) => {
+      const key = String(item?.name || '')
+        .trim()
+        .toLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }, []);
+
+  const addRef = useCallback(async (endpoint, refKey, name) => {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) {
+      throw new Error('Укажите наименование');
+    }
+    const r = await api.post(endpoint, { name: trimmed }, { timeout: 12000 });
+    const row = r?.data != null ? r.data : r;
+    if (!row || row.name == null) {
+      throw new Error('Не удалось сохранить в справочник');
+    }
+    setRefs((prev) => {
+      const list = dedupeRefList(prev[refKey] || []);
+      const exists = list.some(
+        (item) =>
+          String(item?.name || '')
+            .trim()
+            .toLowerCase() === trimmed.toLowerCase(),
+      );
+      return {
+        ...prev,
+        [refKey]: exists ? list : dedupeRefList([...list, row]),
+      };
+    });
+    return row;
+  }, [dedupeRefList]);
 
   useEffect(() => {
     Promise.all([
@@ -1240,12 +1260,12 @@ export default function ModelsBase() {
     ])
       .then(([fn, fu, fit, co, so, oo]) => {
         setRefs({
-          fabricNames: fn,
-          fabricUnits: fu,
-          fittingsNames: fit,
-          cuttingOps: co,
-          sewingOps: so,
-          otkOps: oo,
+          fabricNames: dedupeRefList(fn),
+          fabricUnits: dedupeRefList(fu),
+          fittingsNames: dedupeRefList(fit),
+          cuttingOps: dedupeRefList(co),
+          sewingOps: dedupeRefList(so),
+          otkOps: dedupeRefList(oo),
         });
       })
       .catch(() => {
@@ -1981,7 +2001,7 @@ export default function ModelsBase() {
                                   v,
                                 )
                               }
-                              options={refs.fabricNames}
+                              options={refs.fabricNames ?? []}
                               readOnly={readOnly}
                               endpoint="/api/model-refs/fabric-names"
                               refKey="fabricNames"
@@ -2000,7 +2020,7 @@ export default function ModelsBase() {
                                   v,
                                 )
                               }
-                              options={refs.fittingsNames}
+                              options={refs.fittingsNames ?? []}
                               readOnly={readOnly}
                               endpoint="/api/model-refs/fittings-names"
                               refKey="fittingsNames"
@@ -2022,7 +2042,7 @@ export default function ModelsBase() {
                                   v,
                                 )
                               }
-                              options={refs.fabricUnits}
+                              options={refs.fabricUnits ?? []}
                               readOnly={readOnly}
                               endpoint="/api/model-refs/fabric-units"
                               refKey="fabricUnits"
@@ -2041,16 +2061,12 @@ export default function ModelsBase() {
                                   val,
                                 )
                               }
-                              options={refs.fabricUnits}
+                              options={refs.fabricUnits ?? []}
                               placeholder="Ед. изм..."
                               readOnly={readOnly}
-                              onAdd={async (name) => {
-                                await addRef(
-                                  '/api/model-refs/fabric-units',
-                                  'fabricUnits',
-                                  name,
-                                );
-                              }}
+                              onAdd={(name) =>
+                                addRef('/api/model-refs/fabric-units', 'fabricUnits', name)
+                              }
                             />
                           )}
                         </td>

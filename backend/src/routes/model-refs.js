@@ -41,6 +41,14 @@ function mountRoutes(basePath, table) {
       const name = raw != null ? String(raw).trim() : '';
       if (!name) return res.status(400).json({ error: 'Укажите наименование' });
 
+      const existing = await db.sequelize.query(
+        `SELECT id, name, created_at FROM "${table}" WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) LIMIT 1`,
+        { bind: [name], type: QueryTypes.SELECT },
+      );
+      if (existing.length > 0) {
+        return res.status(409).json({ error: 'Такое наименование уже есть в справочнике' });
+      }
+
       const [rows] = await db.sequelize.query(
         `INSERT INTO "${table}" (name, created_at) VALUES ($1, NOW()) RETURNING id, name, created_at`,
         { bind: [name] },
@@ -49,6 +57,10 @@ function mountRoutes(basePath, table) {
       if (!row) return res.status(500).json({ error: 'Не удалось сохранить' });
       res.status(201).json(row);
     } catch (err) {
+      const pgCode = err?.original?.code || err?.parent?.code;
+      if (pgCode === '23505' || /unique/i.test(String(err?.message || ''))) {
+        return res.status(409).json({ error: 'Такое наименование уже есть в справочнике' });
+      }
       next(err);
     }
   });

@@ -215,6 +215,17 @@ export default function BarcodesPage() {
         minHeight: '100vh',
       }}
     >
+      <style>{`
+        .barcode-print-qty-input::-webkit-inner-spin-button,
+        .barcode-print-qty-input::-webkit-outer-spin-button {
+          -webkit-appearance: none;
+          margin: 0;
+        }
+        .barcode-print-qty-input {
+          -moz-appearance: textfield;
+          appearance: textfield;
+        }
+      `}</style>
       <div
         style={{
           display: 'flex',
@@ -1220,21 +1231,35 @@ export default function BarcodesPage() {
                     </span>
                     <input
                       type="number"
-                      value={item.printQty || 1}
+                      className="barcode-print-qty-input"
+                      value={item.printQty === '' ? '' : item.printQty || 1}
+                      min={1}
+                      onFocus={(e) => e.target.select()}
                       onChange={(e) => {
+                        const raw = e.target.value;
                         setPrintItems((prev) =>
                           prev.map((r, j) =>
                             j === i
                               ? {
                                   ...r,
                                   printQty:
-                                    parseInt(e.target.value, 10) || 1,
+                                    raw === ''
+                                      ? ''
+                                      : parseInt(raw, 10),
                                 }
                               : r
                           )
                         );
                       }}
-                      min="1"
+                      onBlur={(e) => {
+                        const n = parseInt(e.target.value, 10);
+                        const qty = !e.target.value || !Number.isFinite(n) || n < 1 ? 1 : n;
+                        setPrintItems((prev) =>
+                          prev.map((r, j) =>
+                            j === i ? { ...r, printQty: qty } : r
+                          )
+                        );
+                      }}
                       style={{
                         width: 60,
                         background: '#1e2a3a',

@@ -28,6 +28,7 @@ export function openThermalPrintWindow({
 
   const w = labelWidth;
   const h = labelHeight;
+  const barcodeFontPx = Math.min(80, Math.max(70, Math.round(76 * (w / 58))));
 
   const printWin = window.open('', '_blank', 'width=800,height=600');
   if (!printWin) {
@@ -73,28 +74,16 @@ export function openThermalPrintWindow({
     }
     .barcode-font {
       font-family: 'Libre Barcode 128', monospace;
-      font-size: ${Math.round(h * 1.3)}pt;
-      line-height: 0.95;
+      font-size: ${barcodeFontPx}px;
+      line-height: 1;
       display: block;
       width: 100%;
       max-width: none;
       overflow: visible;
+      white-space: nowrap;
       margin-bottom: 0;
       text-align: center;
       letter-spacing: 0;
-    }
-    .barcode-num {
-      font-size: 7pt;
-      font-weight: 700;
-      text-align: center;
-      margin-bottom: 0.5mm;
-      letter-spacing: 1.5px;
-      color: #000;
-      width: 100%;
-      max-width: none;
-      overflow: visible;
-      white-space: nowrap;
-      line-height: 1.1;
     }
     .article {
       font-size: ${Math.max(9, Math.round(h * 0.25))}pt;
@@ -152,7 +141,6 @@ export function openThermalPrintWindow({
       item.barcode
         ? `<div class="barcode-block">
              <div class="barcode-font">${item.barcode}</div>
-             <div class="barcode-num">${item.barcode}</div>
            </div>`
         : ''
     }

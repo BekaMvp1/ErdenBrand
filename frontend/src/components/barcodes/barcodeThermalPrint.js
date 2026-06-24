@@ -1,5 +1,5 @@
 /**
- * HTML термоэтикеток для печати
+ * HTML термоэтикеток для печати (JsBarcode / CODE128)
  */
 
 function pickLabelFields(item) {
@@ -36,7 +36,13 @@ export function openThermalPrintWindow({
 
   const w = labelWidth;
   const h = labelHeight;
-  const barcodeFontPx = Math.min(65, Math.max(55, Math.round(60 * (w / 58))));
+
+  const barcodeInitPayload = expanded
+    .map((item, index) => ({
+      index,
+      code: pickLabelFields(item).barcode,
+    }))
+    .filter((entry) => entry.code);
 
   const printWin = window.open('', '_blank', 'width=800,height=600');
   if (!printWin) {
@@ -49,6 +55,7 @@ export function openThermalPrintWindow({
 <head>
   <meta charset="utf-8">
   <title>${title}</title>
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
     body { background:#fff; }
@@ -73,27 +80,17 @@ export function openThermalPrintWindow({
       letter-spacing: 0.5px;
       flex-shrink: 0;
     }
-    .barcode-block {
+    .barcode-wrap {
       width: 100%;
-      max-width: none;
-      overflow: hidden;
+      margin: 0;
+      padding: 0;
       flex-shrink: 0;
-      margin: 0;
-      padding: 0;
-    }
-    .barcode-font {
-      font-family: 'Libre Barcode 128 Text', 'Libre Barcode 128', monospace;
-      font-size: ${barcodeFontPx}px;
-      line-height: 1;
-      display: block;
-      width: 100%;
-      max-width: none;
       overflow: hidden;
-      white-space: nowrap;
-      margin: 0;
-      padding: 0;
-      text-align: center;
-      letter-spacing: -1px;
+    }
+    .barcode-svg {
+      width: 100%;
+      height: auto;
+      display: block;
     }
     .article {
       font-size: ${Math.max(10, Math.round(h * 0.3))}pt;
@@ -135,19 +132,18 @@ export function openThermalPrintWindow({
       .label { border: none; width: ${w}mm; height: ${h}mm; }
     }
   </style>
-  <link href="https://fonts.googleapis.com/css2?family=Libre+Barcode+128+Text&family=Libre+Barcode+128&display=swap" rel="stylesheet">
 </head>
 <body>
   ${expanded
-    .map((item) => {
+    .map((item, index) => {
       const f = pickLabelFields(item);
       return `
   <div class="label">
     <div class="tz">ТЗ: ${f.tz}</div>
     ${
       f.barcode
-        ? `<div class="barcode-block">
-             <div class="barcode-font">${f.barcode}</div>
+        ? `<div class="barcode-wrap">
+             <svg class="barcode-svg" id="barcode-${index}"></svg>
            </div>`
         : ''
     }
@@ -159,16 +155,34 @@ export function openThermalPrintWindow({
   </div>`;
     })
     .join('')}
+  <script>
+    window.addEventListener('load', function () {
+      var entries = ${JSON.stringify(barcodeInitPayload)};
+      entries.forEach(function (entry) {
+        try {
+          JsBarcode('#barcode-' + entry.index, entry.code, {
+            format: 'CODE128',
+            width: 2,
+            height: 60,
+            displayValue: true,
+            fontSize: 11,
+            margin: 2,
+            textMargin: 2
+          });
+        } catch (err) {
+          console.error('JsBarcode error', entry.index, err);
+        }
+      });
+      setTimeout(function () {
+        window.focus();
+        window.print();
+      }, 300);
+    });
+  <\/script>
 </body>
 </html>`);
 
   printWin.document.close();
-  printWin.onload = () => {
-    setTimeout(() => {
-      printWin.focus();
-      printWin.print();
-    }, 500);
-  };
 
   return { ok: true, count: expanded.length };
 }

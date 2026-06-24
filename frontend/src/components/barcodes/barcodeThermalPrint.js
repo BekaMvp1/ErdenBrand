@@ -14,10 +14,6 @@ export function openThermalPrintWindow({
     return { ok: false, error: 'Выберите позиции' };
   }
 
-  const dateLabel = printDate
-    ? new Date(printDate).toLocaleDateString('ru-RU')
-    : new Date().toLocaleDateString('ru-RU');
-
   const expanded = [];
   selected.forEach((item) => {
     const qty = parseInt(item.printQty ?? item.quantity ?? 1, 10) || 1;
@@ -28,7 +24,7 @@ export function openThermalPrintWindow({
 
   const w = labelWidth;
   const h = labelHeight;
-  const barcodeFontPx = Math.min(80, Math.max(70, Math.round(76 * (w / 58))));
+  const barcodeFontPx = Math.min(130, Math.max(110, Math.round(120 * (w / 58))));
 
   const printWin = window.open('', '_blank', 'width=800,height=600');
   if (!printWin) {
@@ -51,7 +47,7 @@ export function openThermalPrintWindow({
       display: flex;
       flex-direction: column;
       vertical-align: top;
-      overflow: visible;
+      overflow: hidden;
       page-break-inside: avoid;
       font-family: Arial, sans-serif;
       border: 0.5mm solid #000;
@@ -68,9 +64,10 @@ export function openThermalPrintWindow({
     .barcode-block {
       width: 100%;
       max-width: none;
-      overflow: visible;
+      overflow: hidden;
       flex-shrink: 0;
-      margin-bottom: 0.3mm;
+      margin: 0;
+      padding: 0;
     }
     .barcode-font {
       font-family: 'Libre Barcode 128', monospace;
@@ -79,9 +76,10 @@ export function openThermalPrintWindow({
       display: block;
       width: 100%;
       max-width: none;
-      overflow: visible;
+      overflow: hidden;
       white-space: nowrap;
-      margin-bottom: 0;
+      margin: 0;
+      padding: 0;
       text-align: center;
       letter-spacing: 0;
     }
@@ -114,15 +112,6 @@ export function openThermalPrintWindow({
       line-height: 1.1;
       letter-spacing: -0.5px;
     }
-    .print-date {
-      font-size: 14px;
-      font-weight: bold;
-      color: #000;
-      text-align: center;
-      margin: 0;
-      padding: 0;
-      line-height: 1;
-    }
     @media print {
       @page { size: ${w}mm ${h}mm; margin: 0; }
       body { margin: 0; }
@@ -149,7 +138,6 @@ export function openThermalPrintWindow({
       <span class="color-text">${item.color || ''}</span>
       ${item.size ? `<span class="size-box">${item.size}</span>` : ''}
     </div>
-    <div class="print-date">${dateLabel}</div>
   </div>`
     )
     .join('')}

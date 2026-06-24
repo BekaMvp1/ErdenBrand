@@ -46,45 +46,64 @@ export function openThermalPrintWindow({
     .label {
       width: ${w}mm;
       height: ${h}mm;
-      padding: 1.5mm 2mm;
-      display: inline-block;
+      padding: 1.2mm 1.5mm;
+      display: flex;
+      flex-direction: column;
       vertical-align: top;
-      overflow: hidden;
+      overflow: visible;
       page-break-inside: avoid;
       font-family: Arial, sans-serif;
       border: 0.5mm solid #000;
       position: relative;
     }
     .tz {
-      font-size: 7pt;
+      font-size: 6.5pt;
       font-weight: 900;
       color: #000;
-      margin-bottom: 0.5mm;
+      margin-bottom: 0.3mm;
       letter-spacing: 0.5px;
+      flex-shrink: 0;
+    }
+    .barcode-block {
+      width: 100%;
+      max-width: none;
+      overflow: visible;
+      flex-shrink: 0;
+      margin-bottom: 0.3mm;
     }
     .barcode-font {
       font-family: 'Libre Barcode 128', monospace;
-      font-size: ${Math.round(h * 0.7)}pt;
-      line-height: 1;
+      font-size: ${Math.round(h * 1.3)}pt;
+      line-height: 0.95;
       display: block;
+      width: 100%;
+      max-width: none;
+      overflow: visible;
       margin-bottom: 0;
-      text-align: left;
+      text-align: center;
+      letter-spacing: 0;
     }
     .barcode-num {
-      font-size: 6pt;
+      font-size: 7pt;
       font-weight: 700;
       text-align: center;
-      margin-bottom: 1mm;
+      margin-bottom: 0.5mm;
       letter-spacing: 1.5px;
       color: #000;
+      width: 100%;
+      max-width: none;
+      overflow: visible;
+      white-space: nowrap;
+      line-height: 1.1;
     }
     .article {
-      font-size: ${Math.max(10, Math.round(h * 0.28))}pt;
+      font-size: ${Math.max(9, Math.round(h * 0.25))}pt;
       font-weight: 900;
       color: #000;
-      margin-bottom: 1mm;
+      margin-bottom: 0.5mm;
       letter-spacing: 0.3px;
       line-height: 1.1;
+      flex-shrink: 0;
     }
     .bottom-row {
       display: flex;
@@ -131,8 +150,10 @@ export function openThermalPrintWindow({
     <div class="tz">ТЗ: ${item.tz || ''}</div>
     ${
       item.barcode
-        ? `<div class="barcode-font">${item.barcode}</div>
-           <div class="barcode-num">${item.barcode}</div>`
+        ? `<div class="barcode-block">
+             <div class="barcode-font">${item.barcode}</div>
+             <div class="barcode-num">${item.barcode}</div>
+           </div>`
         : ''
     }
     <div class="article">${item.article || ''}</div>

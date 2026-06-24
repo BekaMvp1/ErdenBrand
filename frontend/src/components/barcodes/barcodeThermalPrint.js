@@ -2,6 +2,16 @@
  * HTML термоэтикеток для печати
  */
 
+function pickLabelFields(item) {
+  return {
+    tz: item?.tz ?? item?.title ?? '',
+    barcode: item?.barcode ?? item?.code ?? '',
+    article: item?.article ?? '',
+    color: item?.color ?? '',
+    size: item?.size ?? '',
+  };
+}
+
 export function openThermalPrintWindow({
   items,
   title = 'Этикетки',
@@ -9,6 +19,8 @@ export function openThermalPrintWindow({
   labelHeight = 40,
   printDate,
 }) {
+  void printDate;
+
   const selected = (items || []).filter((r) => r && r.selected !== false);
   if (!selected.length) {
     return { ok: false, error: 'Выберите позиции' };
@@ -24,7 +36,7 @@ export function openThermalPrintWindow({
 
   const w = labelWidth;
   const h = labelHeight;
-  const barcodeFontPx = Math.min(130, Math.max(110, Math.round(120 * (w / 58))));
+  const barcodeFontPx = Math.min(65, Math.max(55, Math.round(60 * (w / 58))));
 
   const printWin = window.open('', '_blank', 'width=800,height=600');
   if (!printWin) {
@@ -70,7 +82,7 @@ export function openThermalPrintWindow({
       padding: 0;
     }
     .barcode-font {
-      font-family: 'Libre Barcode 128', monospace;
+      font-family: 'Libre Barcode 128 Text', 'Libre Barcode 128', monospace;
       font-size: ${barcodeFontPx}px;
       line-height: 1;
       display: block;
@@ -81,10 +93,10 @@ export function openThermalPrintWindow({
       margin: 0;
       padding: 0;
       text-align: center;
-      letter-spacing: 0;
+      letter-spacing: -1px;
     }
     .article {
-      font-size: ${Math.max(9, Math.round(h * 0.25))}pt;
+      font-size: ${Math.max(10, Math.round(h * 0.3))}pt;
       font-weight: 900;
       color: #000;
       margin-bottom: 0.5mm;
@@ -97,11 +109,15 @@ export function openThermalPrintWindow({
       justify-content: space-between;
       align-items: center;
       margin-top: auto;
+      gap: 2mm;
+      flex-shrink: 0;
     }
     .color-text {
       font-size: ${Math.max(9, Math.round(h * 0.22))}pt;
       font-weight: 800;
       color: #000;
+      flex: 1;
+      min-width: 0;
     }
     .size-box {
       font-size: ${Math.max(12, Math.round(h * 0.35))}pt;
@@ -111,6 +127,7 @@ export function openThermalPrintWindow({
       display: inline-block;
       line-height: 1.1;
       letter-spacing: -0.5px;
+      flex-shrink: 0;
     }
     @media print {
       @page { size: ${w}mm ${h}mm; margin: 0; }
@@ -118,28 +135,29 @@ export function openThermalPrintWindow({
       .label { border: none; width: ${w}mm; height: ${h}mm; }
     }
   </style>
-  <link href="https://fonts.googleapis.com/css2?family=Libre+Barcode+128&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Libre+Barcode+128+Text&family=Libre+Barcode+128&display=swap" rel="stylesheet">
 </head>
 <body>
   ${expanded
-    .map(
-      (item) => `
+    .map((item) => {
+      const f = pickLabelFields(item);
+      return `
   <div class="label">
-    <div class="tz">ТЗ: ${item.tz || ''}</div>
+    <div class="tz">ТЗ: ${f.tz}</div>
     ${
-      item.barcode
+      f.barcode
         ? `<div class="barcode-block">
-             <div class="barcode-font">${item.barcode}</div>
+             <div class="barcode-font">${f.barcode}</div>
            </div>`
         : ''
     }
-    <div class="article">${item.article || ''}</div>
+    <div class="article">${f.article}</div>
     <div class="bottom-row">
-      <span class="color-text">${item.color || ''}</span>
-      ${item.size ? `<span class="size-box">${item.size}</span>` : ''}
+      <span class="color-text">${f.color}</span>
+      ${f.size ? `<span class="size-box">${f.size}</span>` : ''}
     </div>
-  </div>`
-    )
+  </div>`;
+    })
     .join('')}
 </body>
 </html>`);
